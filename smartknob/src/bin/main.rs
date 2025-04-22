@@ -21,6 +21,7 @@ use esp_hal::{
     time::Rate,
     timer::systimer::SystemTimer,
 };
+use ldc1x1x::AutoScanSequence;
 use mt6701::{self, AngleSensorTrait};
 
 use embassy_embedded_hal::shared_bus::asynch::i2c::I2cDevice;
@@ -29,7 +30,7 @@ use esp_hal_smartled::{buffer_size_async, SmartLedsAdapterAsync};
 use log::info;
 use smart_leds::{
     brightness,
-    colors::{BLACK, BLUE, RED},
+    colors::{BLACK, RED},
     gamma, SmartLedsWriteAsync,
 };
 
@@ -109,7 +110,7 @@ async fn led_ring(
             if encoder.angle > step_size * i as f32 {
                 *item = RED;
             } else {
-                *item = BLUE;
+                *item = BLACK;
             }
         }
         led.write(brightness(gamma(data.iter().cloned()), 10))
@@ -122,10 +123,47 @@ async fn led_ring(
 #[embassy_executor::task]
 async fn read_ldc(i2c: &'static I2cBus1) {
     let i2c_device = I2cDevice::new(i2c);
-    let _ = ldc1x1x::Ldc::new(i2c_device, 0x2C);
+    let mut ldc = ldc1x1x::Ldc::new(i2c_device, 0x2A);
+    let mut init_ok = false;
+    for _ in [0..3] {
+        if ldc.reset().await.is_err() {
+            Timer::after_millis(200).await;
+            info!("LDC init failed!");
+        } else {
+            init_ok = true;
+            break;
+        }
+    }
+    if !init_ok {
+        panic!("LDC init failed!");
+    }
+    let div = ldc1x1x::Fsensor::from_inductance_capacitance(5.267, 330.0).to_clock_dividers(None);
+    for ch in [ldc1x1x::Channel::Zero, ldc1x1x::Channel::Two] {
+        ldc.set_clock_dividers(ch, div).await.unwrap();
+        ldc.set_conv_settling_time(ch, 15).await.unwrap();
+        ldc.set_ref_count_conv_interval(ch, 0x0546).await.unwrap();
+        ldc.set_sensor_drive_current(ch, 0x19).await.unwrap();
+    }
+    ldc.set_mux_config(
+        ldc1x1x::MuxConfig::default()
+            .with_auto_scan(true)
+            .with_deglitch_filter_bandwidth(ldc1x1x::Deglitch::TenMHz)
+            .with_auto_scan_sequence(AutoScanSequence::ZeroOneTwo),
+    )
+    .await
+    .unwrap();
+    ldc.set_config(ldc1x1x::Config::default()).await.unwrap();
+    ldc.set_error_config(
+        ldc1x1x::ErrorConfig::default().with_amplitude_high_error_to_data_register(true),
+    )
+    .await
+    .unwrap();
     info!("LDC init done!");
     loop {
-        Timer::after(Duration::from_millis(1000)).await;
+        let _ = ldc.read_data_24bit(ldc1x1x::Channel::Zero).await.unwrap();
+        let _ = ldc.read_data_24bit(ldc1x1x::Channel::One).await.unwrap();
+        let _ = ldc.read_data_24bit(ldc1x1x::Channel::Two).await.unwrap();
+        Timer::after(Duration::from_millis(20)).await;
     }
 }
 
@@ -195,7 +233,7 @@ async fn main(spawner: Spawner) {
     // LDC sensor
     let i2c_bus: I2c<'_, esp_hal::Async> = I2c::new(
         peripherals.I2C0,
-        I2cConfig::default().with_frequency(Rate::from_khz(100)),
+        I2cConfig::default().with_frequency(Rate::from_khz(300)),
     )
     .unwrap()
     .with_scl(pins_i2c_scl)
@@ -208,7 +246,7 @@ async fn main(spawner: Spawner) {
 
     // log encoder values
     let receiver = WATCH.receiver().unwrap();
-    spawner.must_spawn(log_rotations(receiver));
+    // spawner.must_spawn(log_rotations(receiver));
 
     // LED ring
     let rmt = Rmt::new(peripherals.RMT, Rate::from_mhz(80))
