@@ -22,7 +22,7 @@ esp-backtrace = { version = "0.15.1", features = [
 ] }
 esp-hal = { version = "1.0.0-beta.0", features = ["esp32s3", "unstable"] }
 esp-hal-embassy = { version = "0.7.0", features = ["esp32s3"] }
-esp-hal-smartled = { git = "https://github.com/esp-rs/esp-hal-community", rev = "a613668", features = [
+esp-hal-smartled = { git = "https://github.com/robamu/esp-hal-community", rev = "309f19e", features = [
   "esp32s3",
 ] }
 esp-println = { version = "0.13.0", features = ["esp32s3", "log"] }
@@ -31,6 +31,7 @@ log = { version = "0.4.21" }
 smart-leds = "0.4.0"
 static_cell = { version = "2.1.0", features = ["nightly"] }
 mt6701 = { path = "../mt6701" }
+ldc1x1x = { path = "../ldc1x1x" }
 
 [profile.dev]
 # Rust debug is too slow.

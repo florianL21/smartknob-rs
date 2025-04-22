@@ -5,6 +5,7 @@ use embedded_hal_async::spi::{Operation, SpiDevice};
 use core::f32::consts::PI;
 use core::fmt::Debug;
 use core::future;
+use core::time::Duration;
 use libm::fabsf;
 
 const _2PI: f32 = PI * 2.0;
@@ -18,9 +19,9 @@ pub enum MT6701Error {
 pub trait AngleSensorTrait {
     type Error: Debug;
 
-    fn init(&mut self) -> Result<(), Self::Error>;
     fn read_raw_angle(&mut self) -> impl future::Future<Output = Result<u16, Self::Error>>;
-    fn update(&mut self, now_us: u64) -> impl future::Future<Output = Result<(), Self::Error>>;
+    fn update(&mut self, now_us: Duration)
+    -> impl future::Future<Output = Result<(), Self::Error>>;
     fn get_angle(&mut self) -> f32;
     fn get_turns(&mut self) -> i64;
     fn get_position(&mut self) -> f64;
@@ -36,7 +37,6 @@ pub struct MT6701Spi<SPI> {
     position: f64,
     position_prev: f64,
     velocity: f32,
-    prev_ns: u64,
 }
 
 impl<SPI> MT6701Spi<SPI>
@@ -52,17 +52,16 @@ where
             angle: 0.0,
             angle_prev: 0.0,
             velocity: 0.0,
-            prev_ns: 0,
         }
     }
 
-    fn cal_velocity(&mut self, ts_us: u64) {
-        if ts_us == 0 {
+    fn cal_velocity(&mut self, time_delta: Duration) {
+        if time_delta.is_zero() {
             self.velocity = 0.0;
             return;
         }
 
-        let mut ts = (ts_us - self.prev_ns) as f32 * 1e-6;
+        let mut ts = time_delta.as_micros() as f32 * 1e-6;
         if ts < 0.0 {
             ts = 1e-3;
         }
@@ -79,10 +78,6 @@ where
 {
     type Error = MT6701Error;
 
-    fn init(&mut self) -> Result<(), MT6701Error> {
-        Ok(())
-    }
-
     async fn read_raw_angle(&mut self) -> Result<u16, MT6701Error> {
         let mut buffer: [u8; 2] = [0; 2];
 
@@ -96,7 +91,8 @@ where
         Ok((buf >> 1) & 0x3FFF)
     }
 
-    async fn update(&mut self, ts_us: u64) -> Result<(), MT6701Error> {
+    /// Update the encoder state and re-calculate angle, turns, position, and velocity
+    async fn update(&mut self, duration_since_last_call: Duration) -> Result<(), MT6701Error> {
         let raw_angle = self.read_raw_angle().await?;
 
         self.angle = (raw_angle as f32 / 16384_f32) * _2PI;
@@ -108,26 +104,29 @@ where
 
         self.position = (self.turns as f32 * _2PI + self.angle) as f64;
 
-        self.cal_velocity(ts_us);
+        self.cal_velocity(duration_since_last_call);
 
         self.angle_prev = self.angle;
-        self.prev_ns = ts_us;
 
         Ok(())
     }
 
+    /// Get the current angle in radians
     fn get_angle(&mut self) -> f32 {
         self.angle
     }
 
+    /// Get the number of whole absolute turns
     fn get_turns(&mut self) -> i64 {
         self.turns
     }
 
+    /// Get the current position (turns + angle) in radians
     fn get_position(&mut self) -> f64 {
         self.position
     }
 
+    /// Get the current velocity in radians per second
     fn get_velocity(&mut self) -> f32 {
         self.velocity
     }

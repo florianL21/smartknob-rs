@@ -508,8 +508,8 @@ dependencies = [
 
 [[package]]
 name = "esp-hal-smartled"
-version = "0.14.0"
-source = "git+https://github.com/esp-rs/esp-hal-community?rev=a613668#a61366829c28e8b99d2a9ffc6c19abd0320366bf"
+version = "0.15.0"
+source = "git+https://github.com/robamu/esp-hal-community?rev=309f19e#309f19ed2605da4e61373862478b7a1f705068d1"
 dependencies = [
  "document-features",
  "esp-hal",
@@ -721,6 +721,13 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn",
+]
+
+[[package]]
+name = "ldc1x1x"
+version = "0.1.2"
+dependencies = [
+ "embedded-hal-async",
 ]
 
 [[package]]
@@ -1022,6 +1029,7 @@ dependencies = [
  "esp-hal-smartled",
  "esp-println",
  "foc",
+ "ldc1x1x",
  "log",
  "mt6701",
  "smart-leds",

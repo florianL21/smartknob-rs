@@ -2,18 +2,20 @@
 #![no_main]
 
 extern crate alloc;
+
 use embassy_executor::Spawner;
 use embassy_sync::{blocking_mutex::raw::NoopRawMutex, mutex::Mutex};
-use embassy_time::{Duration, Timer};
+use embassy_time::{Duration, Instant, Timer};
 use esp_backtrace as _;
 use esp_hal::{
     clock::CpuClock,
     dma::{DmaRxBuf, DmaTxBuf},
     dma_buffers,
     gpio::{GpioPin, Level, Output, OutputConfig},
+    i2c::master::{Config as I2cConfig, I2c},
     rmt::Rmt,
     spi::{
-        master::{Config, Spi},
+        master::{Config as SpiConfig, Spi},
         Mode,
     },
     time::Rate,
@@ -21,29 +23,36 @@ use esp_hal::{
 };
 use mt6701::{self, AngleSensorTrait};
 
+use embassy_embedded_hal::shared_bus::asynch::i2c::I2cDevice;
 use embassy_embedded_hal::shared_bus::asynch::spi::SpiDevice;
-use esp_hal_smartled::{smartLedBuffer, SmartLedsAdapter};
+use esp_hal_smartled::{buffer_size_async, SmartLedsAdapterAsync};
 use log::info;
 use smart_leds::{
     brightness,
-    colors::{BLACK, RED},
-    gamma, SmartLedsWrite,
+    colors::{BLACK, BLUE, RED},
+    gamma, SmartLedsWriteAsync,
 };
 
-#[embassy_executor::task]
-async fn log_angle(
-    spi_bus: esp_hal::spi::master::SpiDmaBus<'static, esp_hal::Async>,
-    pin_mag_csn: GpioPin<12>,
-) {
-    let spi_bus_mutex: Mutex<
-        NoopRawMutex,
-        esp_hal::spi::master::SpiDmaBus<'static, esp_hal::Async>,
-    > = embassy_sync::mutex::Mutex::new(spi_bus);
+use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
+use embassy_sync::watch::Watch;
+use static_cell::StaticCell;
 
-    let spi_device = SpiDevice::new(
-        &spi_bus_mutex,
-        Output::new(pin_mag_csn, Level::Low, OutputConfig::default()),
-    );
+type SpiBus1 = Mutex<NoopRawMutex, esp_hal::spi::master::SpiDmaBus<'static, esp_hal::Async>>;
+type I2cBus1 = Mutex<NoopRawMutex, esp_hal::i2c::master::I2c<'static, esp_hal::Async>>;
+
+#[derive(Clone)]
+struct Encoder {
+    pub position: f64,
+    pub angle: f32,
+}
+
+#[embassy_executor::task]
+async fn read_encoder(
+    spi_bus: &'static SpiBus1,
+    mag_csn: Output<'static>,
+    sender: embassy_sync::watch::Sender<'static, CriticalSectionRawMutex, Encoder, 2>,
+) {
+    let spi_device = SpiDevice::new(spi_bus, mag_csn);
 
     let mut encoder: mt6701::MT6701Spi<
         SpiDevice<
@@ -53,19 +62,75 @@ async fn log_angle(
             Output<'_>,
         >,
     > = mt6701::MT6701Spi::new(spi_device);
+    let mut t = Instant::now();
+    info!("encoder init done!");
     loop {
-        if encoder.update(0).await.is_ok() {
+        if encoder.update(t.elapsed().into()).await.is_ok() {
+            t = Instant::now();
             let pos = encoder.get_position();
-            info!("pos: {}", pos);
+            let angle = encoder.get_angle();
+            sender.send(Encoder {
+                position: pos,
+                angle: angle,
+            });
         }
+        Timer::after_millis(2).await;
+    }
+}
+
+#[embassy_executor::task]
+async fn log_rotations(
+    mut receiver: embassy_sync::watch::Receiver<'static, CriticalSectionRawMutex, Encoder, 2>,
+) {
+    info!("Log encoder init done!");
+    loop {
+        let pos = receiver.get().await;
+        info!("Position: {}", pos.position);
         Timer::after_millis(200).await;
+    }
+}
+
+#[embassy_executor::task]
+async fn led_ring(
+    rmt_channel: esp_hal::rmt::ChannelCreator<esp_hal::Async, 0>,
+    led_pin: GpioPin<39>,
+    mut receiver: embassy_sync::watch::Receiver<'static, CriticalSectionRawMutex, Encoder, 2>,
+) {
+    const NUM_LEDS: usize = 24;
+    let rmt_buffer: [u32; buffer_size_async(NUM_LEDS)] = [0; buffer_size_async(NUM_LEDS)];
+    let mut led = SmartLedsAdapterAsync::new(rmt_channel, led_pin, rmt_buffer);
+
+    let mut data = [RED; NUM_LEDS];
+    let step_size = (2.0f32 * core::f32::consts::PI) / NUM_LEDS as f32;
+    info!("LED init done!");
+    loop {
+        let encoder = receiver.get().await;
+        for (i, item) in data.iter_mut().enumerate() {
+            if encoder.angle > step_size * i as f32 {
+                *item = RED;
+            } else {
+                *item = BLUE;
+            }
+        }
+        led.write(brightness(gamma(data.iter().cloned()), 10))
+            .await
+            .unwrap();
+        Timer::after(Duration::from_millis(20)).await;
+    }
+}
+
+#[embassy_executor::task]
+async fn read_ldc(i2c: &'static I2cBus1) {
+    let i2c_device = I2cDevice::new(i2c);
+    let _ = ldc1x1x::Ldc::new(i2c_device, 0x2C);
+    info!("LDC init done!");
+    loop {
+        Timer::after(Duration::from_millis(1000)).await;
     }
 }
 
 #[esp_hal_embassy::main]
 async fn main(spawner: Spawner) {
-    // generator version: 0.3.1
-
     esp_println::logger::init_logger_from_env();
 
     let config = esp_hal::Config::default().with_cpu_clock(CpuClock::max());
@@ -79,8 +144,8 @@ async fn main(spawner: Spawner) {
 
     // Pins for LDC1614
     // let pins_ldc_int_pin = peripherals.GPIO40;
-    // let pins_i2c_scl = peripherals.GPIO42;
-    // let pins_i2c_sda = peripherals.GPIO41;
+    let pins_i2c_scl = peripherals.GPIO42;
+    let pins_i2c_sda = peripherals.GPIO41;
 
     // Pins for WS2812B LEDs
     let pin_led_data = peripherals.GPIO39;
@@ -100,19 +165,14 @@ async fn main(spawner: Spawner) {
     let pin_mag_csn = peripherals.GPIO12;
     // let pin_mag_push = peripherals.GPIO3;
 
-    // initialize various peripherals
-    let rmt = Rmt::new(peripherals.RMT, Rate::from_mhz(80)).unwrap();
-    let rmt_buffer = smartLedBuffer!(24);
-    const NUM_LEDS: usize = 24;
-    let mut led = SmartLedsAdapter::new(rmt.channel0, pin_led_data, rmt_buffer);
-
+    // Encoder initialization
     let (rx_buffer, rx_descriptors, tx_buffer, tx_descriptors) = dma_buffers!(32000);
     let dma_rx_buf = DmaRxBuf::new(rx_descriptors, rx_buffer).unwrap();
     let dma_tx_buf = DmaTxBuf::new(tx_descriptors, tx_buffer).unwrap();
 
-    let spi_bus: esp_hal::spi::master::SpiDmaBus<'_, esp_hal::Async> = Spi::new(
+    let spi_bus = Spi::new(
         peripherals.SPI2,
-        Config::default()
+        SpiConfig::default()
             .with_frequency(Rate::from_khz(100))
             .with_mode(Mode::_0),
     )
@@ -123,22 +183,38 @@ async fn main(spawner: Spawner) {
     .with_buffers(dma_rx_buf, dma_tx_buf)
     .into_async();
 
-    // TODO: Spawn some tasks
-    spawner.spawn(log_angle(spi_bus, pin_mag_csn)).unwrap();
-    let _ = spawner;
+    static SPI_BUS: StaticCell<SpiBus1> = StaticCell::new();
+    let spi_bus = SPI_BUS.init(Mutex::new(spi_bus));
 
-    let mut data;
+    static WATCH: Watch<CriticalSectionRawMutex, Encoder, 2> = Watch::new();
+    let sender = WATCH.sender();
 
-    loop {
-        Timer::after(Duration::from_secs(1)).await;
-        data = [RED; NUM_LEDS];
-        led.write(brightness(gamma(data.iter().cloned()), 10))
-            .unwrap();
-        Timer::after(Duration::from_secs(1)).await;
-        data = [BLACK; NUM_LEDS];
-        led.write(brightness(gamma(data.iter().cloned()), 10))
-            .unwrap();
-    }
+    let mag_cs = Output::new(pin_mag_csn, Level::Low, OutputConfig::default());
+    spawner.must_spawn(read_encoder(spi_bus, mag_cs, sender));
 
-    // for inspiration have a look at the examples at https://github.com/esp-rs/esp-hal/tree/esp-hal-v1.0.0-beta.0/examples/src/bin
+    // LDC sensor
+    let i2c_bus: I2c<'_, esp_hal::Async> = I2c::new(
+        peripherals.I2C0,
+        I2cConfig::default().with_frequency(Rate::from_khz(100)),
+    )
+    .unwrap()
+    .with_scl(pins_i2c_scl)
+    .with_sda(pins_i2c_sda)
+    .into_async();
+    static I2C_BUS: StaticCell<I2cBus1> = StaticCell::new();
+    let i2c_bus = I2C_BUS.init(Mutex::new(i2c_bus));
+
+    spawner.must_spawn(read_ldc(i2c_bus));
+
+    // log encoder values
+    let receiver = WATCH.receiver().unwrap();
+    spawner.must_spawn(log_rotations(receiver));
+
+    // LED ring
+    let rmt = Rmt::new(peripherals.RMT, Rate::from_mhz(80))
+        .unwrap()
+        .into_async();
+    let receiver = WATCH.receiver().unwrap();
+    spawner.must_spawn(led_ring(rmt.channel0, pin_led_data, receiver));
+    info!("Startup done!");
 }
