@@ -1,7 +1,8 @@
+use core::usize;
+
 use average::Mean;
 use embassy_sync::{blocking_mutex::raw::NoopRawMutex, mutex::Mutex};
 use embassy_time::{Duration, Timer};
-use heapless::Vec;
 use ldc1x1x::{AutoScanSequence, Channel};
 
 use embassy_embedded_hal::shared_bus::asynch::i2c::I2cDevice;
@@ -27,50 +28,49 @@ enum Event {
 }
 
 struct KnobTilt {
-    directions: Vec<Vector2<f32>, 3>,
-    idle_positions: Vec<u32, 3>,
-    coil_vecs: Vec<Vector2<f32>, 3>,
-    raw_coil_values: Vec<u32, 3>,
+    directions: [Vector2<f32>; 3],
+    idle_positions: [u32; 3],
+    coil_vecs: [Vector2<f32>; 3],
+    raw_coil_values: [u32; 3],
     direction: Vector2<f32>,
     angle: f32,
+    rotation: Rotation2<f32>,
+    magnitude: f32,
 }
 
 impl KnobTilt {
     fn new() -> Self {
-        let mut directions = Vec::new();
-        let idle_positions = Vec::new();
-        let coil_vecs = Vec::new();
-        let raw_coil_values = Vec::new();
         let x_120 = sqrtf(3.0) / 2.0;
 
-        directions.push(Vector2::new(0.0f32, -1.0f32)).unwrap();
-        directions.push(Vector2::new(-x_120, 0.5f32)).unwrap();
-        directions.push(Vector2::new(x_120, 1.0f32)).unwrap();
-
         KnobTilt {
-            directions,
-            idle_positions,
-            coil_vecs,
-            raw_coil_values,
+            directions: [
+                Vector2::new(0.0f32, -1.0f32),
+                Vector2::new(-x_120, 0.5f32),
+                Vector2::new(x_120, 1.0f32),
+            ],
+            idle_positions: [0; 3],
+            coil_vecs: [Vector2::default(); 3],
+            raw_coil_values: [0; 3],
             angle: 0.0,
             direction: Vector2::default(),
+            rotation: Rotation2::default(),
+            magnitude: 0.0,
         }
     }
 
-    fn calibrate(&mut self, idle_positions: Vec<u32, 3>) {
+    fn calibrate(&mut self, idle_positions: [u32; 3]) {
         self.idle_positions = idle_positions;
     }
 
-    fn update(&mut self, raw_coil_values: Vec<u32, 3>) {
+    fn update(&mut self, raw_coil_values: [u32; 3]) {
         self.raw_coil_values = raw_coil_values;
         for (i, reading) in self.raw_coil_values.iter().enumerate() {
-            self.coil_vecs
-                .push(self.directions[i] * (*reading as f32))
-                .unwrap();
+            self.coil_vecs[i] = self.directions[i] * (*reading as f32);
         }
-        let dir = self.coil_vecs[0] + self.coil_vecs[1] + self.coil_vecs[2];
-        let angle = Rotation2::rotation_between(&ORIGIN, &dir);
-        self.angle = angle.angle().to_degrees();
+        self.direction = self.coil_vecs.iter().sum();
+        self.rotation = Rotation2::rotation_between(&ORIGIN, &self.direction);
+        self.angle = self.rotation.angle();
+        self.magnitude = self.direction.magnitude();
     }
 }
 
@@ -78,31 +78,29 @@ async fn take_mean_measurement(
     ldc: &mut ldc1x1x::Ldc<
         I2cDevice<'static, NoopRawMutex, esp_hal::i2c::master::I2c<'_, esp_hal::Async>>,
     >,
-) -> Vec<u32, 3> {
+) -> [u32; 3] {
     const NUM_AVERAGES: usize = 10;
-    let mut measurements: Vec<_, 10> = Vec::new();
+    let mut measurements: [[u32; 3]; NUM_AVERAGES] = [[0; 3]; 10];
     // calculate average over 10 measurements
-    for _ in [0..NUM_AVERAGES] {
-        let mut channels: Vec<u32, 3> = heapless::Vec::new();
-        for ch in [
-            ldc1x1x::Channel::Zero,
-            ldc1x1x::Channel::One,
-            ldc1x1x::Channel::Two,
-        ] {
-            let reading = ldc.read_data_24bit(ch).await.unwrap();
-            channels.push(reading).unwrap();
+    for (i, _) in [0..NUM_AVERAGES].iter().enumerate() {
+        let mut channels: [u32; 3] = [0; 3];
+        for (j, ch) in CHANNELS.iter().enumerate() {
+            let reading = ldc.read_data_24bit(*ch).await.unwrap();
+            channels[j] = reading;
         }
-        measurements.push(channels).unwrap();
-    }
-    let mut means: Vec<u32, 3> = Vec::new();
-    for channel in CHANNELS {
-        let mean: Mean = measurements
-            .iter()
-            .map(|v| f64::from(v[channel as usize]))
-            .collect();
-        means.push(mean.mean() as u32).unwrap();
+        measurements[i] = channels;
+        info!("Measurements: {:#?}", measurements);
+        Timer::after(Duration::from_millis(20)).await;
     }
 
+    let mut means: [u32; 3] = [0; 3];
+    for (i, channel) in CHANNELS.iter().enumerate() {
+        means[i] = measurements
+            .iter()
+            .map(|v| f64::from(v[*channel as usize]))
+            .collect::<Mean>()
+            .mean() as u32;
+    }
     means
 }
 
@@ -145,16 +143,18 @@ pub async fn read_ldc_task(i2c: &'static I2cBus1) {
     .await
     .unwrap();
     info!("LDC init done!");
+    Timer::after(Duration::from_millis(20)).await;
     let idle_positions = take_mean_measurement(&mut ldc).await;
+    info!("Average idle positions: {:#?}", idle_positions);
 
     let mut kt = KnobTilt::new();
     kt.calibrate(idle_positions);
 
     loop {
-        let mut raw_coil_values: Vec<u32, 3> = Vec::new();
-        for ch in CHANNELS {
-            let reading = ldc.read_data_24bit(ch).await.unwrap();
-            raw_coil_values.push(reading).unwrap();
+        let mut raw_coil_values: [u32; 3] = [0; 3];
+        for (i, ch) in CHANNELS.iter().enumerate() {
+            let reading = ldc.read_data_24bit(*ch).await.unwrap();
+            raw_coil_values[i] = reading;
         }
         kt.update(raw_coil_values);
         info!("angle: {}", kt.angle);
