@@ -11,7 +11,7 @@ use esp_hal::{
     clock::CpuClock,
     dma::{DmaRxBuf, DmaTxBuf},
     dma_buffers,
-    gpio::{GpioPin, Level, Output, OutputConfig},
+    gpio::{GpioPin, Input, Level, Output, OutputConfig, InputConfig},
     i2c::master::{Config as I2cConfig, I2c},
     rmt::Rmt,
     spi::{
@@ -135,7 +135,7 @@ async fn main(spawner: Spawner) {
     info!("Embassy initialized!");
 
     // Pins for LDC1614
-    // let pins_ldc_int_pin = peripherals.GPIO40;
+    let pins_ldc_int_pin = peripherals.GPIO40;
     let pins_i2c_scl = peripherals.GPIO42;
     let pins_i2c_sda = peripherals.GPIO41;
 
@@ -196,7 +196,9 @@ async fn main(spawner: Spawner) {
     static I2C_BUS: StaticCell<I2cBus1> = StaticCell::new();
     let i2c_bus = I2C_BUS.init(Mutex::new(i2c_bus));
 
-    spawner.must_spawn(read_ldc_task(i2c_bus));
+    let ldc_int_pin = Input::new(pins_ldc_int_pin, InputConfig::default());
+
+    spawner.must_spawn(read_ldc_task(i2c_bus, ldc_int_pin));
 
     // log encoder values
     // let receiver = WATCH.receiver().unwrap();

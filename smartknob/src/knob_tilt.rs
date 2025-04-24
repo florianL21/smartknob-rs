@@ -3,6 +3,7 @@ use core::usize;
 use average::Mean;
 use embassy_sync::{blocking_mutex::raw::NoopRawMutex, mutex::Mutex};
 use embassy_time::{Duration, Timer};
+use esp_hal::{config, gpio::Input};
 use ldc1x1x::{AutoScanSequence, Channel};
 
 use embassy_embedded_hal::shared_bus::asynch::i2c::I2cDevice;
@@ -19,12 +20,37 @@ const CHANNELS: [Channel; 3] = [
     ldc1x1x::Channel::Two,
 ];
 
-enum Event {
-    TiltStart(f64),
-    TiltAdjust(f64),
+#[derive(Debug)]
+enum KnobTiltEvent {
+    TiltStart(f32, u32),
+    TiltAdjust(f32, u32),
     TiltEnd,
     PressStart,
     PressEnd,
+}
+
+enum KnobTiltState {
+    Pressed,
+    Idle,
+    Tilted(f32, u32)
+}
+
+struct KnobTiltConfig {
+    tilt_trigger: u32,
+    tilt_release: u32,
+    press_trigger: u32,
+    press_release: u32,
+}
+
+impl KnobTiltConfig{
+    fn default() -> Self {
+        KnobTiltConfig {
+            tilt_trigger: 10000,
+            tilt_release: 8000,
+            press_trigger: 10000,
+            press_release: 8000,
+        }
+    }
 }
 
 struct KnobTilt {
@@ -32,14 +58,17 @@ struct KnobTilt {
     idle_positions: [u32; 3],
     coil_vecs: [Vector2<f32>; 3],
     raw_coil_values: [u32; 3],
+    compensated_coil_values: [u32; 3],
     direction: Vector2<f32>,
     angle: f32,
     rotation: Rotation2<f32>,
     magnitude: f32,
+    config: KnobTiltConfig,
+    state: KnobTiltState,
 }
 
 impl KnobTilt {
-    fn new() -> Self {
+    fn new(config: KnobTiltConfig) -> Self {
         let x_120 = sqrtf(3.0) / 2.0;
 
         KnobTilt {
@@ -51,10 +80,13 @@ impl KnobTilt {
             idle_positions: [0; 3],
             coil_vecs: [Vector2::default(); 3],
             raw_coil_values: [0; 3],
+            compensated_coil_values: [0; 3],
             angle: 0.0,
             direction: Vector2::default(),
             rotation: Rotation2::default(),
             magnitude: 0.0,
+            config,
+            state: KnobTiltState::Idle,
         }
     }
 
@@ -62,15 +94,51 @@ impl KnobTilt {
         self.idle_positions = idle_positions;
     }
 
-    fn update(&mut self, raw_coil_values: [u32; 3]) {
+    fn update(&mut self, raw_coil_values: [u32; 3]) -> Option<KnobTiltEvent> {
         self.raw_coil_values = raw_coil_values;
         for (i, reading) in self.raw_coil_values.iter().enumerate() {
-            self.coil_vecs[i] = self.directions[i] * (*reading as f32);
+            // compensate idle positions
+            let reading = reading.saturating_sub(self.idle_positions[i]);
+            self.compensated_coil_values[i] = reading;
+            self.coil_vecs[i] = self.directions[i] * (reading as f32);
         }
         self.direction = self.coil_vecs.iter().sum();
         self.rotation = Rotation2::rotation_between(&ORIGIN, &self.direction);
         self.angle = self.rotation.angle();
         self.magnitude = self.direction.magnitude();
+
+        match self.state {
+            KnobTiltState::Idle => {
+                if (self.magnitude as u32) > self.config.tilt_trigger {
+                    self.state = KnobTiltState::Tilted(self.angle, self.magnitude as u32);
+                    Some(KnobTiltEvent::TiltStart(self.angle, self.magnitude as u32))
+                } else if self.compensated_coil_values[0] > self.config.press_trigger {
+                    self.state = KnobTiltState::Pressed;
+                    Some(KnobTiltEvent::PressStart)
+                } else {
+                    None
+                }
+            }
+            KnobTiltState::Pressed => {
+                if self.compensated_coil_values[0] < self.config.press_release {
+                    self.state = KnobTiltState::Idle;
+                    Some(KnobTiltEvent::PressEnd)
+                } else {
+                    None
+                }
+            }
+            KnobTiltState::Tilted(angle, magnitude) => {
+                if (self.magnitude as u32) < self.config.tilt_release {
+                    self.state = KnobTiltState::Idle;
+                    Some(KnobTiltEvent::TiltEnd)
+                } else if angle != self.angle || magnitude != (self.magnitude as u32) {
+                    self.state = KnobTiltState::Tilted(self.angle, self.magnitude as u32);
+                    Some(KnobTiltEvent::TiltAdjust(self.angle, self.magnitude as u32))
+                } else {
+                    None
+                }
+            }
+        }
     }
 }
 
@@ -78,18 +146,19 @@ async fn take_mean_measurement(
     ldc: &mut ldc1x1x::Ldc<
         I2cDevice<'static, NoopRawMutex, esp_hal::i2c::master::I2c<'_, esp_hal::Async>>,
     >,
+    int_pin: &mut Input<'static>,
 ) -> [u32; 3] {
     const NUM_AVERAGES: usize = 10;
     let mut measurements: [[u32; 3]; NUM_AVERAGES] = [[0; 3]; 10];
     // calculate average over 10 measurements
-    for (i, _) in [0..NUM_AVERAGES].iter().enumerate() {
+    for i in 0..NUM_AVERAGES {
         let mut channels: [u32; 3] = [0; 3];
         for (j, ch) in CHANNELS.iter().enumerate() {
             let reading = ldc.read_data_24bit(*ch).await.unwrap();
             channels[j] = reading;
         }
         measurements[i] = channels;
-        info!("Measurements: {:#?}", measurements);
+        // int_pin.wait_for_rising_edge().await;
         Timer::after(Duration::from_millis(20)).await;
     }
 
@@ -105,11 +174,11 @@ async fn take_mean_measurement(
 }
 
 #[embassy_executor::task]
-pub async fn read_ldc_task(i2c: &'static I2cBus1) {
+pub async fn read_ldc_task(i2c: &'static I2cBus1, mut int_pin: Input<'static>) {
     let i2c_device = I2cDevice::new(i2c);
     let mut ldc = ldc1x1x::Ldc::new(i2c_device, 0x2A);
     let mut init_ok = false;
-    for _ in [0..3] {
+    for _ in 0..3 {
         if ldc.reset().await.is_err() {
             Timer::after_millis(100).await;
             info!("LDC init failed, retrying...");
@@ -136,7 +205,7 @@ pub async fn read_ldc_task(i2c: &'static I2cBus1) {
     )
     .await
     .unwrap();
-    ldc.set_config(ldc1x1x::Config::default()).await.unwrap();
+    ldc.set_config(ldc1x1x::Config::default().with_interrupt_on_status_update(true)).await.unwrap();
     ldc.set_error_config(
         ldc1x1x::ErrorConfig::default().with_amplitude_high_error_to_data_register(true),
     )
@@ -144,10 +213,10 @@ pub async fn read_ldc_task(i2c: &'static I2cBus1) {
     .unwrap();
     info!("LDC init done!");
     Timer::after(Duration::from_millis(20)).await;
-    let idle_positions = take_mean_measurement(&mut ldc).await;
+    let idle_positions = take_mean_measurement(&mut ldc, &mut int_pin).await;
     info!("Average idle positions: {:#?}", idle_positions);
 
-    let mut kt = KnobTilt::new();
+    let mut kt = KnobTilt::new(KnobTiltConfig::default());
     kt.calibrate(idle_positions);
 
     loop {
@@ -156,10 +225,12 @@ pub async fn read_ldc_task(i2c: &'static I2cBus1) {
             let reading = ldc.read_data_24bit(*ch).await.unwrap();
             raw_coil_values[i] = reading;
         }
-        kt.update(raw_coil_values);
-        info!("angle: {}", kt.angle);
+        if let Some(t) = kt.update(raw_coil_values) {
+            info!("Event: {:#?}", t);
+        }
         // let angle = Rotation2::rotation_between(&ORIGIN, &dir);
         // Vector2::new(x, y)
+        // int_pin.wait_for_rising_edge().await;
         Timer::after(Duration::from_millis(100)).await;
     }
 }
