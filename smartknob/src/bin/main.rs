@@ -24,12 +24,12 @@ use esp_hal::{
 use mt6701::{self, AngleSensorTrait};
 
 use embassy_embedded_hal::shared_bus::asynch::spi::SpiDevice;
-use esp_hal_smartled::{buffer_size_async, SmartLedsAdapterAsync};
+use esp_hal_smartled::{buffer_size, SmartLedsAdapter};
 use log::info;
 use smart_leds::{
     brightness,
     colors::{BLACK, RED},
-    gamma, SmartLedsWriteAsync,
+    gamma, SmartLedsWrite,
 };
 
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
@@ -94,13 +94,14 @@ async fn log_rotations(
 
 #[embassy_executor::task]
 async fn led_ring(
-    rmt_channel: esp_hal::rmt::ChannelCreator<esp_hal::Async, 0>,
+    rmt_channel: esp_hal::rmt::ChannelCreator<esp_hal::Blocking, 0>,
     led_pin: GpioPin<39>,
     mut receiver: embassy_sync::watch::Receiver<'static, CriticalSectionRawMutex, Encoder, 2>,
 ) {
     const NUM_LEDS: usize = 24;
-    let rmt_buffer: [u32; buffer_size_async(NUM_LEDS)] = [0; buffer_size_async(NUM_LEDS)];
-    let mut led = SmartLedsAdapterAsync::new(rmt_channel, led_pin, rmt_buffer);
+    const BUFFE_SIZE: usize = buffer_size(NUM_LEDS);
+    let rmt_buffer: [u32; BUFFE_SIZE] = [0; BUFFE_SIZE];
+    let mut led = SmartLedsAdapter::new(rmt_channel, led_pin, rmt_buffer);
 
     let mut data = [RED; NUM_LEDS];
     let step_size = (2.0f32 * core::f32::consts::PI) / NUM_LEDS as f32;
@@ -115,7 +116,6 @@ async fn led_ring(
             }
         }
         led.write(brightness(gamma(data.iter().cloned()), 10))
-            .await
             .unwrap();
         Timer::after(Duration::from_millis(20)).await;
     }
@@ -204,8 +204,7 @@ async fn main(spawner: Spawner) {
 
     // LED ring
     let rmt = Rmt::new(peripherals.RMT, Rate::from_mhz(80))
-        .unwrap()
-        .into_async();
+        .unwrap();
     let receiver = WATCH.receiver().unwrap();
     spawner.must_spawn(led_ring(rmt.channel0, pin_led_data, receiver));
     info!("Startup done!");
