@@ -1131,6 +1131,7 @@ dependencies = [
  "esp-hal-embassy",
  "esp-hal-smartled",
  "esp-println",
+ "fixed",
  "foc",
  "heapless",
  "ldc1x1x",

@@ -11,16 +11,26 @@ use esp_hal::{
     clock::CpuClock,
     dma::{DmaRxBuf, DmaTxBuf},
     dma_buffers,
-    gpio::{GpioPin, Input, Level, Output, OutputConfig, InputConfig},
+    gpio::{GpioPin, Input, InputConfig, Level, Output, OutputConfig},
     i2c::master::{Config as I2cConfig, I2c},
+    mcpwm::{
+        operator::{DeadTimeCfg, PwmPinConfig},
+        timer::PwmWorkingMode,
+        McPwm, PeripheralClockConfig,
+    },
+    peripheral::Peripheral,
+    peripherals::TIMG0,
     rmt::Rmt,
     spi::{
         master::{Config as SpiConfig, Spi},
         Mode,
     },
     time::Rate,
-    timer::systimer::SystemTimer,
+    timer::{systimer::SystemTimer, timg::TimerGroup},
+    Blocking,
 };
+use fixed::{traits::LossyInto, types::I16F16};
+use foc::{pid::PIController, pwm, Foc};
 use mt6701::{self, AngleSensorTrait};
 
 use embassy_embedded_hal::shared_bus::asynch::spi::SpiDevice;
@@ -144,12 +154,12 @@ async fn main(spawner: Spawner) {
 
     // pins for TMC6300
     // let pin_tmc_diag = peripherals.GPIO47;
-    // let pin_tmc_uh = peripherals.GPIO48;
-    // let pin_tmc_ul = peripherals.GPIO17;
-    // let pin_tmc_vh = peripherals.GPIO21;
-    // let pin_tmc_vl = peripherals.GPIO46;
-    // let pin_tmc_wh = peripherals.GPIO18;
-    // let pin_tmc_wl = peripherals.GPIO45;
+    let pin_tmc_uh = peripherals.GPIO48;
+    let pin_tmc_ul = peripherals.GPIO17;
+    let pin_tmc_vh = peripherals.GPIO21;
+    let pin_tmc_vl = peripherals.GPIO46;
+    let pin_tmc_wh = peripherals.GPIO18;
+    let pin_tmc_wl = peripherals.GPIO45;
 
     // pins for MT6701-CT
     let pin_mag_clk = peripherals.GPIO11;
@@ -205,9 +215,54 @@ async fn main(spawner: Spawner) {
     // spawner.must_spawn(log_rotations(receiver));
 
     // LED ring
-    let rmt = Rmt::new(peripherals.RMT, Rate::from_mhz(80))
-        .unwrap();
+    let rmt = Rmt::new(peripherals.RMT, Rate::from_mhz(80)).unwrap();
     let receiver = WATCH.receiver().unwrap();
     spawner.must_spawn(led_ring(rmt.channel0, pin_led_data, receiver));
     info!("Startup done!");
+
+    let clock_cfg = PeripheralClockConfig::with_frequency(Rate::from_mhz(32)).unwrap();
+    let mut mcpwm = McPwm::new(peripherals.MCPWM0, clock_cfg);
+
+    mcpwm.operator0.set_timer(&mcpwm.timer0);
+    mcpwm.operator1.set_timer(&mcpwm.timer0);
+    mcpwm.operator2.set_timer(&mcpwm.timer0);
+
+    let mut _pwm_u = mcpwm.operator0.with_linked_pins(
+        pin_tmc_uh,
+        PwmPinConfig::UP_ACTIVE_HIGH,
+        pin_tmc_ul,
+        PwmPinConfig::UP_ACTIVE_HIGH,
+        DeadTimeCfg::new_ahc(),
+    );
+    let mut _pwm_v = mcpwm.operator1.with_linked_pins(
+        pin_tmc_vh,
+        PwmPinConfig::UP_ACTIVE_HIGH,
+        pin_tmc_vl,
+        PwmPinConfig::UP_ACTIVE_HIGH,
+        DeadTimeCfg::new_ahc(),
+    );
+    let mut _pwm_w = mcpwm.operator2.with_linked_pins(
+        pin_tmc_wh,
+        PwmPinConfig::UP_ACTIVE_HIGH,
+        pin_tmc_wl,
+        PwmPinConfig::UP_ACTIVE_HIGH,
+        DeadTimeCfg::new_ahc(),
+    );
+    // Turn off all outputs
+    _pwm_u.set_timestamp_a(0);
+    _pwm_u.set_timestamp_b(0);
+    _pwm_v.set_timestamp_a(0);
+    _pwm_v.set_timestamp_b(0);
+    _pwm_w.set_timestamp_a(0);
+    _pwm_w.set_timestamp_b(0);
+
+    let timer_clock_cfg = clock_cfg
+        .timer_clock_with_frequency(6, PwmWorkingMode::UpDown, Rate::from_khz(25))
+        .unwrap();
+    mcpwm.timer0.start(timer_clock_cfg);
+
+    let _fcc = PIController::new(I16F16::from_num(0.6), I16F16::from_num(0));
+    let _tcc = PIController::new(I16F16::from_num(0.6), I16F16::from_num(0));
+
+    // let foc = Foc::new<, 16>(fcc, tcc);
 }
