@@ -4,7 +4,7 @@
 extern crate alloc;
 
 use embassy_executor::Spawner;
-use embassy_sync::{blocking_mutex::raw::NoopRawMutex, mutex::Mutex};
+use embassy_sync::{blocking_mutex::raw::NoopRawMutex, mutex::Mutex, signal::Signal};
 use embassy_time::{Duration, Instant, Timer};
 use esp_backtrace as _;
 use esp_hal::{
@@ -27,11 +27,14 @@ use esp_hal::{
     },
     time::Rate,
     timer::{systimer::SystemTimer, timg::TimerGroup},
-    Blocking,
+    usb_serial_jtag::UsbSerialJtag,
+    Async,
 };
 use fixed::{traits::LossyInto, types::I16F16};
 use foc::{pid::PIController, pwm, Foc};
+use menu::{Item, ItemType, Menu, Runner};
 use mt6701::{self, AngleSensorTrait};
+use noline::builder::EditorBuilder;
 
 use embassy_embedded_hal::shared_bus::asynch::spi::SpiDevice;
 use esp_hal_smartled::{buffer_size, SmartLedsAdapter};
@@ -51,6 +54,8 @@ use smartknob_rs::knob_tilt::read_ldc_task;
 
 type SpiBus1 = Mutex<NoopRawMutex, esp_hal::spi::master::SpiDmaBus<'static, esp_hal::Async>>;
 type I2cBus1 = Mutex<NoopRawMutex, esp_hal::i2c::master::I2c<'static, esp_hal::Async>>;
+
+const MAX_BUFFER_SIZE: usize = 512;
 
 #[derive(Clone)]
 struct Encoder {
@@ -128,6 +133,79 @@ async fn led_ring(
         led.write(brightness(gamma(data.iter().cloned()), 10))
             .unwrap();
         Timer::after(Duration::from_millis(20)).await;
+    }
+}
+
+#[derive(Default)]
+struct Context {
+    _inner: u32,
+}
+
+fn enter_root(
+    _menu: &Menu<UsbSerialJtag<'_, Async>, Context>,
+    interface: &mut UsbSerialJtag<'_, Async>,
+    _context: &mut Context,
+) {
+    // writeln!(interface, "In enter_root").unwrap();
+    info!("In enter_root");
+}
+
+fn exit_root(
+    _menu: &Menu<UsbSerialJtag<'_, Async>, Context>,
+    interface: &mut UsbSerialJtag<'_, Async>,
+    _context: &mut Context,
+) {
+    // writeln!(interface, "In exit_root").unwrap();
+    info!("In exit_root");
+}
+
+fn select_bar(
+    _menu: &Menu<UsbSerialJtag<'_, Async>, Context>,
+    _item: &Item<UsbSerialJtag<'_, Async>, Context>,
+    args: &[&str],
+    interface: &mut UsbSerialJtag<'_, Async>,
+    _context: &mut Context,
+) {
+    // writeln!(interface, "In select_bar. Args = {:?}", args).unwrap();
+    info!("In select_bar. Args = {:?}", args);
+}
+
+const ROOT_MENU: Menu<UsbSerialJtag<'_, Async>, Context> = Menu {
+    label: "root",
+    items: &[&Item {
+        item_type: ItemType::Callback {
+            function: select_bar,
+            parameters: &[],
+        },
+        command: "bar",
+        help: Some("fandoggles a bar"),
+    }],
+    entry: Some(enter_root),
+    exit: Some(exit_root),
+};
+
+#[embassy_executor::task]
+async fn menu_handler(mut serial: UsbSerialJtag<'static, Async>) {
+    // let mut buffer: Vec<u8, 100> = Vec::new();
+    // let mut history: Vec<u8, 200> = Vec::new();
+
+    // let mut editor = EditorBuilder::from_slice(&mut buffer)
+    //     .with_slice_history(&mut history)
+    //     .build_async(&mut serial)
+    //     .await
+    //     .unwrap();
+
+    let mut buffer = [0u8; 200];
+    let mut read_buffer = [0u8; 200];
+
+    let mut context = Context::default();
+    let mut r = Runner::new(ROOT_MENU, &mut buffer, serial, &mut context);
+    loop {
+        // r.input_line(&mut context).unwrap();
+        let Ok(len) = embedded_io_async::Read::read(&mut r.interface, &mut read_buffer).await;
+        for i in 0..len {
+            r.input_byte(read_buffer[i], &mut context);
+        }
     }
 }
 
@@ -219,6 +297,9 @@ async fn main(spawner: Spawner) {
     let receiver = WATCH.receiver().unwrap();
     spawner.must_spawn(led_ring(rmt.channel0, pin_led_data, receiver));
     info!("Startup done!");
+
+    let serial = UsbSerialJtag::new(peripherals.USB_DEVICE).into_async();
+    spawner.must_spawn(menu_handler(serial));
 
     let clock_cfg = PeripheralClockConfig::with_frequency(Rate::from_mhz(32)).unwrap();
     let mut mcpwm = McPwm::new(peripherals.MCPWM0, clock_cfg);

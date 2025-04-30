@@ -12,7 +12,10 @@ pub struct ClockDividers {
 
 impl ClockDividers {
     pub const fn with_fref_div(self, div: u8) -> Self {
-        Self { fin_div: self.fin_div, fref_div: div as u16 }
+        Self {
+            fin_div: self.fin_div,
+            fref_div: div as u16,
+        }
     }
 }
 
@@ -22,10 +25,7 @@ pub struct Fsensor(pub f32);
 impl Fsensor {
     /// Calculate sensor frequency based on inductance in μH and capacitance in pF.
     pub const fn from_inductance_capacitance(inductance: f32, capacitance: f32) -> Self {
-        Self(
-            1.0 / (2.0 * 3.14 * sqrt(inductance * 1e-6_f32 * capacitance * 1e-12_f32))
-                * 1e-6_f32,
-        )
+        Self(1.0 / (2.0 * 3.14 * sqrt(inductance * 1e-6_f32 * capacitance * 1e-12_f32)) * 1e-6_f32)
     }
 
     /// Calculate minimum clock dividers based on Fsensor and Fref (oscillator frequency in MHz).
@@ -260,7 +260,9 @@ pub struct Config(pub u16);
 
 impl Default for Config {
     fn default() -> Self {
-        Self(0x1001 /* ch0, only Rp override, reserved first bit 1 */)
+        Self(
+            0x1001, /* ch0, only Rp override, reserved first bit 1 */
+        )
     }
 }
 
@@ -378,7 +380,9 @@ pub struct MuxConfig(pub u16);
 
 impl Default for MuxConfig {
     fn default() -> Self {
-        Self(0b0100_0001_111 /* reserved + default 33 MHz deglitch */)
+        Self(
+            0b0100_0001_111, /* reserved + default 33 MHz deglitch */
+        )
     }
 }
 

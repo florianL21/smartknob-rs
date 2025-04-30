@@ -41,6 +41,12 @@ heapless = "0.8.0"
 average = "0.16.0"
 libm = "0.2.13"
 fixed = "1.29.0"
+embassy-usb = "0.4.0"
+menu = { version = "0.6.1", features = ["noline"] }
+embedded-io-async = "0.6.1"
+embassy-futures = "0.1.1"
+noline = "0.5.1"
+embedded-io = "0.6.1"
 
 [profile.dev]
 # Rust debug is too slow.
