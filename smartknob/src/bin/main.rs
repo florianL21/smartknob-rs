@@ -32,7 +32,7 @@ use esp_hal::{
 };
 use fixed::{traits::LossyInto, types::I16F16};
 use foc::{pid::PIController, pwm, Foc};
-use menu::{Item, ItemType, Menu, Runner};
+use menu::asynchronous::{Item, ItemType, Menu, Runner};
 use mt6701::{self, AngleSensorTrait};
 use noline::builder::EditorBuilder;
 
@@ -54,8 +54,6 @@ use smartknob_rs::knob_tilt::read_ldc_task;
 
 type SpiBus1 = Mutex<NoopRawMutex, esp_hal::spi::master::SpiDmaBus<'static, esp_hal::Async>>;
 type I2cBus1 = Mutex<NoopRawMutex, esp_hal::i2c::master::I2c<'static, esp_hal::Async>>;
-
-const MAX_BUFFER_SIZE: usize = 512;
 
 #[derive(Clone)]
 struct Encoder {
@@ -186,26 +184,23 @@ const ROOT_MENU: Menu<UsbSerialJtag<'_, Async>, Context> = Menu {
 
 #[embassy_executor::task]
 async fn menu_handler(mut serial: UsbSerialJtag<'static, Async>) {
-    // let mut buffer: Vec<u8, 100> = Vec::new();
-    // let mut history: Vec<u8, 200> = Vec::new();
+    let mut buffer = [0u8; 100];
+    let mut history = [0u8; 200];
 
-    // let mut editor = EditorBuilder::from_slice(&mut buffer)
-    //     .with_slice_history(&mut history)
-    //     .build_async(&mut serial)
-    //     .await
-    //     .unwrap();
-
-    let mut buffer = [0u8; 200];
-    let mut read_buffer = [0u8; 200];
+    let mut editor = EditorBuilder::from_slice(&mut buffer)
+        .with_slice_history(&mut history)
+        .build_async(&mut serial)
+        .await
+        .unwrap();
 
     let mut context = Context::default();
-    let mut r = Runner::new(ROOT_MENU, &mut buffer, serial, &mut context);
+    let mut r = Runner::new(ROOT_MENU, &mut editor, serial, &mut context).await;
     loop {
-        // r.input_line(&mut context).unwrap();
-        let Ok(len) = embedded_io_async::Read::read(&mut r.interface, &mut read_buffer).await;
-        for i in 0..len {
-            r.input_byte(read_buffer[i], &mut context);
-        }
+        r.input_line(&mut context).await.unwrap();
+        // let Ok(len) = embedded_io_async::Read::read(&mut r.interface, &mut read_buffer).await;
+        // for i in 0..len {
+        //     r.input_byte(read_buffer[i], &mut context);
+        // }
     }
 }
 

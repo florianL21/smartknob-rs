@@ -1,0 +1,3 @@
+[submodule "menu"]
+	path = menu
+	url = https://github.com/florianL21/menu.git
