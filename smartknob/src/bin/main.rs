@@ -4,38 +4,25 @@
 extern crate alloc;
 
 use embassy_executor::Spawner;
-use embassy_sync::{blocking_mutex::raw::NoopRawMutex, mutex::Mutex, signal::Signal};
-use embassy_time::{Duration, Instant, Timer};
+use embassy_sync::{blocking_mutex::raw::NoopRawMutex, mutex::Mutex};
+use embassy_time::{Duration, Timer};
 use esp_backtrace as _;
 use esp_hal::{
     clock::CpuClock,
     dma::{DmaRxBuf, DmaTxBuf},
     dma_buffers,
-    gpio::{GpioPin, Input, InputConfig, Level, Output, OutputConfig},
+    gpio::{AnyPin, GpioPin, Input, InputConfig, Level, Output, OutputConfig, OutputPin, Pin},
     i2c::master::{Config as I2cConfig, I2c},
-    mcpwm::{
-        operator::{DeadTimeCfg, PwmPinConfig},
-        timer::PwmWorkingMode,
-        McPwm, PeripheralClockConfig,
-    },
-    peripheral::Peripheral,
-    peripherals::TIMG0,
     rmt::Rmt,
     spi::{
         master::{Config as SpiConfig, Spi},
         Mode,
     },
     time::Rate,
-    timer::{systimer::SystemTimer, timg::TimerGroup},
+    timer::systimer::SystemTimer,
     usb_serial_jtag::UsbSerialJtag,
-    Async,
 };
-use fixed::{traits::LossyInto, types::I16F16};
-use foc::{pid::PIController, pwm::{self, Modulation, SpaceVector}, Foc};
-use mt6701::{self, AngleSensorTrait};
 
-
-use embassy_embedded_hal::shared_bus::asynch::spi::SpiDevice;
 use esp_hal_smartled::{buffer_size, SmartLedsAdapter};
 use log::info;
 use smart_leds::{
@@ -49,49 +36,14 @@ use embassy_sync::watch::Watch;
 
 use static_cell::StaticCell;
 
-use smartknob_rs::knob_tilt::read_ldc_task;
-use smartknob_rs::cli::menu_handler;
+use smartknob_rs::{
+    cli::menu_handler,
+    motor_control::{update_foc, Encoder},
+};
+use smartknob_rs::{knob_tilt::read_ldc_task, motor_control::Pins6PWM};
 
 type SpiBus1 = Mutex<NoopRawMutex, esp_hal::spi::master::SpiDmaBus<'static, esp_hal::Async>>;
 type I2cBus1 = Mutex<NoopRawMutex, esp_hal::i2c::master::I2c<'static, esp_hal::Async>>;
-
-#[derive(Clone)]
-struct Encoder {
-    pub position: f64,
-    pub angle: f32,
-}
-
-#[embassy_executor::task]
-async fn read_encoder(
-    spi_bus: &'static SpiBus1,
-    mag_csn: Output<'static>,
-    sender: embassy_sync::watch::Sender<'static, CriticalSectionRawMutex, Encoder, 2>,
-) {
-    let spi_device = SpiDevice::new(spi_bus, mag_csn);
-
-    let mut encoder: mt6701::MT6701Spi<
-        SpiDevice<
-            '_,
-            NoopRawMutex,
-            esp_hal::spi::master::SpiDmaBus<'_, esp_hal::Async>,
-            Output<'_>,
-        >,
-    > = mt6701::MT6701Spi::new(spi_device);
-    let mut t = Instant::now();
-    info!("encoder init done!");
-    loop {
-        if encoder.update(t.elapsed().into()).await.is_ok() {
-            t = Instant::now();
-            let pos = encoder.get_position();
-            let angle = encoder.get_angle();
-            sender.send(Encoder {
-                position: pos,
-                angle: angle,
-            });
-        }
-        Timer::after_millis(2).await;
-    }
-}
 
 #[embassy_executor::task]
 async fn log_rotations(
@@ -108,7 +60,7 @@ async fn log_rotations(
 #[embassy_executor::task]
 async fn led_ring(
     rmt_channel: esp_hal::rmt::ChannelCreator<esp_hal::Blocking, 0>,
-    led_pin: GpioPin<39>,
+    led_pin: AnyPin,
     mut receiver: embassy_sync::watch::Receiver<'static, CriticalSectionRawMutex, Encoder, 2>,
 ) {
     const NUM_LEDS: usize = 24;
@@ -133,7 +85,6 @@ async fn led_ring(
         Timer::after(Duration::from_millis(20)).await;
     }
 }
-
 
 #[esp_hal_embassy::main]
 async fn main(spawner: Spawner) {
@@ -196,7 +147,22 @@ async fn main(spawner: Spawner) {
     let sender = WATCH.sender();
 
     let mag_cs = Output::new(pin_mag_csn, Level::Low, OutputConfig::default());
-    spawner.must_spawn(read_encoder(spi_bus, mag_cs, sender));
+    let pwm_pins = Pins6PWM {
+        uh: pin_tmc_uh.into(),
+        ul: pin_tmc_ul.into(),
+        vh: pin_tmc_vh.into(),
+        vl: pin_tmc_vl.into(),
+        wh: pin_tmc_wh.into(),
+        wl: pin_tmc_wl.into(),
+    };
+
+    spawner.must_spawn(update_foc(
+        spi_bus,
+        mag_cs,
+        sender,
+        peripherals.MCPWM0,
+        pwm_pins,
+    ));
 
     // LDC sensor
     let i2c_bus: I2c<'_, esp_hal::Async> = I2c::new(
@@ -221,56 +187,9 @@ async fn main(spawner: Spawner) {
     // LED ring
     let rmt = Rmt::new(peripherals.RMT, Rate::from_mhz(80)).unwrap();
     let receiver = WATCH.receiver().unwrap();
-    spawner.must_spawn(led_ring(rmt.channel0, pin_led_data, receiver));
+    spawner.must_spawn(led_ring(rmt.channel0, pin_led_data.into(), receiver));
     info!("Startup done!");
 
     let serial = UsbSerialJtag::new(peripherals.USB_DEVICE).into_async();
     spawner.must_spawn(menu_handler(serial));
-
-    let clock_cfg = PeripheralClockConfig::with_frequency(Rate::from_mhz(32)).unwrap();
-    let mut mcpwm = McPwm::new(peripherals.MCPWM0, clock_cfg);
-
-    mcpwm.operator0.set_timer(&mcpwm.timer0);
-    mcpwm.operator1.set_timer(&mcpwm.timer0);
-    mcpwm.operator2.set_timer(&mcpwm.timer0);
-
-    let mut _pwm_u = mcpwm.operator0.with_linked_pins(
-        pin_tmc_uh,
-        PwmPinConfig::UP_ACTIVE_HIGH,
-        pin_tmc_ul,
-        PwmPinConfig::UP_ACTIVE_HIGH,
-        DeadTimeCfg::new_ahc(),
-    );
-    let mut _pwm_v = mcpwm.operator1.with_linked_pins(
-        pin_tmc_vh,
-        PwmPinConfig::UP_ACTIVE_HIGH,
-        pin_tmc_vl,
-        PwmPinConfig::UP_ACTIVE_HIGH,
-        DeadTimeCfg::new_ahc(),
-    );
-    let mut _pwm_w = mcpwm.operator2.with_linked_pins(
-        pin_tmc_wh,
-        PwmPinConfig::UP_ACTIVE_HIGH,
-        pin_tmc_wl,
-        PwmPinConfig::UP_ACTIVE_HIGH,
-        DeadTimeCfg::new_ahc(),
-    );
-    // Turn off all outputs
-    _pwm_u.set_timestamp_a(0);
-    _pwm_u.set_timestamp_b(0);
-    _pwm_v.set_timestamp_a(0);
-    _pwm_v.set_timestamp_b(0);
-    _pwm_w.set_timestamp_a(0);
-    _pwm_w.set_timestamp_b(0);
-
-    let timer_clock_cfg = clock_cfg
-        .timer_clock_with_frequency(6, PwmWorkingMode::UpDown, Rate::from_khz(25))
-        .unwrap();
-    mcpwm.timer0.start(timer_clock_cfg);
-
-    let _fcc = PIController::new(I16F16::from_num(0.6), I16F16::from_num(0));
-    let _tcc = PIController::new(I16F16::from_num(0.6), I16F16::from_num(0));
-
-    let foc: Foc<SpaceVector, 16> = Foc::new(_fcc, _tcc);
-
 }
