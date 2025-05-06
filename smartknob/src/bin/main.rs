@@ -31,10 +31,9 @@ use esp_hal::{
     Async,
 };
 use fixed::{traits::LossyInto, types::I16F16};
-use foc::{pid::PIController, pwm, Foc};
-use menu::asynchronous::{Item, ItemType, Menu, Runner};
+use foc::{pid::PIController, pwm::{self, Modulation, SpaceVector}, Foc};
 use mt6701::{self, AngleSensorTrait};
-use noline::builder::EditorBuilder;
+
 
 use embassy_embedded_hal::shared_bus::asynch::spi::SpiDevice;
 use esp_hal_smartled::{buffer_size, SmartLedsAdapter};
@@ -51,6 +50,7 @@ use embassy_sync::watch::Watch;
 use static_cell::StaticCell;
 
 use smartknob_rs::knob_tilt::read_ldc_task;
+use smartknob_rs::cli::menu_handler;
 
 type SpiBus1 = Mutex<NoopRawMutex, esp_hal::spi::master::SpiDmaBus<'static, esp_hal::Async>>;
 type I2cBus1 = Mutex<NoopRawMutex, esp_hal::i2c::master::I2c<'static, esp_hal::Async>>;
@@ -134,75 +134,6 @@ async fn led_ring(
     }
 }
 
-#[derive(Default)]
-struct Context {
-    _inner: u32,
-}
-
-fn enter_root(
-    _menu: &Menu<UsbSerialJtag<'_, Async>, Context>,
-    interface: &mut UsbSerialJtag<'_, Async>,
-    _context: &mut Context,
-) {
-    // writeln!(interface, "In enter_root").unwrap();
-    info!("In enter_root");
-}
-
-fn exit_root(
-    _menu: &Menu<UsbSerialJtag<'_, Async>, Context>,
-    interface: &mut UsbSerialJtag<'_, Async>,
-    _context: &mut Context,
-) {
-    // writeln!(interface, "In exit_root").unwrap();
-    info!("In exit_root");
-}
-
-fn select_bar(
-    _menu: &Menu<UsbSerialJtag<'_, Async>, Context>,
-    _item: &Item<UsbSerialJtag<'_, Async>, Context>,
-    args: &[&str],
-    interface: &mut UsbSerialJtag<'_, Async>,
-    _context: &mut Context,
-) {
-    // writeln!(interface, "In select_bar. Args = {:?}", args).unwrap();
-    info!("In select_bar. Args = {:?}", args);
-}
-
-const ROOT_MENU: Menu<UsbSerialJtag<'_, Async>, Context> = Menu {
-    label: "root",
-    items: &[&Item {
-        item_type: ItemType::Callback {
-            function: select_bar,
-            parameters: &[],
-        },
-        command: "bar",
-        help: Some("fandoggles a bar"),
-    }],
-    entry: Some(enter_root),
-    exit: Some(exit_root),
-};
-
-#[embassy_executor::task]
-async fn menu_handler(mut serial: UsbSerialJtag<'static, Async>) {
-    let mut buffer = [0u8; 100];
-    let mut history = [0u8; 200];
-
-    let mut editor = EditorBuilder::from_slice(&mut buffer)
-        .with_slice_history(&mut history)
-        .build_async(&mut serial)
-        .await
-        .unwrap();
-
-    let mut context = Context::default();
-    let mut r = Runner::new(ROOT_MENU, &mut editor, serial, &mut context).await;
-    loop {
-        r.input_line(&mut context).await.unwrap();
-        // let Ok(len) = embedded_io_async::Read::read(&mut r.interface, &mut read_buffer).await;
-        // for i in 0..len {
-        //     r.input_byte(read_buffer[i], &mut context);
-        // }
-    }
-}
 
 #[esp_hal_embassy::main]
 async fn main(spawner: Spawner) {
@@ -340,5 +271,6 @@ async fn main(spawner: Spawner) {
     let _fcc = PIController::new(I16F16::from_num(0.6), I16F16::from_num(0));
     let _tcc = PIController::new(I16F16::from_num(0.6), I16F16::from_num(0));
 
-    // let foc = Foc::new<, 16>(fcc, tcc);
+    let foc: Foc<SpaceVector, 16> = Foc::new(_fcc, _tcc);
+
 }
