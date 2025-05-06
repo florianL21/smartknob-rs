@@ -1,14 +1,9 @@
 use esp_backtrace as _;
-use esp_hal::{
-    usb_serial_jtag::UsbSerialJtag,
-    Async,
-};
+use esp_hal::{usb_serial_jtag::UsbSerialJtag, Async};
 use menu::asynchronous::{Item, ItemType, Menu, Runner};
 use noline::builder::EditorBuilder;
 
-
 use log::info;
-
 
 #[derive(Default)]
 struct Context {
@@ -62,20 +57,20 @@ const ROOT_MENU: Menu<UsbSerialJtag<'_, Async>, Context> = Menu {
 pub async fn menu_handler(mut serial: UsbSerialJtag<'static, Async>) {
     let mut buffer = [0u8; 100];
     let mut history = [0u8; 200];
-
-    let mut editor = EditorBuilder::from_slice(&mut buffer)
+    let Ok(mut editor) = EditorBuilder::from_slice(&mut buffer)
         .with_slice_history(&mut history)
         .build_async(&mut serial)
         .await
-        .unwrap();
+    else {
+        return;
+    };
 
     let mut context = Context::default();
     let mut r = Runner::new(ROOT_MENU, &mut editor, serial, &mut context).await;
     loop {
-        r.input_line(&mut context).await.unwrap();
-        // let Ok(len) = embedded_io_async::Read::read(&mut r.interface, &mut read_buffer).await;
-        // for i in 0..len {
-        //     r.input_byte(read_buffer[i], &mut context);
-        // }
+        // ignore any errors and assume that we are just not connected to serial
+        if let Err(_) = r.input_line(&mut context).await {
+            return;
+        }
     }
 }

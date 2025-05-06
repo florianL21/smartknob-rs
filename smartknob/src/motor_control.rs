@@ -13,7 +13,7 @@ use esp_hal::{
     },
     time::Rate,
 };
-use fixed::types::I16F16;
+use fixed::{traits::LossyInto, types::I16F16, FixedI32};
 use foc::{pid::PIController, pwm::SpaceVector, Foc};
 use mt6701::{self, AngleSensorTrait};
 
@@ -102,7 +102,8 @@ pub async fn update_foc(
     let _fcc = PIController::new(I16F16::from_num(0.6), I16F16::from_num(0));
     let _tcc = PIController::new(I16F16::from_num(0.6), I16F16::from_num(0));
 
-    let foc: Foc<SpaceVector, 16> = Foc::new(_fcc, _tcc);
+    let mut foc: Foc<SpaceVector, 16> = Foc::new(_fcc, _tcc);
+    let mut angle = I16F16::from_num(0.0);
     loop {
         if encoder.update(t.elapsed().into()).await.is_ok() {
             t = Instant::now();
@@ -113,6 +114,19 @@ pub async fn update_foc(
                 angle: angle,
             });
         }
+        let t = foc.update(
+            [FixedI32::from_num(0), FixedI32::from_num(0)],
+            angle,
+            I16F16::from_num(0.5),
+            I16F16::from_num(t.elapsed().as_micros()),
+        );
+        angle += I16F16::from_num(0.01);
+        // _pwm_u.set_timestamp_a(t[0]);
+        // _pwm_u.set_timestamp_b(t[0]);
+        // _pwm_v.set_timestamp_a(t[1]);
+        // _pwm_v.set_timestamp_b(t[1]);
+        // _pwm_w.set_timestamp_a(t[2]);
+        // _pwm_w.set_timestamp_b(t[2]);
         Timer::after_millis(2).await;
     }
 }

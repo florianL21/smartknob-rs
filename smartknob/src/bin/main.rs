@@ -11,7 +11,7 @@ use esp_hal::{
     clock::CpuClock,
     dma::{DmaRxBuf, DmaTxBuf},
     dma_buffers,
-    gpio::{AnyPin, GpioPin, Input, InputConfig, Level, Output, OutputConfig, OutputPin, Pin},
+    gpio::{AnyPin, Input, InputConfig, Level, Output, OutputConfig},
     i2c::master::{Config as I2cConfig, I2c},
     rmt::Rmt,
     spi::{
@@ -191,5 +191,5 @@ async fn main(spawner: Spawner) {
     info!("Startup done!");
 
     let serial = UsbSerialJtag::new(peripherals.USB_DEVICE).into_async();
-    spawner.must_spawn(menu_handler(serial));
+    let _ = spawner.spawn(menu_handler(serial));
 }
