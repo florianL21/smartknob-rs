@@ -68,7 +68,7 @@ pub async fn menu_handler(mut serial: UsbSerialJtag<'static, Async>) {
     let mut context = Context::default();
     let mut r = Runner::new(ROOT_MENU, &mut editor, serial, &mut context).await;
     loop {
-        // ignore any errors and assume that we are just not connected to serial
+        // Upon error assume that we are just not connected to serial and terminate this function
         if let Err(_) = r.input_line(&mut context).await {
             return;
         }

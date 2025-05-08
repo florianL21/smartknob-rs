@@ -32,7 +32,7 @@ enum KnobTiltEvent {
 enum KnobTiltState {
     Pressed,
     Idle,
-    Tilted(f32, u32)
+    Tilted(f32, u32),
 }
 
 struct KnobTiltConfig {
@@ -42,7 +42,7 @@ struct KnobTiltConfig {
     press_release: u32,
 }
 
-impl KnobTiltConfig{
+impl KnobTiltConfig {
     fn default() -> Self {
         KnobTiltConfig {
             tilt_trigger: 10000,
@@ -205,7 +205,9 @@ pub async fn read_ldc_task(i2c: &'static I2cBus1, mut int_pin: Input<'static>) {
     )
     .await
     .unwrap();
-    ldc.set_config(ldc1x1x::Config::default().with_interrupt_on_status_update(true)).await.unwrap();
+    ldc.set_config(ldc1x1x::Config::default().with_interrupt_on_status_update(true))
+        .await
+        .unwrap();
     ldc.set_error_config(
         ldc1x1x::ErrorConfig::default().with_amplitude_high_error_to_data_register(true),
     )
@@ -228,8 +230,6 @@ pub async fn read_ldc_task(i2c: &'static I2cBus1, mut int_pin: Input<'static>) {
         if let Some(t) = kt.update(raw_coil_values) {
             info!("Event: {:#?}", t);
         }
-        // let angle = Rotation2::rotation_between(&ORIGIN, &dir);
-        // Vector2::new(x, y)
         // int_pin.wait_for_rising_edge().await;
         Timer::after(Duration::from_millis(100)).await;
     }

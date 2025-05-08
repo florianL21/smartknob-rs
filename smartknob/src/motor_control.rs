@@ -86,6 +86,13 @@ pub async fn update_foc(
         PwmPinConfig::UP_ACTIVE_HIGH,
         DeadTimeCfg::new_ahc(),
     );
+    _pwm_u.set_falling_edge_deadtime(10); // ~1.5µs
+    _pwm_u.set_rising_edge_deadtime(10); // ~1.8µs
+    _pwm_v.set_falling_edge_deadtime(10); // ~1.5µs
+    _pwm_v.set_rising_edge_deadtime(10); // ~1.8µs
+    _pwm_w.set_falling_edge_deadtime(10); // ~1.5µs
+    _pwm_w.set_rising_edge_deadtime(10); // ~1.8µs
+
     // Turn off all outputs
     _pwm_u.set_timestamp_a(0);
     _pwm_u.set_timestamp_b(0);
@@ -94,8 +101,10 @@ pub async fn update_foc(
     _pwm_w.set_timestamp_a(0);
     _pwm_w.set_timestamp_b(0);
 
+    // period here is in relation to all other periods further down.
+    // Dead time and set_timestamp methods respectiveley
     let timer_clock_cfg = clock_cfg
-        .timer_clock_with_frequency(6, PwmWorkingMode::UpDown, Rate::from_khz(25))
+        .timer_clock_with_frequency(100, PwmWorkingMode::Increase, Rate::from_khz(25))
         .unwrap();
     mcpwm.timer0.start(timer_clock_cfg);
 
@@ -122,11 +131,8 @@ pub async fn update_foc(
         );
         angle += I16F16::from_num(0.01);
         // _pwm_u.set_timestamp_a(t[0]);
-        // _pwm_u.set_timestamp_b(t[0]);
         // _pwm_v.set_timestamp_a(t[1]);
-        // _pwm_v.set_timestamp_b(t[1]);
         // _pwm_w.set_timestamp_a(t[2]);
-        // _pwm_w.set_timestamp_b(t[2]);
         Timer::after_millis(2).await;
     }
 }
