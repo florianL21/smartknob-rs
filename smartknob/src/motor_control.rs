@@ -45,6 +45,10 @@ pub async fn update_foc(
     mcpwm0: esp_hal::peripherals::MCPWM0,
     pwm_pins: Pins6PWM,
 ) {
+    const MAX_CURRENT: u8 = 2;
+    const PWM_RESOLUTION: u16 = 999;
+    // about 2% dead time
+    const PWM_DEAD_TIME: u16 = 20;
     let spi_device = SpiDevice::new(spi_bus, mag_csn);
 
     let mut encoder: mt6701::MT6701Spi<
@@ -86,12 +90,12 @@ pub async fn update_foc(
         PwmPinConfig::UP_ACTIVE_HIGH,
         DeadTimeCfg::new_ahc(),
     );
-    _pwm_u.set_falling_edge_deadtime(10); // ~1.5µs
-    _pwm_u.set_rising_edge_deadtime(10); // ~1.8µs
-    _pwm_v.set_falling_edge_deadtime(10); // ~1.5µs
-    _pwm_v.set_rising_edge_deadtime(10); // ~1.8µs
-    _pwm_w.set_falling_edge_deadtime(10); // ~1.5µs
-    _pwm_w.set_rising_edge_deadtime(10); // ~1.8µs
+    _pwm_u.set_falling_edge_deadtime(PWM_DEAD_TIME);
+    _pwm_u.set_rising_edge_deadtime(PWM_DEAD_TIME);
+    _pwm_v.set_falling_edge_deadtime(PWM_DEAD_TIME);
+    _pwm_v.set_rising_edge_deadtime(PWM_DEAD_TIME);
+    _pwm_w.set_falling_edge_deadtime(PWM_DEAD_TIME);
+    _pwm_w.set_rising_edge_deadtime(PWM_DEAD_TIME);
 
     // Turn off all outputs
     _pwm_u.set_timestamp_a(0);
@@ -104,15 +108,16 @@ pub async fn update_foc(
     // period here is in relation to all other periods further down.
     // Dead time and set_timestamp methods respectiveley
     let timer_clock_cfg = clock_cfg
-        .timer_clock_with_frequency(100, PwmWorkingMode::Increase, Rate::from_khz(25))
+        .timer_clock_with_frequency(PWM_RESOLUTION, PwmWorkingMode::Increase, Rate::from_khz(25))
         .unwrap();
     mcpwm.timer0.start(timer_clock_cfg);
 
     let _fcc = PIController::new(I16F16::from_num(0.6), I16F16::from_num(0));
     let _tcc = PIController::new(I16F16::from_num(0.6), I16F16::from_num(0));
 
-    let mut foc: Foc<SpaceVector, 16> = Foc::new(_fcc, _tcc);
+    let mut foc: Foc<SpaceVector, PWM_RESOLUTION> = Foc::new(_fcc, _tcc);
     let mut angle = I16F16::from_num(0.0);
+    let mut last_pwm = [0u16; 3];
     loop {
         if encoder.update(t.elapsed().into()).await.is_ok() {
             t = Instant::now();
@@ -123,16 +128,31 @@ pub async fn update_foc(
                 angle: angle,
             });
         }
-        let t = foc.update(
-            [FixedI32::from_num(0), FixedI32::from_num(0)],
+        let fake_amps0 = if last_pwm[0] != 0 {
+            (PWM_RESOLUTION as f32 / last_pwm[0] as f32) * MAX_CURRENT as f32
+        } else {
+            0f32
+        };
+        let fake_amps1 = if last_pwm[1] != 0 {
+            (PWM_RESOLUTION as f32 / last_pwm[1] as f32) * MAX_CURRENT as f32
+        } else {
+            0f32
+        };
+
+        let pwm = foc.update(
+            [
+                FixedI32::from_num(fake_amps0),
+                FixedI32::from_num(fake_amps1),
+            ],
             angle,
-            I16F16::from_num(0.5),
+            I16F16::from_num(1),
             I16F16::from_num(t.elapsed().as_micros()),
         );
         angle += I16F16::from_num(0.01);
-        // _pwm_u.set_timestamp_a(t[0]);
-        // _pwm_v.set_timestamp_a(t[1]);
-        // _pwm_w.set_timestamp_a(t[2]);
+        _pwm_u.set_timestamp_a(pwm[0]);
+        _pwm_v.set_timestamp_a(pwm[1]);
+        _pwm_w.set_timestamp_a(pwm[2]);
+        last_pwm = pwm;
         Timer::after_millis(2).await;
     }
 }
