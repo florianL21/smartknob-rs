@@ -1,7 +1,10 @@
 use core::usize;
 
 use average::Mean;
-use embassy_sync::{blocking_mutex::raw::NoopRawMutex, mutex::Mutex};
+use embassy_sync::{
+    blocking_mutex::raw::{CriticalSectionRawMutex, NoopRawMutex},
+    mutex::Mutex,
+};
 use embassy_time::{Duration, Timer};
 use esp_hal::{config, gpio::Input};
 use ldc1x1x::{AutoScanSequence, Channel};
@@ -20,10 +23,17 @@ const CHANNELS: [Channel; 3] = [
     ldc1x1x::Channel::Two,
 ];
 
-#[derive(Debug)]
-enum KnobTiltEvent {
-    TiltStart(f32, u32),
-    TiltAdjust(f32, u32),
+#[derive(Debug, Clone)]
+pub struct TiltInfo {
+    /// angle in radians from -PI to PI
+    pub angle: f32,
+    pub magnitude: u32,
+}
+
+#[derive(Debug, Clone)]
+pub enum KnobTiltEvent {
+    TiltStart(TiltInfo),
+    TiltAdjust(TiltInfo),
     TiltEnd,
     PressStart,
     PressEnd,
@@ -32,7 +42,7 @@ enum KnobTiltEvent {
 enum KnobTiltState {
     Pressed,
     Idle,
-    Tilted(f32, u32),
+    Tilted(TiltInfo),
 }
 
 struct KnobTiltConfig {
@@ -50,6 +60,12 @@ impl KnobTiltConfig {
             press_trigger: 10000,
             press_release: 8000,
         }
+    }
+}
+
+impl TiltInfo {
+    fn new(angle: f32, magnitude: u32) -> Self {
+        TiltInfo { angle, magnitude }
     }
 }
 
@@ -107,11 +123,15 @@ impl KnobTilt {
         self.angle = self.rotation.angle();
         self.magnitude = self.direction.magnitude();
 
-        match self.state {
+        match &self.state {
             KnobTiltState::Idle => {
                 if (self.magnitude as u32) > self.config.tilt_trigger {
-                    self.state = KnobTiltState::Tilted(self.angle, self.magnitude as u32);
-                    Some(KnobTiltEvent::TiltStart(self.angle, self.magnitude as u32))
+                    self.state =
+                        KnobTiltState::Tilted(TiltInfo::new(self.angle, self.magnitude as u32));
+                    Some(KnobTiltEvent::TiltStart(TiltInfo::new(
+                        self.angle,
+                        self.magnitude as u32,
+                    )))
                 } else if self.compensated_coil_values[0] > self.config.press_trigger {
                     self.state = KnobTiltState::Pressed;
                     Some(KnobTiltEvent::PressStart)
@@ -127,13 +147,17 @@ impl KnobTilt {
                     None
                 }
             }
-            KnobTiltState::Tilted(angle, magnitude) => {
+            KnobTiltState::Tilted(tilt) => {
                 if (self.magnitude as u32) < self.config.tilt_release {
                     self.state = KnobTiltState::Idle;
                     Some(KnobTiltEvent::TiltEnd)
-                } else if angle != self.angle || magnitude != (self.magnitude as u32) {
-                    self.state = KnobTiltState::Tilted(self.angle, self.magnitude as u32);
-                    Some(KnobTiltEvent::TiltAdjust(self.angle, self.magnitude as u32))
+                } else if tilt.angle != self.angle || tilt.magnitude != (self.magnitude as u32) {
+                    self.state =
+                        KnobTiltState::Tilted(TiltInfo::new(self.angle, self.magnitude as u32));
+                    Some(KnobTiltEvent::TiltAdjust(TiltInfo::new(
+                        self.angle,
+                        self.magnitude as u32,
+                    )))
                 } else {
                     None
                 }
@@ -174,7 +198,11 @@ async fn take_mean_measurement(
 }
 
 #[embassy_executor::task]
-pub async fn read_ldc_task(i2c: &'static I2cBus1, mut int_pin: Input<'static>) {
+pub async fn read_ldc_task(
+    i2c: &'static I2cBus1,
+    mut int_pin: Input<'static>,
+    sender: embassy_sync::watch::Sender<'static, CriticalSectionRawMutex, KnobTiltEvent, 2>,
+) {
     let i2c_device = I2cDevice::new(i2c);
     let mut ldc = ldc1x1x::Ldc::new(i2c_device, 0x2A);
     let mut init_ok = false;
@@ -228,7 +256,8 @@ pub async fn read_ldc_task(i2c: &'static I2cBus1, mut int_pin: Input<'static>) {
             raw_coil_values[i] = reading;
         }
         if let Some(t) = kt.update(raw_coil_values) {
-            info!("Event: {:#?}", t);
+            info!("Event: {:#?}", &t);
+            sender.send(t);
         }
         // int_pin.wait_for_rising_edge().await;
         Timer::after(Duration::from_millis(100)).await;

@@ -149,9 +149,9 @@ pub async fn update_foc(
             I16F16::from_num(t.elapsed().as_micros()),
         );
         angle += I16F16::from_num(0.01);
-        _pwm_u.set_timestamp_a(pwm[0]);
-        _pwm_v.set_timestamp_a(pwm[1]);
-        _pwm_w.set_timestamp_a(pwm[2]);
+        // _pwm_u.set_timestamp_a(pwm[0]);
+        // _pwm_v.set_timestamp_a(pwm[1]);
+        // _pwm_w.set_timestamp_a(pwm[2]);
         last_pwm = pwm;
         Timer::after_millis(2).await;
     }

@@ -27,7 +27,7 @@ use esp_hal_smartled::{buffer_size, SmartLedsAdapter};
 use log::info;
 use smart_leds::{
     brightness,
-    colors::{BLACK, RED},
+    colors::{BLACK, GREEN, RED},
     gamma, SmartLedsWrite,
 };
 
@@ -38,6 +38,7 @@ use static_cell::StaticCell;
 
 use smartknob_rs::{
     cli::menu_handler,
+    knob_tilt::KnobTiltEvent,
     motor_control::{update_foc, Encoder},
 };
 use smartknob_rs::{knob_tilt::read_ldc_task, motor_control::Pins6PWM};
@@ -57,13 +58,30 @@ async fn log_rotations(
     }
 }
 
+fn map<
+    T: core::ops::Sub<Output = T>
+        + core::ops::Mul<Output = T>
+        + core::ops::Div<Output = T>
+        + core::ops::Add<Output = T>
+        + Copy,
+>(
+    x: T,
+    in_min: T,
+    in_max: T,
+    out_min: T,
+    out_max: T,
+) -> T {
+    return (x - in_min) * (out_max - out_min) / (in_max - in_min) + out_min;
+}
+
 #[embassy_executor::task]
 async fn led_ring(
     rmt_channel: esp_hal::rmt::ChannelCreator<esp_hal::Blocking, 0>,
     led_pin: AnyPin,
-    mut receiver: embassy_sync::watch::Receiver<'static, CriticalSectionRawMutex, Encoder, 2>,
+    mut receiver: embassy_sync::watch::Receiver<'static, CriticalSectionRawMutex, KnobTiltEvent, 2>,
 ) {
     const NUM_LEDS: usize = 24;
+    const LED_OFFSET: usize = 1;
     const BUFFE_SIZE: usize = buffer_size(NUM_LEDS);
     let rmt_buffer: [u32; BUFFE_SIZE] = [0; BUFFE_SIZE];
     let mut led = SmartLedsAdapter::new(rmt_channel, led_pin, rmt_buffer);
@@ -72,12 +90,39 @@ async fn led_ring(
     let step_size = (2.0f32 * core::f32::consts::PI) / NUM_LEDS as f32;
     info!("LED init done!");
     loop {
-        let encoder = receiver.get().await;
-        for (i, item) in data.iter_mut().enumerate() {
-            if encoder.angle > step_size * i as f32 {
-                *item = RED;
-            } else {
-                *item = BLACK;
+        let tilt_event = receiver.get().await;
+        match tilt_event {
+            KnobTiltEvent::PressEnd | KnobTiltEvent::TiltEnd => {
+                for item in data.iter_mut() {
+                    *item = BLACK;
+                }
+            }
+            KnobTiltEvent::PressStart => {
+                for item in data.iter_mut() {
+                    *item = RED;
+                }
+            }
+            KnobTiltEvent::TiltAdjust(tilt) | KnobTiltEvent::TiltStart(tilt) => {
+                let angle = if tilt.angle < 0.0 {
+                    tilt.angle + 2.0 * core::f32::consts::PI
+                } else {
+                    tilt.angle
+                };
+                let led_index = map(
+                    angle,
+                    0.0,
+                    2.0 * core::f32::consts::PI,
+                    0.0,
+                    NUM_LEDS as f32,
+                );
+                // not yet working
+                for (i, item) in data.iter_mut().enumerate() {
+                    if i == led_index as usize {
+                        *item = GREEN;
+                    } else {
+                        *item = BLACK;
+                    }
+                }
             }
         }
         led.write(brightness(gamma(data.iter().cloned()), 10))
@@ -177,8 +222,10 @@ async fn main(spawner: Spawner) {
     let i2c_bus = I2C_BUS.init(Mutex::new(i2c_bus));
 
     let ldc_int_pin = Input::new(pins_ldc_int_pin, InputConfig::default());
+    static TILT: Watch<CriticalSectionRawMutex, KnobTiltEvent, 2> = Watch::new();
+    let sender = TILT.sender();
 
-    spawner.must_spawn(read_ldc_task(i2c_bus, ldc_int_pin));
+    spawner.must_spawn(read_ldc_task(i2c_bus, ldc_int_pin, sender));
 
     // log encoder values
     // let receiver = WATCH.receiver().unwrap();
@@ -186,7 +233,7 @@ async fn main(spawner: Spawner) {
 
     // LED ring
     let rmt = Rmt::new(peripherals.RMT, Rate::from_mhz(80)).unwrap();
-    let receiver = WATCH.receiver().unwrap();
+    let receiver = TILT.receiver().unwrap();
     spawner.must_spawn(led_ring(rmt.channel0, pin_led_data.into(), receiver));
     info!("Startup done!");
 
