@@ -256,7 +256,6 @@ pub async fn read_ldc_task(
             raw_coil_values[i] = reading;
         }
         if let Some(t) = kt.update(raw_coil_values) {
-            info!("Event: {:#?}", &t);
             sender.send(t);
         }
         // int_pin.wait_for_rising_edge().await;

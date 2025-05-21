@@ -37,7 +37,7 @@ use embassy_sync::watch::Watch;
 use static_cell::StaticCell;
 
 use smartknob_rs::{
-    cli::menu_handler,
+    cli::{menu_handler, LogToggles},
     knob_tilt::KnobTiltEvent,
     motor_control::{update_foc, Encoder},
 };
@@ -52,7 +52,7 @@ async fn log_rotations(
 ) {
     info!("Log encoder init done!");
     loop {
-        let pos = receiver.get().await;
+        let pos = receiver.changed().await;
         info!("Position: {}", pos.position);
         Timer::after_millis(200).await;
     }
@@ -90,7 +90,8 @@ async fn led_ring(
     let step_size = (2.0f32 * core::f32::consts::PI) / NUM_LEDS as f32;
     info!("LED init done!");
     loop {
-        let tilt_event = receiver.get().await;
+        let tilt_event = receiver.changed().await;
+        info!("Event: {:#?}", &tilt_event);
         match tilt_event {
             KnobTiltEvent::PressEnd | KnobTiltEvent::TiltEnd => {
                 for item in data.iter_mut() {
@@ -143,6 +144,9 @@ async fn main(spawner: Spawner) {
     let timer0 = SystemTimer::new(peripherals.SYSTIMER);
     esp_hal_embassy::init(timer0.alarm0);
     info!("Embassy initialized!");
+
+    // watcher for log output toggles
+    static LOG_WATCH: Watch<CriticalSectionRawMutex, LogToggles, 4> = Watch::new();
 
     // Pins for LDC1614
     let pins_ldc_int_pin = peripherals.GPIO40;
@@ -238,5 +242,6 @@ async fn main(spawner: Spawner) {
     info!("Startup done!");
 
     let serial = UsbSerialJtag::new(peripherals.USB_DEVICE).into_async();
-    let _ = spawner.spawn(menu_handler(serial));
+    let receiver = LOG_WATCH.receiver().unwrap();
+    let _ = spawner.spawn(menu_handler(serial, receiver));
 }
