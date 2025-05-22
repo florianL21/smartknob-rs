@@ -242,6 +242,6 @@ async fn main(spawner: Spawner) {
     info!("Startup done!");
 
     let serial = UsbSerialJtag::new(peripherals.USB_DEVICE).into_async();
-    let receiver = LOG_WATCH.receiver().unwrap();
-    let _ = spawner.spawn(menu_handler(serial, receiver));
+    let sender = LOG_WATCH.sender();
+    let _ = spawner.spawn(menu_handler(serial, sender));
 }
