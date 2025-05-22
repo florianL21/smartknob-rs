@@ -8,7 +8,6 @@ name = "smartknob-rs"
 path = "./src/bin/main.rs"
 
 [dependencies]
-critical-section = "1.2.0"
 embassy-embedded-hal = "0.3.0"
 embassy-executor = { version = "0.7.0", features = ["task-arena-size-20480"] }
 embassy-sync = "0.6.2"
@@ -37,16 +36,13 @@ nalgebra = { version = "0.33.2", default-features = false, features = [
   "nalgebra-macros",
   "libm",
 ] }
-heapless = "0.8.0"
 average = "0.16.0"
 libm = "0.2.13"
 fixed = "1.29.0"
 embassy-usb = "0.4.0"
-menu = { path = "../menu", features = ["noline"] }
 embedded-io-async = "0.6.1"
-embassy-futures = "0.1.1"
-noline = "0.5.1"
-embedded-io = "0.6.1"
+ufmt = "0.2.0"
+embedded-cli = "0.2.1"
 
 [profile.dev]
 # Rust debug is too slow.
