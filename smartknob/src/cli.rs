@@ -150,11 +150,12 @@ pub async fn menu_handler(
         .command_buffer(command_buffer)
         .history_buffer(history_buffer)
         .build();
-    let mut cli = if let Ok(cli) = builder {
-        cli
-    } else {
-        return ;
+    let mut cli  = match builder {
+        Ok(cli)  => cli,
+        _ => {return;}
     };
+
+    context.sender.send(context.logging_config.clone());
 
     let mut buf: [u8; 1] = [0; 1];
     loop {
