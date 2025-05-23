@@ -37,7 +37,7 @@ use embassy_sync::watch::Watch;
 use static_cell::StaticCell;
 
 use smartknob_rs::{
-    cli::{menu_handler, LogToggles},
+    cli::{may_log, menu_handler, LogChannel, LogToggles},
     knob_tilt::KnobTiltEvent,
     motor_control::{update_foc, Encoder},
 };
@@ -49,11 +49,12 @@ type I2cBus1 = Mutex<NoopRawMutex, esp_hal::i2c::master::I2c<'static, esp_hal::A
 #[embassy_executor::task]
 async fn log_rotations(
     mut receiver: embassy_sync::watch::Receiver<'static, CriticalSectionRawMutex, Encoder, 2>,
+    mut log_receiver: embassy_sync::watch::Receiver<'static, CriticalSectionRawMutex, LogToggles, 4>,
 ) {
     info!("Log encoder init done!");
     loop {
         let pos = receiver.changed().await;
-        info!("Position: {}", pos.position);
+        may_log(&mut log_receiver, LogChannel::Encoder, ||info!("Position: {}", pos.position)).await;
         Timer::after_millis(200).await;
     }
 }
@@ -79,6 +80,7 @@ async fn led_ring(
     rmt_channel: esp_hal::rmt::ChannelCreator<esp_hal::Blocking, 0>,
     led_pin: AnyPin,
     mut receiver: embassy_sync::watch::Receiver<'static, CriticalSectionRawMutex, KnobTiltEvent, 2>,
+    mut log_receiver: embassy_sync::watch::Receiver<'static, CriticalSectionRawMutex, LogToggles, 4>,
 ) {
     const NUM_LEDS: usize = 24;
     const LED_OFFSET: usize = 1;
@@ -91,7 +93,7 @@ async fn led_ring(
     info!("LED init done!");
     loop {
         let tilt_event = receiver.changed().await;
-        info!("Event: {:#?}", &tilt_event);
+        may_log(&mut log_receiver, LogChannel::PushEvents, ||info!("Event: {:#?}", &tilt_event)).await;
         match tilt_event {
             KnobTiltEvent::PressEnd | KnobTiltEvent::TiltEnd => {
                 for item in data.iter_mut() {
@@ -232,13 +234,15 @@ async fn main(spawner: Spawner) {
     spawner.must_spawn(read_ldc_task(i2c_bus, ldc_int_pin, sender));
 
     // log encoder values
-    // let receiver = WATCH.receiver().unwrap();
-    // spawner.must_spawn(log_rotations(receiver));
+    let log_receiver = LOG_WATCH.receiver().unwrap();
+    let receiver = WATCH.receiver().unwrap();
+    spawner.must_spawn(log_rotations(receiver, log_receiver));
 
     // LED ring
     let rmt = Rmt::new(peripherals.RMT, Rate::from_mhz(80)).unwrap();
     let receiver = TILT.receiver().unwrap();
-    spawner.must_spawn(led_ring(rmt.channel0, pin_led_data.into(), receiver));
+    let log_receiver = LOG_WATCH.receiver().unwrap();
+    spawner.must_spawn(led_ring(rmt.channel0, pin_led_data.into(), receiver, log_receiver));
     info!("Startup done!");
 
     let serial = UsbSerialJtag::new(peripherals.USB_DEVICE).into_async();

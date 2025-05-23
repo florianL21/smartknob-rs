@@ -6,10 +6,27 @@ use esp_backtrace as _;
 use esp_hal::{usb_serial_jtag::UsbSerialJtag, Async};
 use ufmt::{derive::uDebug, uwrite};
 
+pub enum LogChannel {
+    Encoder,
+    PushEvents,
+}
+
 #[derive(Clone, uDebug, Default)]
 pub struct LogToggles {
+    active: bool,
     pub encoder: bool,
     pub push_events: bool,
+}
+
+pub async fn may_log<C>(receiver: &mut embassy_sync::watch::Receiver<'static, CriticalSectionRawMutex, LogToggles, 4>, channel: LogChannel, c: C) where C: FnOnce() {
+    let toggles = receiver.get().await;
+    let status = match channel {
+        LogChannel::Encoder => toggles.encoder,
+        LogChannel::PushEvents => toggles.push_events
+    };
+    if toggles.active && status {
+        c();
+    }
 }
 
 struct Context {
@@ -147,6 +164,8 @@ pub async fn menu_handler(
         // if the interface is not open open it and skip processing the CLI
         if context.interface_open == false {
             context.interface_open = true;
+            context.logging_config.active = false;
+            context.sender.send(context.logging_config.clone());
             continue;
         }
 
@@ -163,6 +182,8 @@ pub async fn menu_handler(
                     RootGroup::Base(base) => match base {
                         Base::Exit => {
                             context.interface_open = false;
+                            context.logging_config.active = true;
+                            context.sender.send(context.logging_config.clone());
                         }
                     }
                 }
