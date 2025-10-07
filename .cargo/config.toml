@@ -1,13 +1,11 @@
 [target.xtensa-esp32s3-none-elf]
-runner = "espflash flash --monitor --chip esp32s3"
+runner = "espflash flash --monitor --chip esp32s3 --flash-size=16mb --flash-mode dio --flash-freq 80mhz --partition-table=partition_table.csv"
 
 [env]
-ESP_LOG="info"
+ESP_LOG = "info"
 
 [build]
-rustflags = [
-  "-C", "link-arg=-nostartfiles",
-]
+rustflags = ["-C", "link-arg=-nostartfiles", "-Z", "stack-protector=all"]
 
 target = "xtensa-esp32s3-none-elf"
 

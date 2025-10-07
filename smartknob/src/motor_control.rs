@@ -1,3 +1,4 @@
+use atomic_float::AtomicF32;
 use embassy_sync::{
     blocking_mutex::raw::{CriticalSectionRawMutex, NoopRawMutex},
     mutex::Mutex,
@@ -22,11 +23,8 @@ use log::info;
 
 pub type SpiBus1 = Mutex<NoopRawMutex, esp_hal::spi::master::SpiDmaBus<'static, esp_hal::Async>>;
 
-#[derive(Clone)]
-pub struct Encoder {
-    pub position: f64,
-    pub angle: f32,
-}
+pub static ENCODER_POSITION: AtomicF32 = AtomicF32::new(0.0);
+pub static ENCODER_ANGLE: AtomicF32 = AtomicF32::new(0.0);
 
 pub struct Pins6PWM {
     pub uh: AnyPin<'static>,
@@ -41,7 +39,6 @@ pub struct Pins6PWM {
 pub async fn update_foc(
     spi_bus: &'static SpiBus1,
     mag_csn: Output<'static>,
-    sender: embassy_sync::watch::Sender<'static, CriticalSectionRawMutex, Encoder, 2>,
     mcpwm0: esp_hal::peripherals::MCPWM0<'static>,
     pwm_pins: Pins6PWM,
 ) {
@@ -123,10 +120,8 @@ pub async fn update_foc(
             t = Instant::now();
             let pos = encoder.get_position();
             let angle = encoder.get_angle();
-            sender.send(Encoder {
-                position: pos,
-                angle: angle,
-            });
+            ENCODER_POSITION.store(pos as f32, core::sync::atomic::Ordering::Relaxed);
+            ENCODER_ANGLE.store(angle, core::sync::atomic::Ordering::Relaxed);
         }
         let fake_amps0 = if last_pwm[0] != 0 {
             (PWM_RESOLUTION as f32 / last_pwm[0] as f32) * MAX_CURRENT as f32

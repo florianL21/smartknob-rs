@@ -30,6 +30,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "atomic_float"
+version = "1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "628d228f918ac3b82fe590352cc719d30664a0c13ca3a60266fe02c7132d480a"
+
+[[package]]
 name = "autocfg"
 version = "1.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -313,6 +319,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "72852736692ec862655eca398c9bb1b476161b563c9f80f45f4808b9629750d6"
 dependencies = [
  "libm",
+]
+
+[[package]]
+name = "ekv"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ab888debca410aa6f2726fb363926ca73539378c5e8880c8f08f35ae4b24d938"
+dependencies = [
+ "embassy-sync 0.6.2",
+ "heapless 0.8.0",
 ]
 
 [[package]]
@@ -847,6 +863,20 @@ dependencies = [
  "esp-sync",
  "log",
  "portable-atomic",
+]
+
+[[package]]
+name = "esp-storage"
+version = "0.7.0"
+source = "git+https://github.com/esp-rs/esp-hal.git?rev=0267f7c#0267f7c3740964c0e92497395f7d7ade83145216"
+dependencies = [
+ "document-features",
+ "embedded-storage",
+ "esp-hal",
+ "esp-hal-procmacros",
+ "esp-metadata-generated",
+ "esp-rom-sys",
+ "esp-sync",
 ]
 
 [[package]]
@@ -1593,8 +1623,10 @@ dependencies = [
 name = "smartknob-rs"
 version = "0.1.0"
 dependencies = [
+ "atomic_float",
  "average",
  "critical-section",
+ "ekv",
  "embassy-embedded-hal",
  "embassy-executor",
  "embassy-sync 0.7.2",
@@ -1602,6 +1634,7 @@ dependencies = [
  "embassy-usb",
  "embedded-cli",
  "embedded-io-async 0.7.0",
+ "embedded-storage",
  "esp-alloc",
  "esp-backtrace",
  "esp-bootloader-esp-idf",
@@ -1609,6 +1642,8 @@ dependencies = [
  "esp-hal-smartled",
  "esp-println",
  "esp-rtos",
+ "esp-storage",
+ "esp-sync",
  "fixed",
  "foc",
  "ldc1x1x",
