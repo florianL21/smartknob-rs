@@ -6,7 +6,7 @@ use embassy_sync::{
     mutex::Mutex,
 };
 use embassy_time::{Duration, Timer};
-use esp_hal::{config, gpio::Input};
+use esp_hal::gpio::Input;
 use ldc1x1x::{AutoScanSequence, Channel};
 
 use embassy_embedded_hal::shared_bus::asynch::i2c::I2cDevice;

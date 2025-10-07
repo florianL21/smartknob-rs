@@ -13,7 +13,7 @@ use esp_hal::{
     },
     time::Rate,
 };
-use fixed::{traits::LossyInto, types::I16F16, FixedI32};
+use fixed::{types::I16F16, FixedI32};
 use foc::{pid::PIController, pwm::SpaceVector, Foc};
 use mt6701::{self, AngleSensorTrait};
 
@@ -29,12 +29,12 @@ pub struct Encoder {
 }
 
 pub struct Pins6PWM {
-    pub uh: AnyPin,
-    pub ul: AnyPin,
-    pub vh: AnyPin,
-    pub vl: AnyPin,
-    pub wh: AnyPin,
-    pub wl: AnyPin,
+    pub uh: AnyPin<'static>,
+    pub ul: AnyPin<'static>,
+    pub vh: AnyPin<'static>,
+    pub vl: AnyPin<'static>,
+    pub wh: AnyPin<'static>,
+    pub wl: AnyPin<'static>,
 }
 
 #[embassy_executor::task]
@@ -42,7 +42,7 @@ pub async fn update_foc(
     spi_bus: &'static SpiBus1,
     mag_csn: Output<'static>,
     sender: embassy_sync::watch::Sender<'static, CriticalSectionRawMutex, Encoder, 2>,
-    mcpwm0: esp_hal::peripherals::MCPWM0,
+    mcpwm0: esp_hal::peripherals::MCPWM0<'static>,
     pwm_pins: Pins6PWM,
 ) {
     const MAX_CURRENT: u8 = 2;

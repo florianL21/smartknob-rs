@@ -77,8 +77,8 @@ fn map<
 
 #[embassy_executor::task]
 async fn led_ring(
-    rmt_channel: esp_hal::rmt::ChannelCreator<esp_hal::Blocking, 0>,
-    led_pin: AnyPin,
+    rmt_channel: esp_hal::rmt::ChannelCreator<'static, esp_hal::Blocking, 0>,
+    led_pin: AnyPin<'static>,
     mut receiver: embassy_sync::watch::Receiver<'static, CriticalSectionRawMutex, KnobTiltEvent, 2>,
     mut log_receiver: embassy_sync::watch::Receiver<'static, CriticalSectionRawMutex, LogToggles, 4>,
 ) {
@@ -134,7 +134,7 @@ async fn led_ring(
     }
 }
 
-#[esp_hal_embassy::main]
+#[esp_rtos::main]
 async fn main(spawner: Spawner) {
     esp_println::logger::init_logger_from_env();
 
@@ -144,7 +144,7 @@ async fn main(spawner: Spawner) {
     esp_alloc::heap_allocator!(size: 72 * 1024);
 
     let timer0 = SystemTimer::new(peripherals.SYSTIMER);
-    esp_hal_embassy::init(timer0.alarm0);
+    esp_rtos::start(timer0.alarm0);
     info!("Embassy initialized!");
 
     // watcher for log output toggles

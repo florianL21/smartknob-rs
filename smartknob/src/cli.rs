@@ -1,4 +1,4 @@
-use core::{convert::Infallible};
+use core::convert::Infallible;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embedded_cli::{cli::CliBuilder, Command, CommandGroup};
 use embedded_io_async::Read;
@@ -18,11 +18,17 @@ pub struct LogToggles {
     pub push_events: bool,
 }
 
-pub async fn may_log<C>(receiver: &mut embassy_sync::watch::Receiver<'static, CriticalSectionRawMutex, LogToggles, 4>, channel: LogChannel, c: C) where C: FnOnce() {
+pub async fn may_log<C>(
+    receiver: &mut embassy_sync::watch::Receiver<'static, CriticalSectionRawMutex, LogToggles, 4>,
+    channel: LogChannel,
+    c: C,
+) where
+    C: FnOnce(),
+{
     let toggles = receiver.get().await;
     let status = match channel {
         LogChannel::Encoder => toggles.encoder,
-        LogChannel::PushEvents => toggles.push_events
+        LogChannel::PushEvents => toggles.push_events,
     };
     if toggles.active && status {
         c();
@@ -32,7 +38,7 @@ pub async fn may_log<C>(receiver: &mut embassy_sync::watch::Receiver<'static, Cr
 struct Context {
     sender: embassy_sync::watch::Sender<'static, CriticalSectionRawMutex, LogToggles, 4>,
     logging_config: LogToggles,
-    interface_open: bool
+    interface_open: bool,
 }
 
 fn set_log(toggles: &mut LogToggles, channel: &str, state: bool) -> Result<(), ()> {
@@ -43,11 +49,12 @@ fn set_log(toggles: &mut LogToggles, channel: &str, state: bool) -> Result<(), (
         "push_events" => {
             toggles.push_events = state;
         }
-        _ => {return Err(());}
+        _ => {
+            return Err(());
+        }
     }
     Ok(())
 }
-
 
 #[derive(CommandGroup)]
 enum RootGroup<'a> {
@@ -60,7 +67,7 @@ enum RootGroup<'a> {
 #[command(help_title = "Basic commands")]
 enum Base {
     /// Exit the CLI. This will start logging out all enabled channels. To start the CLI again simply press any button
-    Exit
+    Exit,
 }
 
 #[derive(Command)]
@@ -78,14 +85,25 @@ enum Logging<'a> {
     },
     /// List all available logging channels
     LogList,
-
 }
 
 impl Logging<'_> {
-    fn handle(self: &Self, cli: &mut embedded_cli::cli::CliHandle<'_, esp_hal::usb_serial_jtag::UsbSerialJtagTx<'static, Async>, core::convert::Infallible>, context: &mut Context) -> Result<(), Infallible> {
+    fn handle(
+        self: &Self,
+        cli: &mut embedded_cli::cli::CliHandle<
+            '_,
+            esp_hal::usb_serial_jtag::UsbSerialJtagTx<'static, Async>,
+            core::convert::Infallible,
+        >,
+        context: &mut Context,
+    ) -> Result<(), Infallible> {
         match self {
             Logging::LogList => {
-                uwrite!(cli.writer(), "Available logging channels: {:?}", context.logging_config)?;
+                uwrite!(
+                    cli.writer(),
+                    "Available logging channels: {:?}",
+                    context.logging_config
+                )?;
             }
             Logging::LogEnable { channel } => {
                 if set_log(&mut context.logging_config, channel, true).is_ok() {
@@ -95,7 +113,7 @@ impl Logging<'_> {
                     uwrite!(cli.writer(), "Invalid channel {}", channel)?;
                 }
             }
-            Logging::LogDisable{ channel } => {
+            Logging::LogDisable { channel } => {
                 if set_log(&mut context.logging_config, channel, false).is_ok() {
                     uwrite!(cli.writer(), "Disabled logging for channel {}", channel)?;
                     context.sender.send(context.logging_config.clone());
@@ -122,12 +140,20 @@ enum Flash<'a> {
 }
 
 impl Flash<'_> {
-    fn handle(self: &Self, cli: &mut embedded_cli::cli::CliHandle<'_, esp_hal::usb_serial_jtag::UsbSerialJtagTx<'static, Async>, core::convert::Infallible>, context: &mut Context) -> Result<(), Infallible> {
+    fn handle(
+        self: &Self,
+        cli: &mut embedded_cli::cli::CliHandle<
+            '_,
+            esp_hal::usb_serial_jtag::UsbSerialJtagTx<'static, Async>,
+            core::convert::Infallible,
+        >,
+        context: &mut Context,
+    ) -> Result<(), Infallible> {
         match self {
             Flash::FlashLoad => {
                 uwrite!(cli.writer(), "Stored value is: ?")?;
             }
-            Flash::FlashStore  { value } => {
+            Flash::FlashStore { value } => {
                 uwrite!(cli.writer(), "Saved value to flash: {}", value)?;
             }
         }
@@ -140,7 +166,11 @@ pub async fn menu_handler(
     serial: UsbSerialJtag<'static, Async>,
     sender: embassy_sync::watch::Sender<'static, CriticalSectionRawMutex, LogToggles, 4>,
 ) {
-    let mut context = Context { sender, logging_config: LogToggles::default(), interface_open: false };
+    let mut context = Context {
+        sender,
+        logging_config: LogToggles::default(),
+        interface_open: false,
+    };
 
     let command_buffer: [u8; 32] = [0; 32];
     let history_buffer: [u8; 32] = [0; 32];
@@ -150,9 +180,11 @@ pub async fn menu_handler(
         .command_buffer(command_buffer)
         .history_buffer(history_buffer)
         .build();
-    let mut cli  = match builder {
-        Ok(cli)  => cli,
-        _ => {return;}
+    let mut cli = match builder {
+        Ok(cli) => cli,
+        _ => {
+            return;
+        }
     };
 
     context.sender.send(context.logging_config.clone());
@@ -186,7 +218,7 @@ pub async fn menu_handler(
                             context.logging_config.active = true;
                             context.sender.send(context.logging_config.clone());
                         }
-                    }
+                    },
                 }
                 Ok(())
             }),

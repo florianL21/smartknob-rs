@@ -1,0 +1,3 @@
+[submodule "esp-hal-community"]
+	path = esp-hal-community
+	url = https://github.com/florianL21/esp-hal-community.git

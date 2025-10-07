@@ -8,30 +8,44 @@ name = "smartknob-rs"
 path = "./src/bin/main.rs"
 
 [dependencies]
-embassy-embedded-hal = "0.3.0"
-embassy-executor = { version = "0.7.0", features = ["task-arena-size-20480"] }
-embassy-sync = "0.6.2"
-embassy-time = { version = "0.4.0", features = ["generic-queue-8"] }
-esp-alloc = "0.7.0"
-esp-backtrace = { version = "0.15.1", features = [
+esp-backtrace = { git = "https://github.com/esp-rs/esp-hal.git", rev = "0267f7c", features = [
   "esp32s3",
-  "exception-handler",
   "panic-handler",
   "println",
 ] }
-esp-hal = { version = "1.0.0-beta.0", features = ["esp32s3", "unstable"] }
-esp-hal-embassy = { version = "0.7.0", features = ["esp32s3"] }
-esp-hal-smartled = { git = "https://github.com/robamu/esp-hal-community", rev = "309f19e", features = [
+esp-bootloader-esp-idf = { git = "https://github.com/esp-rs/esp-hal.git", rev = "0267f7c", features = [
   "esp32s3",
 ] }
-esp-println = { version = "0.13.0", features = ["esp32s3", "log"] }
+esp-hal = { git = "https://github.com/esp-rs/esp-hal.git", rev = "0267f7c", features = [
+  "esp32s3",
+  "log-04",
+  "unstable",
+] }
+esp-rtos = { git = "https://github.com/esp-rs/esp-hal.git", rev = "0267f7c", default-features = false, features = [
+  "esp32s3",
+  "embassy",
+  "log-04",
+] }
+esp-println = { git = "https://github.com/esp-rs/esp-hal.git", rev = "0267f7c", features = [
+  "esp32s3",
+  "log-04",
+] }
+embassy-embedded-hal = "0.5.0"
+embassy-executor = { version = "0.9.0", features = ["log"] }
+embassy-sync = "0.7.0"
+embassy-time = "0.5.0"
+esp-alloc = "0.8.0"
+critical-section = "1.2.0"
+esp-hal-smartled = { path="../esp-hal-community/esp-hal-smartled", features = [
+  "esp32s3",
+] }
 foc = "0.3.0"
-log = { version = "0.4.21" }
+log = "0.4.27"
 smart-leds = "0.4.0"
-static_cell = { version = "2.1.0", features = ["nightly"] }
+static_cell = { version = "2.1.1", features = ["nightly"] }
 mt6701 = { path = "../mt6701" }
 ldc1x1x = { path = "../ldc1x1x" }
-nalgebra = { version = "0.33.2", default-features = false, features = [
+nalgebra = { version = "0.34.1", default-features = false, features = [
   "macros",
   "nalgebra-macros",
   "libm",
@@ -39,10 +53,13 @@ nalgebra = { version = "0.33.2", default-features = false, features = [
 average = "0.16.0"
 libm = "0.2.13"
 fixed = "1.29.0"
-embassy-usb = "0.4.0"
-embedded-io-async = "0.6.1"
+embassy-usb = "0.5.1"
+embedded-io-async = "0.7.0"
 ufmt = "0.2.0"
 embedded-cli = "0.2.1"
+
+# [replace]
+# "esp-hal:1.0.0-rc.0" = { git = "https://github.com/esp-rs/esp-hal.git", rev = "0267f7c" }
 
 [profile.dev]
 # Rust debug is too slow.
