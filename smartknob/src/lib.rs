@@ -4,6 +4,7 @@
 extern crate alloc;
 
 pub mod cli;
+pub mod config;
 pub mod flash;
 pub mod knob_tilt;
 pub mod motor_control;

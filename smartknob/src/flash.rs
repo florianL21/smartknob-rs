@@ -1,5 +1,7 @@
 extern crate alloc;
 
+use crate::config::{LogToggleSender, LogToggles};
+use alloc::format;
 use ekv::flash::{self, PageID};
 use ekv::{config, Database};
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
@@ -9,11 +11,14 @@ use esp_bootloader_esp_idf::partitions::{self, FlashRegion};
 use esp_hal::peripherals::FLASH;
 use esp_storage::FlashStorage;
 use log::{info, warn};
+use postcard::experimental::max_size::MaxSize;
 use static_cell::make_static;
+use thiserror::Error;
+use ufmt::uDebug;
 
 pub type FlashType<'a> =
     Database<PersistentStorage<FlashRegion<'a, FlashStorage<'a>>>, NoopRawMutex>;
-pub type FlashError = esp_bootloader_esp_idf::partitions::Error;
+pub type FlashErrorType = esp_bootloader_esp_idf::partitions::Error;
 
 // Workaround for alignment requirements.
 #[repr(C, align(4))]
@@ -22,6 +27,65 @@ struct AlignedBuf<const N: usize>([u8; N]);
 pub struct PersistentStorage<T: NorFlash + ReadNorFlash> {
     start: usize,
     flash: T,
+}
+
+#[derive(Copy, Clone)]
+pub enum FlashKeys {
+    Test = 0,
+    LogChannels = 1,
+}
+
+impl<'a> FlashKeys {
+    pub fn key(&'a self) -> [u8; 1] {
+        [*self as u8]
+    }
+}
+
+#[derive(Error, Debug)]
+pub enum FlashError {
+    #[error("Flash read failed: {0:#?}")]
+    FlashReadError(ekv::ReadError<FlashErrorType>),
+    #[error("Flash write failed: {0:#?}")]
+    FlashWriteError(ekv::WriteError<FlashErrorType>),
+    #[error("Flash format failed: {0:#?}")]
+    FlashFormatError(ekv::FormatError<FlashErrorType>),
+    #[error("Flash commit failed: {0:#?}")]
+    FlashCommitError(ekv::CommitError<FlashErrorType>),
+    #[error("Postcard error: {0:#?}")]
+    PostcardError(#[from] postcard::Error),
+}
+
+impl From<ekv::ReadError<FlashErrorType>> for FlashError {
+    fn from(value: ekv::ReadError<FlashErrorType>) -> Self {
+        FlashError::FlashReadError(value.into())
+    }
+}
+
+impl From<ekv::WriteError<FlashErrorType>> for FlashError {
+    fn from(value: ekv::WriteError<FlashErrorType>) -> Self {
+        FlashError::FlashWriteError(value.into())
+    }
+}
+
+impl From<ekv::FormatError<FlashErrorType>> for FlashError {
+    fn from(value: ekv::FormatError<FlashErrorType>) -> Self {
+        FlashError::FlashFormatError(value.into())
+    }
+}
+
+impl From<ekv::CommitError<FlashErrorType>> for FlashError {
+    fn from(value: ekv::CommitError<FlashErrorType>) -> Self {
+        FlashError::FlashCommitError(value.into())
+    }
+}
+
+impl uDebug for FlashError {
+    fn fmt<W>(&self, f: &mut ufmt::Formatter<'_, W>) -> Result<(), W::Error>
+    where
+        W: ufmt::uWrite + ?Sized,
+    {
+        f.write_str(format!("{self:?}").as_str())
+    }
 }
 
 impl<T: NorFlash + ReadNorFlash> flash::Flash for PersistentStorage<T> {
@@ -66,32 +130,62 @@ impl<T: NorFlash + ReadNorFlash> flash::Flash for PersistentStorage<T> {
     }
 }
 
-pub async fn flash_init(flash: FLASH<'static>) -> FlashType<'static> {
-    let flash = make_static!(FlashStorage::new(flash));
-    let pt_mem = make_static!([0u8; partitions::PARTITION_TABLE_MAX_LEN]);
-    let pt = partitions::read_partition_table(flash, pt_mem).unwrap();
-    let fat = make_static!(pt
-        .find_partition(partitions::PartitionType::Data(
-            partitions::DataPartitionSubType::Fat,
-        ))
-        .expect("Failed to search for partitions")
-        .expect("Could not find a data:fat partition"));
-    let offset = fat.offset();
-    info!("Storing data into partition with offset: {offset}");
-    let fat_partition = fat.as_embedded_storage(flash);
+pub struct FlashHandler {
+    flash: FlashType<'static>,
+}
 
-    let flash = PersistentStorage {
-        flash: fat_partition,
-        start: 0,
-    };
+#[derive(Debug, Default)]
+pub struct RestoredState {
+    pub log_channels: LogToggles,
+}
 
-    let flash = FlashType::new(flash, ekv::Config::default());
-    if flash.mount().await.is_ok() {
-        info!("Flash mounted successfully");
-    } else {
-        warn!("Failed to mount flash. Assuming first boot, formatting...");
-        flash.format().await.expect("Failed to format flash");
+impl FlashHandler {
+    pub async fn new(flash: FLASH<'static>) -> Self {
+        let flash = make_static!(FlashStorage::new(flash));
+        let pt_mem = make_static!([0u8; partitions::PARTITION_TABLE_MAX_LEN]);
+        let pt = partitions::read_partition_table(flash, pt_mem).unwrap();
+        let fat = make_static!(pt
+            .find_partition(partitions::PartitionType::Data(
+                partitions::DataPartitionSubType::Fat,
+            ))
+            .expect("Failed to search for partitions")
+            .expect("Could not find a data:fat partition"));
+        let offset = fat.offset();
+        info!("Storing data into partition with offset: {offset}");
+        let fat_partition = fat.as_embedded_storage(flash);
+
+        let flash = PersistentStorage {
+            flash: fat_partition,
+            start: 0,
+        };
+
+        let flash = FlashType::new(flash, ekv::Config::default());
+        if flash.mount().await.is_ok() {
+            info!("Flash mounted successfully");
+        } else {
+            warn!("Failed to mount flash. Assuming first boot, formatting...");
+            flash.format().await.expect("Failed to format flash");
+        }
+
+        Self { flash }
     }
 
-    flash
+    /// Restore the system state from flash. Intended to be called during startup
+    pub async fn restore(&self) -> Result<RestoredState, FlashError> {
+        let rt = self.flash.read_transaction().await;
+
+        // Restore log toggle configuration
+        let mut buffer = [0u8; LogToggles::POSTCARD_MAX_SIZE];
+        let size = rt.read(&FlashKeys::LogChannels.key(), &mut buffer).await?;
+        let log_toggles: LogToggles = postcard::from_bytes(&buffer[..size])?;
+
+        Ok(RestoredState {
+            log_channels: log_toggles,
+        })
+    }
+
+    /// After all init operations are finished on the flash this method can be used to get the underlying struct back
+    pub fn eject(self) -> FlashType<'static> {
+        self.flash
+    }
 }

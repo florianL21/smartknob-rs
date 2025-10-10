@@ -25,15 +25,16 @@ use esp_hal::{
     usb_serial_jtag::UsbSerialJtag,
 };
 use esp_hal_smartled::{buffer_size, SmartLedsAdapter};
-use log::info;
+use log::{info, warn};
 use smart_leds::{
     brightness,
     colors::{BLACK, GREEN, RED},
     gamma, SmartLedsWrite,
 };
-use smartknob_rs::flash::flash_init;
+use smartknob_rs::config::{may_log, LogChannel, LogToggleReceiver, LogToggleWatcher};
+use smartknob_rs::flash::{FlashHandler, RestoredState};
 use smartknob_rs::{
-    cli::{may_log, menu_handler, LogChannel, LogToggles},
+    cli::menu_handler,
     knob_tilt::KnobTiltEvent,
     motor_control::{update_foc, ENCODER_POSITION},
 };
@@ -46,14 +47,7 @@ type SpiBus1 = Mutex<NoopRawMutex, esp_hal::spi::master::SpiDmaBus<'static, esp_
 type I2cBus1 = Mutex<NoopRawMutex, esp_hal::i2c::master::I2c<'static, esp_hal::Async>>;
 
 #[embassy_executor::task]
-async fn log_rotations(
-    mut log_receiver: embassy_sync::watch::Receiver<
-        'static,
-        CriticalSectionRawMutex,
-        LogToggles,
-        4,
-    >,
-) {
+async fn log_rotations(mut log_receiver: LogToggleReceiver) {
     info!("Log encoder init done!");
     loop {
         let pos = ENCODER_POSITION.load(core::sync::atomic::Ordering::Relaxed);
@@ -86,12 +80,7 @@ async fn led_ring(
     rmt_channel: esp_hal::rmt::ChannelCreator<'static, esp_hal::Blocking, 0>,
     led_pin: AnyPin<'static>,
     mut receiver: embassy_sync::watch::Receiver<'static, CriticalSectionRawMutex, KnobTiltEvent, 2>,
-    mut log_receiver: embassy_sync::watch::Receiver<
-        'static,
-        CriticalSectionRawMutex,
-        LogToggles,
-        4,
-    >,
+    mut log_receiver: LogToggleReceiver,
 ) {
     const NUM_LEDS: usize = 24;
     const LED_OFFSET: usize = 1;
@@ -161,8 +150,21 @@ async fn main(spawner: Spawner) {
     esp_rtos::start(timer0.alarm0);
     info!("Embassy initialized!");
 
+    let f = FlashHandler::new(peripherals.FLASH).await;
+    let restored_state = match f.restore().await {
+        Ok(state) => {
+            info!("Restored previous state from flash: {:#?}", state);
+            state
+        }
+        Err(e) => {
+            warn!("Failed to restore state from flash: {}", e);
+            warn!("Assuming first startup. No calibration data was loaded");
+            RestoredState::default()
+        }
+    };
+
     // watcher for log output toggles
-    static LOG_WATCH: Watch<CriticalSectionRawMutex, LogToggles, 4> = Watch::new();
+    static LOG_WATCH: LogToggleWatcher = Watch::new();
 
     // Pins for LDC1614
     let pins_ldc_int_pin = peripherals.GPIO40;
@@ -254,9 +256,14 @@ async fn main(spawner: Spawner) {
     ));
     info!("Startup done!");
 
-    let f = flash_init(peripherals.FLASH).await;
+    let f = f.eject();
 
+    let log_toggle_sender = LOG_WATCH.sender();
     let serial = UsbSerialJtag::new(peripherals.USB_DEVICE).into_async();
-    let sender = LOG_WATCH.sender();
-    let _ = spawner.spawn(menu_handler(serial, sender, f));
+    let _ = spawner.spawn(menu_handler(
+        serial,
+        log_toggle_sender,
+        f,
+        restored_state.log_channels,
+    ));
 }

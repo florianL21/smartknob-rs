@@ -1,65 +1,50 @@
-use alloc::format;
+use alloc::{
+    format,
+    string::{String, ToString},
+};
 use core::{convert::Infallible, fmt::Debug, str::Utf8Error};
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embedded_cli::{cli::CliBuilder, Command, CommandGroup};
 use embedded_io_async::Read;
 use esp_backtrace as _;
 use esp_hal::{usb_serial_jtag::UsbSerialJtag, Async};
-use log::info;
+use postcard::experimental::max_size::MaxSize;
 use thiserror::Error;
-use ufmt::{derive::uDebug, uDisplay, uwrite};
+use ufmt::{uDebug, uwrite};
 
-use crate::flash::{FlashError, FlashType};
+use crate::{
+    config::{LogToggleSender, LogToggles},
+    flash::{FlashError, FlashKeys, FlashType},
+};
 
-pub enum LogChannel {
-    Encoder,
-    PushEvents,
+#[derive(Error, Debug)]
+pub enum HandlerError {
+    #[error("Flash read failed: {0:#?}")]
+    FlashError(#[from] FlashError),
+    #[error("Infallible error")]
+    Infallible(#[from] Infallible),
+    #[error("Conversion to UTF-8 failed: {0:#?}")]
+    StringConversionError(#[from] Utf8Error),
+    #[error("There is no logging channel called {0}")]
+    InvalidLogChannelError(String),
+    #[error("Could not serialize {0} to postcard format")]
+    PostcardSerializationError(String),
 }
 
-#[derive(Clone, uDebug, Default)]
-pub struct LogToggles {
-    active: bool,
-    pub encoder: bool,
-    pub push_events: bool,
-}
-
-pub async fn may_log<C>(
-    receiver: &mut embassy_sync::watch::Receiver<'static, CriticalSectionRawMutex, LogToggles, 4>,
-    channel: LogChannel,
-    c: C,
-) where
-    C: FnOnce(),
-{
-    let toggles = receiver.get().await;
-    let status = match channel {
-        LogChannel::Encoder => toggles.encoder,
-        LogChannel::PushEvents => toggles.push_events,
-    };
-    if toggles.active && status {
-        c();
+impl uDebug for HandlerError {
+    fn fmt<W>(&self, f: &mut ufmt::Formatter<'_, W>) -> Result<(), W::Error>
+    where
+        W: ufmt::uWrite + ?Sized,
+    {
+        f.write_str(format!("{self:?}").as_str())
     }
 }
 
 struct Context {
-    sender: embassy_sync::watch::Sender<'static, CriticalSectionRawMutex, LogToggles, 4>,
+    sender: LogToggleSender,
     logging_config: LogToggles,
     interface_open: bool,
     flash: FlashType<'static>,
-}
-
-fn set_log(toggles: &mut LogToggles, channel: &str, state: bool) -> Result<(), ()> {
-    match channel {
-        "encoder" => {
-            toggles.encoder = state;
-        }
-        "push_events" => {
-            toggles.push_events = state;
-        }
-        _ => {
-            return Err(());
-        }
-    }
-    Ok(())
 }
 
 #[derive(CommandGroup)]
@@ -109,53 +94,32 @@ enum Flash<'a> {
     FlashFormat,
 }
 
-#[derive(Error, Debug)]
-pub enum HandlerError {
-    #[error("Flash read failed: {0:#?}")]
-    FlashReadError(ekv::ReadError<FlashError>),
-    #[error("Flash write failed: {0:#?}")]
-    FlashWriteError(ekv::WriteError<FlashError>),
-    #[error("Flash format failed: {0:#?}")]
-    FlashFormatError(ekv::FormatError<FlashError>),
-    #[error("Flash commit failed: {0:#?}")]
-    FlashCommitError(ekv::CommitError<FlashError>),
-    #[error("Infallible error")]
-    Infallible(#[from] Infallible),
-    #[error("Conversion to UTF-8 failed: {0:#?}")]
-    StringConversionError(#[from] Utf8Error),
-}
-
-impl uDisplay for HandlerError {
-    fn fmt<W>(&self, f: &mut ufmt::Formatter<'_, W>) -> Result<(), W::Error>
-    where
-        W: ufmt::uWrite + ?Sized,
-    {
-        f.write_str(format!("{self:?}").as_str())
+async fn set_log(
+    toggles: &mut LogToggles,
+    flash: &FlashType<'static>,
+    channel: &str,
+    state: bool,
+) -> Result<(), HandlerError> {
+    match channel {
+        "encoder" => {
+            toggles.encoder = state;
+        }
+        "push_events" => {
+            toggles.push_events = state;
+        }
+        c => {
+            return Err(HandlerError::InvalidLogChannelError(c.to_string()));
+        }
     }
-}
-
-impl From<ekv::ReadError<FlashError>> for HandlerError {
-    fn from(value: ekv::ReadError<FlashError>) -> Self {
-        HandlerError::FlashReadError(value.into())
-    }
-}
-
-impl From<ekv::WriteError<FlashError>> for HandlerError {
-    fn from(value: ekv::WriteError<FlashError>) -> Self {
-        HandlerError::FlashWriteError(value.into())
-    }
-}
-
-impl From<ekv::FormatError<FlashError>> for HandlerError {
-    fn from(value: ekv::FormatError<FlashError>) -> Self {
-        HandlerError::FlashFormatError(value.into())
-    }
-}
-
-impl From<ekv::CommitError<FlashError>> for HandlerError {
-    fn from(value: ekv::CommitError<FlashError>) -> Self {
-        HandlerError::FlashCommitError(value.into())
-    }
+    let mut wt = flash.write_transaction().await;
+    let mut buffer = [0u8; LogToggles::POSTCARD_MAX_SIZE];
+    postcard::to_slice(toggles, &mut buffer)
+        .map_err(|_| HandlerError::PostcardSerializationError("LogToggles".to_string()))?;
+    wt.write(&FlashKeys::LogChannels.key(), &buffer)
+        .await
+        .map_err(FlashError::from)?;
+    wt.commit().await.map_err(FlashError::from)?;
+    Ok(())
 }
 
 impl Logging<'_> {
@@ -177,20 +141,14 @@ impl Logging<'_> {
                 )?;
             }
             Logging::LogEnable { channel } => {
-                if set_log(&mut context.logging_config, channel, true).is_ok() {
-                    uwrite!(cli.writer(), "Enabled logging for channel {}", channel)?;
-                    context.sender.send(context.logging_config.clone());
-                } else {
-                    uwrite!(cli.writer(), "Invalid channel {}", channel)?;
-                }
+                set_log(&mut context.logging_config, &context.flash, channel, true).await?;
+                uwrite!(cli.writer(), "Enabled logging for channel {}", channel)?;
+                context.sender.send(context.logging_config.clone());
             }
             Logging::LogDisable { channel } => {
-                if set_log(&mut context.logging_config, channel, false).is_ok() {
-                    uwrite!(cli.writer(), "Disabled logging for channel {}", channel)?;
-                    context.sender.send(context.logging_config.clone());
-                } else {
-                    uwrite!(cli.writer(), "Invalid channel {}", channel)?;
-                }
+                set_log(&mut context.logging_config, &context.flash, channel, false).await?;
+                uwrite!(cli.writer(), "Disabled logging for channel {}", channel)?;
+                context.sender.send(context.logging_config.clone());
             }
         }
         Ok(())
@@ -211,18 +169,22 @@ impl Flash<'_> {
             Flash::FlashLoad => {
                 let wt = context.flash.read_transaction().await;
                 let mut data = [0u8; 255];
-                wt.read(&[0], &mut data).await?;
+                wt.read(&FlashKeys::Test.key(), &mut data)
+                    .await
+                    .map_err(FlashError::from)?;
                 let s = str::from_utf8(&data)?;
                 uwrite!(cli.writer(), "Stored value is: {}", s)?;
             }
             Flash::FlashStore { value } => {
                 let mut wt = context.flash.write_transaction().await;
-                wt.write(&[0], value.as_bytes()).await?;
-                wt.commit().await?;
+                wt.write(&FlashKeys::Test.key(), value.as_bytes())
+                    .await
+                    .map_err(FlashError::from)?;
+                wt.commit().await.map_err(FlashError::from)?;
                 uwrite!(cli.writer(), "Saved value to flash: {}", value)?;
             }
             Flash::FlashFormat => {
-                context.flash.format().await?;
+                context.flash.format().await.map_err(FlashError::from)?;
                 uwrite!(cli.writer(), "Formatted flash")?;
             }
         }
@@ -233,15 +195,17 @@ impl Flash<'_> {
 #[embassy_executor::task]
 pub async fn menu_handler(
     serial: UsbSerialJtag<'static, Async>,
-    sender: embassy_sync::watch::Sender<'static, CriticalSectionRawMutex, LogToggles, 4>,
+    sender: LogToggleSender,
     flash: FlashType<'static>,
+    initial_log_toggles: LogToggles,
 ) {
     let mut context = Context {
         sender,
-        logging_config: LogToggles::default(),
+        logging_config: initial_log_toggles,
         interface_open: false,
         flash,
     };
+    context.logging_config.active = true;
 
     let command_buffer = [0u8; 255];
     let history_buffer = [0u8; 255];
@@ -292,7 +256,7 @@ pub async fn menu_handler(
                         },
                     };
                     if let Err(e) = res {
-                        let _ = uwrite!(cli.writer(), "Failed to handle command: {}", e);
+                        let _ = uwrite!(cli.writer(), "Failed to handle command: {:?}", e);
                     }
                     Ok(())
                 })
