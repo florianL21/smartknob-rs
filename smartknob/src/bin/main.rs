@@ -31,7 +31,7 @@ use smart_leds::{
     colors::{BLACK, GREEN, RED},
     gamma, SmartLedsWrite,
 };
-// use smartknob_rs::flash::flash_init;
+use smartknob_rs::flash::flash_init;
 use smartknob_rs::{
     cli::{may_log, menu_handler, LogChannel, LogToggles},
     knob_tilt::KnobTiltEvent,
@@ -254,9 +254,9 @@ async fn main(spawner: Spawner) {
     ));
     info!("Startup done!");
 
-    // let f = flash_init(peripherals.FLASH);
+    let f = flash_init(peripherals.FLASH).await;
 
     let serial = UsbSerialJtag::new(peripherals.USB_DEVICE).into_async();
     let sender = LOG_WATCH.sender();
-    let _ = spawner.spawn(menu_handler(serial, sender));
+    let _ = spawner.spawn(menu_handler(serial, sender, f));
 }

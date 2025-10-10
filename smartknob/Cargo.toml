@@ -63,13 +63,12 @@ fixed = "1.29.0"
 embassy-usb = "0.5.1"
 embedded-io-async = "0.7.0"
 ufmt = "0.2.0"
-embedded-cli = "0.2.1"
+embedded-cli = { path = "../embedded-cli-rs/embedded-cli" }
 atomic_float = "1.1.0"
-ekv = "1.0.0"
+ekv = { git = "https://github.com/embassy-rs/ekv.git", rev = "b68fd9a9369ab1b7f6181e8f7fc97aa99012a1e3" }
 embedded-storage = "0.3.1"
+thiserror = { version = "2.0.17", default-features = false }
 
-[patch.crates-io]
-embassy-sync = "0.7.2"
 
 [profile.dev]
 # Rust debug is too slow.

@@ -1,8 +1,5 @@
 use atomic_float::AtomicF32;
-use embassy_sync::{
-    blocking_mutex::raw::{CriticalSectionRawMutex, NoopRawMutex},
-    mutex::Mutex,
-};
+use embassy_sync::{blocking_mutex::raw::NoopRawMutex, mutex::Mutex};
 use embassy_time::{Instant, Timer};
 use esp_backtrace as _;
 use esp_hal::{
