@@ -1,6 +1,6 @@
 extern crate alloc;
 
-use crate::config::{LogToggleSender, LogToggles};
+use crate::config::LogChannelToggles;
 use alloc::format;
 use ekv::flash::{self, PageID};
 use ekv::{config, Database};
@@ -136,7 +136,7 @@ pub struct FlashHandler {
 
 #[derive(Debug, Default)]
 pub struct RestoredState {
-    pub log_channels: LogToggles,
+    pub log_channels: LogChannelToggles,
 }
 
 impl FlashHandler {
@@ -175,9 +175,9 @@ impl FlashHandler {
         let rt = self.flash.read_transaction().await;
 
         // Restore log toggle configuration
-        let mut buffer = [0u8; LogToggles::POSTCARD_MAX_SIZE];
+        let mut buffer = [0u8; LogChannelToggles::POSTCARD_MAX_SIZE];
         let size = rt.read(&FlashKeys::LogChannels.key(), &mut buffer).await?;
-        let log_toggles: LogToggles = postcard::from_bytes(&buffer[..size])?;
+        let log_toggles: LogChannelToggles = postcard::from_bytes(&buffer[..size])?;
 
         Ok(RestoredState {
             log_channels: log_toggles,

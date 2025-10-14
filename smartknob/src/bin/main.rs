@@ -83,13 +83,13 @@ async fn led_ring(
     mut log_receiver: LogToggleReceiver,
 ) {
     const NUM_LEDS: usize = 24;
-    const LED_OFFSET: usize = 1;
+    const _LED_OFFSET: usize = 1;
     const BUFFE_SIZE: usize = buffer_size(NUM_LEDS);
     let rmt_buffer: [u32; BUFFE_SIZE] = [0; BUFFE_SIZE];
     let mut led = SmartLedsAdapter::new(rmt_channel, led_pin, rmt_buffer);
 
     let mut data = [RED; NUM_LEDS];
-    let step_size = (2.0f32 * core::f32::consts::PI) / NUM_LEDS as f32;
+    let _step_size = (2.0f32 * core::f32::consts::PI) / NUM_LEDS as f32;
     info!("LED init done!");
     loop {
         let tilt_event = receiver.changed().await;

@@ -170,7 +170,7 @@ async fn take_mean_measurement(
     ldc: &mut ldc1x1x::Ldc<
         I2cDevice<'static, NoopRawMutex, esp_hal::i2c::master::I2c<'_, esp_hal::Async>>,
     >,
-    int_pin: &mut Input<'static>,
+    _int_pin: &mut Input<'static>,
 ) -> [u32; 3] {
     const NUM_AVERAGES: usize = 10;
     let mut measurements: [[u32; 3]; NUM_AVERAGES] = [[0; 3]; 10];
