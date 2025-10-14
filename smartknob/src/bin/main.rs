@@ -7,8 +7,13 @@ use embassy_executor::Spawner;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::watch::Watch;
 use embassy_sync::{blocking_mutex::raw::NoopRawMutex, mutex::Mutex};
-use embassy_time::{Duration, Timer};
+use embassy_time::{Delay, Duration, Timer};
+use embedded_graphics::pixelcolor::Rgb565;
+use embedded_graphics::prelude::RgbColor;
 use esp_backtrace as _;
+use esp_hal::spi;
+// use esp_hal::psram::{FlashFreq, PsramConfig, SpiRamFreq, SpiTimingConfigCoreClock};
+use embassy_embedded_hal::shared_bus::asynch::spi::SpiDevice;
 use esp_hal::{
     clock::CpuClock,
     dma::{DmaRxBuf, DmaTxBuf},
@@ -26,6 +31,12 @@ use esp_hal::{
 };
 use esp_hal_smartled::{buffer_size, SmartLedsAdapter};
 use log::{info, warn};
+use mipidsi::asynchronous::{
+    interface::SpiInterface,
+    models::{Model, GC9A01},
+    options::{ColorInversion, ColorOrder},
+    Builder,
+};
 use smart_leds::{
     brightness,
     colors::{BLACK, GREEN, RED},
@@ -43,8 +54,12 @@ use static_cell::StaticCell;
 
 esp_bootloader_esp_idf::esp_app_desc!();
 
-type SpiBus1 = Mutex<NoopRawMutex, esp_hal::spi::master::SpiDmaBus<'static, esp_hal::Async>>;
+type EncoderSpiBus = Mutex<NoopRawMutex, esp_hal::spi::master::SpiDmaBus<'static, esp_hal::Async>>;
+type DisplaySpiBus = Mutex<NoopRawMutex, esp_hal::spi::master::SpiDmaBus<'static, esp_hal::Async>>;
 type I2cBus1 = Mutex<NoopRawMutex, esp_hal::i2c::master::I2c<'static, esp_hal::Async>>;
+
+const ENCODER_SPI_DMA_BUFFER_SIZE: usize = 200;
+const DISPLAY_SPI_DMA_BUFFER_SIZE: usize = 32000;
 
 #[embassy_executor::task]
 async fn log_rotations(mut log_receiver: LogToggleReceiver) {
@@ -140,11 +155,18 @@ async fn led_ring(
 #[esp_rtos::main]
 async fn main(spawner: Spawner) {
     esp_println::logger::init_logger_from_env();
+    // let psram_config = PsramConfig {
+    //     flash_frequency: FlashFreq::FlashFreq120m,
+    //     ram_frequency: SpiRamFreq::Freq120m,
+    //     ..Default::default()
+    // };
 
     let config = esp_hal::Config::default().with_cpu_clock(CpuClock::max());
+    // .with_psram(psram_config);
     let peripherals = esp_hal::init(config);
 
     esp_alloc::heap_allocator!(size: 72 * 1024);
+    // esp_alloc::psram_allocator!(peripherals.PSRAM, esp_hal::psram);
 
     let timer0 = SystemTimer::new(peripherals.SYSTIMER);
     esp_rtos::start(timer0.alarm0);
@@ -175,7 +197,7 @@ async fn main(spawner: Spawner) {
     let pin_led_data = peripherals.GPIO39;
 
     // pins for TMC6300
-    // let pin_tmc_diag = peripherals.GPIO47;
+    let _pin_tmc_diag = peripherals.GPIO47;
     let pin_tmc_uh = peripherals.GPIO48;
     let pin_tmc_ul = peripherals.GPIO17;
     let pin_tmc_vh = peripherals.GPIO21;
@@ -187,10 +209,20 @@ async fn main(spawner: Spawner) {
     let pin_mag_clk = peripherals.GPIO11;
     let pin_mag_do = peripherals.GPIO10;
     let pin_mag_csn = peripherals.GPIO12;
-    // let pin_mag_push = peripherals.GPIO3;
+    let _pin_mag_push = peripherals.GPIO3;
+
+    // pins for display
+    let pin_lcd_sck = peripherals.GPIO13;
+    // let pin_lcd_miso = peripherals.GPIO;
+    let pin_lcd_mosi = peripherals.GPIO14;
+    let pin_lcd_cs = peripherals.GPIO8;
+    let pin_lcd_dc = peripherals.GPIO16; //pin 22
+    let pin_lcd_reset = peripherals.GPIO9;
+    let pin_lcd_bl = peripherals.GPIO15; //pin 21
 
     // Encoder initialization
-    let (rx_buffer, rx_descriptors, tx_buffer, tx_descriptors) = dma_buffers!(32000);
+    let (rx_buffer, rx_descriptors, tx_buffer, tx_descriptors) =
+        dma_buffers!(ENCODER_SPI_DMA_BUFFER_SIZE);
     let dma_rx_buf = DmaRxBuf::new(rx_descriptors, rx_buffer).unwrap();
     let dma_tx_buf = DmaTxBuf::new(tx_descriptors, tx_buffer).unwrap();
 
@@ -207,8 +239,8 @@ async fn main(spawner: Spawner) {
     .with_buffers(dma_rx_buf, dma_tx_buf)
     .into_async();
 
-    static SPI_BUS: StaticCell<SpiBus1> = StaticCell::new();
-    let spi_bus = SPI_BUS.init(Mutex::new(spi_bus));
+    static ENCODER_SPI_BUS: StaticCell<EncoderSpiBus> = StaticCell::new();
+    let spi_bus = ENCODER_SPI_BUS.init(Mutex::new(spi_bus));
 
     let mag_cs = Output::new(pin_mag_csn, Level::Low, OutputConfig::default());
     let pwm_pins = Pins6PWM {
@@ -266,4 +298,71 @@ async fn main(spawner: Spawner) {
         f,
         restored_state.log_channels,
     ));
+
+    // Display
+    let (rx_buffer, rx_descriptors, tx_buffer, tx_descriptors) =
+        dma_buffers!(DISPLAY_SPI_DMA_BUFFER_SIZE);
+    let dma_rx_buf = DmaRxBuf::new(rx_descriptors, rx_buffer).unwrap();
+    let dma_tx_buf = DmaTxBuf::new(tx_descriptors, tx_buffer).unwrap();
+
+    let spi_bus = Spi::new(
+        peripherals.SPI3,
+        spi::master::Config::default()
+            .with_frequency(Rate::from_mhz(80))
+            .with_mode(Mode::_0),
+    )
+    .unwrap()
+    .with_sck(pin_lcd_sck)
+    .with_mosi(pin_lcd_mosi)
+    .with_dma(peripherals.DMA_CH1)
+    .with_buffers(dma_rx_buf, dma_tx_buf)
+    .into_async();
+
+    let lcd_cs = Output::new(pin_lcd_cs, Level::Low, OutputConfig::default());
+    let lcd_dc = Output::new(pin_lcd_dc, Level::Low, OutputConfig::default());
+    let lcd_bl = Output::new(pin_lcd_bl, Level::Low, OutputConfig::default());
+    let lcd_rs = Output::new(pin_lcd_reset, Level::Low, OutputConfig::default());
+
+    static DISPLAY_SPI_BUS: StaticCell<DisplaySpiBus> = StaticCell::new();
+    let spi_bus = DISPLAY_SPI_BUS.init(Mutex::new(spi_bus));
+
+    spawner.must_spawn(display_task(spi_bus, lcd_cs, lcd_dc, lcd_bl, lcd_rs));
+}
+
+#[embassy_executor::task]
+pub async fn display_task(
+    spi_bus: &'static DisplaySpiBus,
+    lcd_cs: Output<'static>,
+    dc_output: Output<'static>,
+    mut backlight_output: Output<'static>,
+    reset_output: Output<'static>,
+) {
+    let device = SpiDevice::new(spi_bus, lcd_cs);
+    const DISPLAY_SIZE: (u16, u16) = GC9A01::FRAMEBUFFER_SIZE;
+
+    let mut delay = Delay {};
+    let mut buffer = [0u8; DISPLAY_SPI_DMA_BUFFER_SIZE];
+    let di = SpiInterface::new(device, dc_output, &mut buffer);
+    let mut display = Builder::new(GC9A01, di)
+        .reset_pin(reset_output)
+        .invert_colors(ColorInversion::Inverted)
+        .color_order(ColorOrder::Rgb)
+        .init(&mut delay)
+        .await
+        .unwrap();
+    backlight_output.set_high();
+    loop {
+        let single_color = [Rgb565::RED].into_iter().cycle();
+        display
+            .set_pixels(0, 0, DISPLAY_SIZE.0 - 1, DISPLAY_SIZE.1 - 1, single_color)
+            .await
+            .ok();
+        Timer::after_millis(300).await;
+        let single_color = [Rgb565::BLACK].into_iter().cycle();
+        display
+            .set_pixels(0, 0, DISPLAY_SIZE.0 - 1, DISPLAY_SIZE.1 - 1, single_color)
+            .await
+            .ok();
+        Timer::after_millis(300).await;
+    }
 }

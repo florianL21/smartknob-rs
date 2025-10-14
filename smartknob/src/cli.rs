@@ -213,6 +213,7 @@ pub async fn menu_handler(
     let command_buffer = [0u8; 255];
     let history_buffer = [0u8; 255];
     let (mut rx, tx) = serial.split();
+    // TODO: figure out why this crashes the system if no USB is connected
     let builder = CliBuilder::default()
         .writer(tx)
         .command_buffer(command_buffer)
