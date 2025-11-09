@@ -14,6 +14,7 @@ use ufmt::{uDebug, uwrite};
 use crate::{
     config::{ConfigError, LogChannelToggles, LogToggleSender, LogToggles},
     flash::{FlashError, FlashKeys, FlashType},
+    motor_control::{MotorCommand, MOTOR_COMMAND_SIGNAL},
 };
 
 #[derive(Error, Debug)]
@@ -51,6 +52,7 @@ enum RootGroup<'a> {
     Base(Base),
     Logging(Logging<'a>),
     Storage(Flash<'a>),
+    Motor(Motor),
 }
 
 #[derive(Command)]
@@ -193,6 +195,33 @@ impl Flash<'_> {
     }
 }
 
+#[derive(Command)]
+#[command(help_title = "Manage values stored in flash")]
+enum Motor {
+    /// Align the sensor and the motor to the electrical zero position
+    Align,
+}
+
+impl Motor {
+    async fn handle(
+        self: &Self,
+        cli: &mut embedded_cli::cli::CliHandle<
+            '_,
+            esp_hal::usb_serial_jtag::UsbSerialJtagTx<'static, Async>,
+            core::convert::Infallible,
+        >,
+        context: &mut Context,
+    ) -> Result<(), HandlerError> {
+        match self {
+            Motor::Align => {
+                uwrite!(cli.writer(), "Starting motor alignment")?;
+                MOTOR_COMMAND_SIGNAL.signal(MotorCommand::StartAlignment);
+            }
+        }
+        Ok(())
+    }
+}
+
 #[embassy_executor::task]
 pub async fn menu_handler(
     serial: UsbSerialJtag<'static, Async>,
@@ -250,6 +279,7 @@ pub async fn menu_handler(
                     let res = match command {
                         RootGroup::Logging(logging) => logging.handle(cli, &mut context).await,
                         RootGroup::Storage(storage) => storage.handle(cli, &mut context).await,
+                        RootGroup::Motor(motor) => motor.handle(cli, &mut context).await,
                         RootGroup::Base(base) => match base {
                             Base::Exit => {
                                 context.interface_open = false;
