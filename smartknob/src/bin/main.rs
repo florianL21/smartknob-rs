@@ -29,7 +29,7 @@ use esp_hal::{
     timer::systimer::SystemTimer,
     usb_serial_jtag::UsbSerialJtag,
 };
-use esp_hal_smartled::{buffer_size, SmartLedsAdapter};
+use esp_hal_smartled::{smart_led_buffer, SmartLedsAdapter};
 use log::{info, warn};
 use mipidsi::asynchronous::{
     interface::SpiInterface,
@@ -44,6 +44,7 @@ use smart_leds::{
 };
 use smartknob_rs::config::{may_log, LogChannel, LogToggleReceiver, LogToggleWatcher};
 use smartknob_rs::flash::{FlashHandler, RestoredState};
+use smartknob_rs::motor_control::ENCODER_ANGLE;
 use smartknob_rs::{
     cli::menu_handler,
     knob_tilt::KnobTiltEvent,
@@ -66,8 +67,9 @@ async fn log_rotations(mut log_receiver: LogToggleReceiver) {
     info!("Log encoder init done!");
     loop {
         let pos = ENCODER_POSITION.load(core::sync::atomic::Ordering::Relaxed);
+        let angle = ENCODER_ANGLE.load(core::sync::atomic::Ordering::Relaxed);
         may_log(&mut log_receiver, LogChannel::Encoder, || {
-            info!("Position: {}", pos)
+            info!("Position: {pos}; Angle: {angle}")
         })
         .await;
         Timer::after_millis(200).await;
@@ -99,9 +101,8 @@ async fn led_ring(
 ) {
     const NUM_LEDS: usize = 24;
     const _LED_OFFSET: usize = 1;
-    const BUFFE_SIZE: usize = buffer_size(NUM_LEDS);
-    let rmt_buffer: [u32; BUFFE_SIZE] = [0; BUFFE_SIZE];
-    let mut led = SmartLedsAdapter::new(rmt_channel, led_pin, rmt_buffer);
+    let mut rmt_buffer = smart_led_buffer!(NUM_LEDS);
+    let mut led = SmartLedsAdapter::new(rmt_channel, led_pin, &mut rmt_buffer);
 
     let mut data = [RED; NUM_LEDS];
     let _step_size = (2.0f32 * core::f32::consts::PI) / NUM_LEDS as f32;

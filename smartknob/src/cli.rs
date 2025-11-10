@@ -210,7 +210,7 @@ impl Motor {
             esp_hal::usb_serial_jtag::UsbSerialJtagTx<'static, Async>,
             core::convert::Infallible,
         >,
-        context: &mut Context,
+        _context: &mut Context,
     ) -> Result<(), HandlerError> {
         match self {
             Motor::Align => {

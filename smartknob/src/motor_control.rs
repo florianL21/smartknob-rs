@@ -1,7 +1,6 @@
-use core::f32;
+use core::{f32, f64};
 
 use atomic_float::AtomicF32;
-use cordic::CordicNumber;
 use embassy_sync::{
     blocking_mutex::raw::{CriticalSectionRawMutex, NoopRawMutex},
     mutex::Mutex,
@@ -24,7 +23,8 @@ use foc::{park_clarke, pid::PIController, pwm::SpaceVector, Foc};
 use mt6701::{self, AngleSensorTrait};
 
 use embassy_embedded_hal::shared_bus::asynch::spi::SpiDevice;
-use log::info;
+use log::{error, info};
+use thiserror::Error;
 
 pub type SpiBus1 = Mutex<NoopRawMutex, esp_hal::spi::master::SpiDmaBus<'static, esp_hal::Async>>;
 
@@ -34,9 +34,14 @@ pub static ENCODER_ANGLE: AtomicF32 = AtomicF32::new(0.0);
 pub static MOTOR_COMMAND_SIGNAL: Signal<CriticalSectionRawMutex, MotorCommand> = Signal::new();
 
 const PWM_RESOLUTION: u16 = 999;
+const MOTOR_POLE_PAIRS: I16F16 = I16F16::lit("4");
 
-const _3PI_2: f32 = 3.0 * f32::consts::PI / 2.0;
-const _2PI: f32 = 2.0 * f32::consts::PI;
+const _3PI_2: I16F16 = I16F16::PI
+    .unwrapped_mul(I16F16::lit("3.0"))
+    .unwrapped_div(I16F16::lit("2.0"));
+const _2PI: I16F16 = I16F16::PI.unwrapped_mul(I16F16::lit("2.0"));
+const MIN_ANGLE_DETECT_MOVEMENT: I16F16 = _2PI.unwrapped_div(I16F16::lit("101.0"));
+const ALIGNMENT_VOLTAGE: I16F16 = I16F16::lit("1.0");
 
 pub struct Pins6PWM {
     pub uh: AnyPin<'static>,
@@ -47,27 +52,208 @@ pub struct Pins6PWM {
     pub wl: AnyPin<'static>,
 }
 
+#[derive(Debug, PartialEq, Copy, Clone)]
+enum SensorDirection {
+    CW,
+    CCW,
+}
+
+fn normalize_angle(angle: I16F16) -> I16F16 {
+    let ang = angle % _2PI;
+    if ang >= I16F16::ZERO {
+        ang
+    } else {
+        ang + _2PI
+    }
+}
+
+impl SensorDirection {
+    fn electrical_angle(self, mechanical_angle: I16F16) -> I16F16 {
+        match self {
+            SensorDirection::CW => normalize_angle(MOTOR_POLE_PAIRS * mechanical_angle),
+            SensorDirection::CCW => normalize_angle(-MOTOR_POLE_PAIRS * mechanical_angle),
+        }
+    }
+}
+
+#[derive(Error, Debug, PartialEq)]
+enum AlignmentFailureReason {
+    #[error("Failed to detect any motor movement")]
+    NoMovementDetected,
+    #[error("Motor pole pairs did not match expected. Expected {MOTOR_POLE_PAIRS} measured {0}")]
+    PolePairMismatch(u8),
+}
+
+#[derive(PartialEq, Debug)]
 enum AlignmentState {
     NeedsAlignment,
-    AlignForward { counter: u16 },
-    AlignBackward { counter: u16, mid_angle: f32 },
-    FinishAlignment { mid_angle: f32, end_angle: f32 },
-    IsAligned,
+    AlignForward {
+        counter: u16,
+    },
+    AlignBackward {
+        counter: u16,
+        mid_angle: I16F16,
+    },
+    CalculateDirection {
+        mid_angle: I16F16,
+        end_angle: I16F16,
+    },
+    PrepareMeasureAngleOffset {
+        sensor_direction: SensorDirection,
+    },
+    WaitForMotorToSettle {
+        sensor_direction: SensorDirection,
+        start_time: Instant,
+    },
+    MeasureAngleOffset {
+        sensor_direction: SensorDirection,
+    },
+    IsAligned {
+        sensor_direction: SensorDirection,
+        electric_zero_angle: I16F16,
+    },
+    AlignmentFailure(AlignmentFailureReason),
+}
+
+impl AlignmentState {
+    /// Initiate the alignment procedure
+    fn start_alignment(&mut self) {
+        *self = AlignmentState::AlignForward { counter: 0 };
+    }
+
+    /// Runs the alignment procedure.
+    /// Never blocks. Alignment is done in iterations, This function never loops internally but instead
+    /// keeps track of the alignment process via it's own internal state.
+    /// It is crucial to pass the function the most up to date encoder angle values
+    async fn do_alignment(
+        &mut self,
+        encoder_position: I16F16,
+        encoder_angle: I16F16,
+    ) -> Option<[u16; 3]> {
+        match self {
+            AlignmentState::AlignForward { counter } => {
+                if *counter >= 500 {
+                    info!("Captured mid angle: {}", encoder_position);
+                    *self = AlignmentState::AlignBackward {
+                        counter: 500,
+                        mid_angle: encoder_position,
+                    };
+                    None
+                } else {
+                    // We can wait here to make the movement to the motor slow and hopefully not miss a step.
+                    // Waiting before is acceptable here because we don't care for super accurate encoder values yet
+                    Timer::after_millis(2).await;
+                    let angle =
+                        _3PI_2 + _2PI * I16F16::from_num(*counter) / I16F16::from_num(500.0);
+                    let pwm = get_phase_voltage(ALIGNMENT_VOLTAGE, I16F16::ZERO, angle);
+                    *self = AlignmentState::AlignForward {
+                        counter: *counter + 1,
+                    };
+                    Some(pwm)
+                }
+            }
+            AlignmentState::AlignBackward { counter, mid_angle } => {
+                if *counter == 0 {
+                    info!("Captured end angle: {}", encoder_position);
+                    *self = AlignmentState::CalculateDirection {
+                        mid_angle: *mid_angle,
+                        end_angle: encoder_position,
+                    };
+                    None
+                } else {
+                    // We can wait here to make the movement to the motor slow and hopefully not miss a step.
+                    // Waiting before is acceptable here because we don't care for super accurate encoder values yet
+                    Timer::after_millis(2).await;
+                    let angle =
+                        _3PI_2 + _2PI * I16F16::from_num(*counter) / I16F16::from_num(500.0);
+                    let pwm = get_phase_voltage(ALIGNMENT_VOLTAGE, I16F16::ZERO, angle);
+                    *self = AlignmentState::AlignBackward {
+                        counter: *counter - 1,
+                        mid_angle: *mid_angle,
+                    };
+                    Some(pwm)
+                }
+            }
+            AlignmentState::CalculateDirection {
+                mid_angle,
+                end_angle,
+            } => {
+                let moved = (*mid_angle - *end_angle).abs();
+                if moved < MIN_ANGLE_DETECT_MOVEMENT {
+                    *self = AlignmentState::AlignmentFailure(
+                        AlignmentFailureReason::NoMovementDetected,
+                    );
+                    error!("{self:?}");
+                    return Some([0; 3]);
+                }
+                let sensor_direction = if mid_angle < end_angle {
+                    SensorDirection::CCW
+                } else {
+                    SensorDirection::CW
+                };
+                info!("Mid angle: {}, End angle: {}", mid_angle, end_angle);
+                // 0.5f is arbitrary number it can be lower or higher!
+                // Something here seems fishy because with 0.5 it never passes.
+                // Increased to 0.9 for now, will need to check back at a later time
+                if (moved * I16F16::from_num(MOTOR_POLE_PAIRS) - _2PI).abs() > I16F16::from_num(0.8)
+                {
+                    let estimated_pole_pairs = (_2PI / moved).to_num();
+                    let error = AlignmentFailureReason::PolePairMismatch(estimated_pole_pairs);
+                    error!("{error}; Moved {moved}");
+                    *self = AlignmentState::AlignmentFailure(error);
+                    return Some([0; 3]);
+                }
+                *self = AlignmentState::PrepareMeasureAngleOffset { sensor_direction };
+                None
+            }
+            AlignmentState::PrepareMeasureAngleOffset { sensor_direction } => {
+                *self = AlignmentState::WaitForMotorToSettle {
+                    sensor_direction: *sensor_direction,
+                    start_time: Instant::now(),
+                };
+                Some(get_phase_voltage(ALIGNMENT_VOLTAGE, I16F16::ZERO, _3PI_2))
+            }
+            AlignmentState::WaitForMotorToSettle {
+                sensor_direction,
+                start_time,
+            } => {
+                if start_time.elapsed().as_millis() > 700 {
+                    *self = AlignmentState::MeasureAngleOffset {
+                        sensor_direction: *sensor_direction,
+                    };
+                }
+                None
+            }
+            AlignmentState::MeasureAngleOffset { sensor_direction } => {
+                *self = AlignmentState::IsAligned {
+                    sensor_direction: *sensor_direction,
+                    electric_zero_angle: sensor_direction.electrical_angle(encoder_angle),
+                };
+                info!("Alignment finished. Electrical zero angle is: {encoder_angle}");
+                Some([0; 3])
+            }
+            AlignmentState::IsAligned { .. } => None,
+            Self::AlignmentFailure(_) => None,
+            AlignmentState::NeedsAlignment => None,
+        }
+    }
+
+    /// Returns true if motor and sensor are aligned and the motor is allowed to move
+    fn is_aligned(&self) -> bool {
+        matches!(*self, AlignmentState::IsAligned { .. })
+    }
 }
 
 pub enum MotorCommand {
     StartAlignment,
 }
 
-fn get_phase_voltage(alignment_voltage: f32, angle: f32) -> [u16; 3] {
-    let (sin_angle, cos_angle) = cordic::sin_cos(I16F16::from_num(angle));
+fn get_phase_voltage(uq: I16F16, ud: I16F16, angle: I16F16) -> [u16; 3] {
+    let (sin_angle, cos_angle) = cordic::sin_cos(angle);
     let orthogonal_voltage = park_clarke::inverse_park(
         cos_angle,
         sin_angle,
-        park_clarke::RotatingReferenceFrame {
-            d: FixedI32::zero(),
-            q: FixedI32::from_num(alignment_voltage),
-        },
+        park_clarke::RotatingReferenceFrame { d: ud, q: uq },
     );
 
     // Modulate the result to PWM values
@@ -164,94 +350,48 @@ pub async fn update_foc(
             ENCODER_POSITION.store(encoder_pos as f32, core::sync::atomic::Ordering::Relaxed);
             ENCODER_ANGLE.store(encoder_angle, core::sync::atomic::Ordering::Relaxed);
         }
+        let encoder_pos = I16F16::from_num(encoder_pos);
+        let encoder_angle = I16F16::from_num(encoder_angle);
         if MOTOR_COMMAND_SIGNAL.signaled() {
-            alignment_state = AlignmentState::NeedsAlignment;
+            alignment_state.start_alignment();
+            MOTOR_COMMAND_SIGNAL.reset();
         }
-        match alignment_state {
-            AlignmentState::NeedsAlignment => {
-                MOTOR_COMMAND_SIGNAL.wait().await;
-                alignment_state = AlignmentState::AlignForward { counter: 0 };
-            }
-            AlignmentState::AlignForward { counter } => {
-                alignment_state = if counter >= 500 {
-                    AlignmentState::AlignBackward {
-                        counter: 500,
-                        mid_angle: encoder_angle,
-                    }
-                } else {
-                    let angle = _3PI_2 + _2PI * counter as f32 / 500.0f32;
-                    info!("Aligning fw... angle: {}", angle);
-                    let pwm = get_phase_voltage(4.0, angle);
-                    _pwm_u.set_timestamp_a(pwm[0]);
-                    _pwm_v.set_timestamp_a(pwm[1]);
-                    _pwm_w.set_timestamp_a(pwm[2]);
-                    AlignmentState::AlignForward {
-                        counter: counter + 1,
-                    }
-                };
-                Timer::after_millis(2).await;
-            }
-            AlignmentState::AlignBackward { counter, mid_angle } => {
-                alignment_state = if counter == 0 {
-                    AlignmentState::FinishAlignment {
-                        mid_angle,
-                        end_angle: encoder_angle,
-                    }
-                } else {
-                    let angle = _3PI_2 + _2PI * counter as f32 / 500.0f32;
-                    info!("Aligning bw... angle: {}", angle);
-                    let pwm = get_phase_voltage(4.0, angle);
-                    _pwm_u.set_timestamp_a(pwm[0]);
-                    _pwm_v.set_timestamp_a(pwm[1]);
-                    _pwm_w.set_timestamp_a(pwm[2]);
-                    AlignmentState::AlignBackward {
-                        counter: counter - 1,
-                        mid_angle,
-                    }
-                };
-                Timer::after_millis(2).await;
-            }
-            AlignmentState::FinishAlignment {
-                mid_angle,
-                end_angle,
-            } => {
-                _pwm_u.set_timestamp_a(0);
-                _pwm_v.set_timestamp_a(0);
-                _pwm_w.set_timestamp_a(0);
-                info!(
-                    "Alignment complete. Mid angle: {}, End angle: {}",
-                    mid_angle, end_angle
-                );
-                alignment_state = AlignmentState::IsAligned;
-            }
-            AlignmentState::IsAligned => {
-                let fake_amps0 = if last_pwm[0] != 0 {
-                    (PWM_RESOLUTION as f32 / last_pwm[0] as f32) * MAX_CURRENT as f32
-                } else {
-                    0f32
-                };
-                let fake_amps1 = if last_pwm[1] != 0 {
-                    (PWM_RESOLUTION as f32 / last_pwm[1] as f32) * MAX_CURRENT as f32
-                } else {
-                    0f32
-                };
+        // In case the alignment was not yet done, this will do it in a non blocking way
+        if let Some(pwm) = alignment_state
+            .do_alignment(encoder_pos, encoder_angle)
+            .await
+        {
+            _pwm_u.set_timestamp_a(pwm[0]);
+            _pwm_v.set_timestamp_a(pwm[1]);
+            _pwm_w.set_timestamp_a(pwm[2]);
+        }
+        if alignment_state.is_aligned() {
+            let fake_amps0 = if last_pwm[0] != 0 {
+                (PWM_RESOLUTION as f32 / last_pwm[0] as f32) * MAX_CURRENT as f32
+            } else {
+                0f32
+            };
+            let fake_amps1 = if last_pwm[1] != 0 {
+                (PWM_RESOLUTION as f32 / last_pwm[1] as f32) * MAX_CURRENT as f32
+            } else {
+                0f32
+            };
 
-                let pwm = foc.update(
-                    [
-                        FixedI32::from_num(fake_amps0),
-                        FixedI32::from_num(fake_amps1),
-                    ],
-                    angle,
-                    I16F16::from_num(1),
-                    I16F16::from_num(t.elapsed().as_micros()),
-                );
-                angle += I16F16::from_num(0.01);
-                // _pwm_u.set_timestamp_a(pwm[0]);
-                // _pwm_v.set_timestamp_a(pwm[1]);
-                // _pwm_w.set_timestamp_a(pwm[2]);
-                last_pwm = pwm;
-                Timer::after_millis(2).await;
-            }
+            let pwm = foc.update(
+                [
+                    FixedI32::from_num(fake_amps0),
+                    FixedI32::from_num(fake_amps1),
+                ],
+                angle,
+                I16F16::from_num(1),
+                I16F16::from_num(t.elapsed().as_micros()),
+            );
+            angle += I16F16::from_num(0.01);
+            // _pwm_u.set_timestamp_a(pwm[0]);
+            // _pwm_v.set_timestamp_a(pwm[1]);
+            // _pwm_w.set_timestamp_a(pwm[2]);
+            last_pwm = pwm;
+            Timer::after_millis(2).await;
         }
     }
 }
