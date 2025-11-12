@@ -1,7 +1,4 @@
-use alloc::{
-    format,
-    string::{String, ToString},
-};
+use alloc::format;
 use core::{convert::Infallible, fmt::Debug, str::Utf8Error};
 use embedded_cli::{cli::CliBuilder, Command, CommandGroup};
 use embedded_io_async::Read;
@@ -27,8 +24,8 @@ pub enum HandlerError {
     StringConversionError(#[from] Utf8Error),
     #[error("Failed to set config {0}")]
     InvalidConfigError(#[from] ConfigError),
-    #[error("Could not serialize {0} to postcard format")]
-    PostcardSerializationError(String),
+    #[error("Could not serialize LogToggles to postcard format")]
+    PostcardLogToggleSerializationError,
 }
 
 impl uDebug for HandlerError {
@@ -44,7 +41,7 @@ struct Context {
     sender: LogToggleSender,
     logging_config: LogToggles,
     interface_open: bool,
-    flash: FlashType<'static>,
+    flash: &'static FlashType<'static>,
 }
 
 #[derive(CommandGroup)]
@@ -105,7 +102,7 @@ async fn set_log(
     let mut wt = flash.write_transaction().await;
     let mut buffer = [0u8; LogChannelToggles::POSTCARD_MAX_SIZE];
     postcard::to_slice(toggles, &mut buffer)
-        .map_err(|_| HandlerError::PostcardSerializationError("LogToggles".to_string()))?;
+        .map_err(|_| HandlerError::PostcardLogToggleSerializationError)?;
     wt.write(&FlashKeys::LogChannels.key(), &buffer)
         .await
         .map_err(FlashError::from)?;
@@ -226,7 +223,7 @@ impl Motor {
 pub async fn menu_handler(
     serial: UsbSerialJtag<'static, Async>,
     sender: LogToggleSender,
-    flash: FlashType<'static>,
+    flash: &'static FlashType<'static>,
     initial_log_toggles: LogChannelToggles,
 ) {
     let mut context = Context {

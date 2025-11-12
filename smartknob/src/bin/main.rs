@@ -43,7 +43,7 @@ use smart_leds::{
     gamma, SmartLedsWrite,
 };
 use smartknob_rs::config::{may_log, LogChannel, LogToggleReceiver, LogToggleWatcher};
-use smartknob_rs::flash::{FlashHandler, RestoredState};
+use smartknob_rs::flash::{FlashHandler, FlashType, RestoredState};
 use smartknob_rs::motor_control::ENCODER_ANGLE;
 use smartknob_rs::{
     cli::menu_handler,
@@ -186,6 +186,9 @@ async fn main(spawner: Spawner) {
         }
     };
 
+    static FLASH: StaticCell<FlashType<'static>> = StaticCell::new();
+    let flash = FLASH.init(f.eject());
+
     // watcher for log output toggles
     static LOG_WATCH: LogToggleWatcher = Watch::new();
 
@@ -253,7 +256,14 @@ async fn main(spawner: Spawner) {
         wl: pin_tmc_wl.into(),
     };
 
-    spawner.must_spawn(update_foc(spi_bus, mag_cs, peripherals.MCPWM0, pwm_pins));
+    spawner.must_spawn(update_foc(
+        spi_bus,
+        mag_cs,
+        peripherals.MCPWM0,
+        pwm_pins,
+        flash,
+        restored_state.motor_alignment,
+    ));
 
     // LDC sensor
     let i2c_bus: I2c<'_, esp_hal::Async> = I2c::new(
@@ -289,16 +299,16 @@ async fn main(spawner: Spawner) {
     ));
     info!("Startup done!");
 
-    let f = f.eject();
-
     let log_toggle_sender = LOG_WATCH.sender();
     let serial = UsbSerialJtag::new(peripherals.USB_DEVICE).into_async();
-    let _ = spawner.spawn(menu_handler(
-        serial,
-        log_toggle_sender,
-        f,
-        restored_state.log_channels,
-    ));
+    spawner
+        .spawn(menu_handler(
+            serial,
+            log_toggle_sender,
+            flash,
+            restored_state.log_channels,
+        ))
+        .ok();
 
     // Display
     let (rx_buffer, rx_descriptors, tx_buffer, tx_descriptors) =

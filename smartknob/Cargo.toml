@@ -50,7 +50,7 @@ nalgebra = { version = "0.34.1", default-features = false, features = [
 ] }
 average = "0.16.0"
 libm = "0.2.13"
-fixed = "1.29.0"
+fixed = { version = "1.29.0", features = ["serde"] }
 embassy-usb = "0.5.1"
 embedded-io-async = "0.7.0"
 ufmt = "0.2.0"

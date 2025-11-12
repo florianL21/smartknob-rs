@@ -1,9 +1,10 @@
 extern crate alloc;
 
 use crate::config::LogChannelToggles;
+use crate::motor_control::MotorAlignment;
 use alloc::format;
 use ekv::flash::{self, PageID};
-use ekv::{config, Database};
+use ekv::{config, Database, ReadError};
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embedded_storage::nor_flash::{NorFlash, ReadNorFlash};
 use esp_backtrace as _;
@@ -31,8 +32,9 @@ pub struct PersistentStorage<T: NorFlash + ReadNorFlash> {
 
 #[derive(Copy, Clone)]
 pub enum FlashKeys {
-    Test = 0,
-    LogChannels = 1,
+    Test,
+    LogChannels,
+    MotorAlignment,
 }
 
 impl<'a> FlashKeys {
@@ -137,6 +139,7 @@ pub struct FlashHandler {
 #[derive(Debug, Default)]
 pub struct RestoredState {
     pub log_channels: LogChannelToggles,
+    pub motor_alignment: Option<MotorAlignment>,
 }
 
 impl FlashHandler {
@@ -174,13 +177,35 @@ impl FlashHandler {
     pub async fn restore(&self) -> Result<RestoredState, FlashError> {
         let rt = self.flash.read_transaction().await;
 
+        // Get the largest POSTCARD_MAX_SIZE to allocate a buffer
+        const MAX_BUF_SIZE: usize = [
+            LogChannelToggles::POSTCARD_MAX_SIZE,
+            MotorAlignment::POSTCARD_MAX_SIZE,
+        ][(LogChannelToggles::POSTCARD_MAX_SIZE < MotorAlignment::POSTCARD_MAX_SIZE) as usize];
+
         // Restore log toggle configuration
-        let mut buffer = [0u8; LogChannelToggles::POSTCARD_MAX_SIZE];
+        let mut buffer = [0u8; MAX_BUF_SIZE];
         let size = rt.read(&FlashKeys::LogChannels.key(), &mut buffer).await?;
         let log_toggles: LogChannelToggles = postcard::from_bytes(&buffer[..size])?;
 
+        // Restore motor alignment state
+        let motor_alignment = match rt.read(&FlashKeys::MotorAlignment.key(), &mut buffer).await {
+            Ok(size) => {
+                let motor_alignment: MotorAlignment = postcard::from_bytes(&buffer[..size])?;
+                Some(motor_alignment)
+            }
+            Err(ReadError::KeyNotFound) => {
+                info!("No motor alignment state found in flash");
+                None
+            }
+            Err(e) => {
+                return Err(FlashError::from(e));
+            }
+        };
+
         Ok(RestoredState {
             log_channels: log_toggles,
+            motor_alignment: motor_alignment,
         })
     }
 
