@@ -9,3 +9,4 @@ pub mod flash;
 pub mod knob_tilt;
 pub mod motor_control;
 pub mod shutdown;
+// pub mod slint_support;

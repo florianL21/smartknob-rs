@@ -1,0 +1,22 @@
+export global State {
+    in-out property <bool> toggle: false;
+}
+
+export component HelloWorld inherits Window {
+    width: 240px;
+    height: 240px;
+    background: State.toggle ? black : white;
+    animate background {
+        duration: 250ms;
+        easing: ease-out;
+    }
+    Text {
+        text: "Hello World";
+        color: State.toggle ? white : black;
+        font-size: 32px;
+        animate color {
+            duration: 250ms;
+            easing: ease-out;
+        }
+    }
+}
