@@ -1,9 +1,10 @@
 use alloc::format;
 use core::{convert::Infallible, fmt::Debug, str::Utf8Error};
 use embedded_cli::{cli::CliBuilder, Command, CommandGroup};
-use embedded_io_async::Read;
+use embedded_io_async::{Read, Write};
 use esp_backtrace as _;
 use esp_hal::{usb_serial_jtag::UsbSerialJtag, Async};
+use log::info;
 use postcard::experimental::max_size::MaxSize;
 use thiserror::Error;
 use ufmt::{uDebug, uwrite};
@@ -237,11 +238,17 @@ pub async fn menu_handler(
         interface_open: false,
         flash,
     };
+    context.sender.send(context.logging_config.clone());
 
     let command_buffer = [0u8; 255];
     let history_buffer = [0u8; 255];
-    let (mut rx, tx) = serial.split();
-    // TODO: figure out why this crashes the system if no USB is connected
+    let (mut rx, mut tx) = serial.split();
+
+    // Very hacky workaround for the CliBuilder::build() function not being async.
+    // These lines will attempt to write and flush _something_.
+    // In theory this future should never complete in case no USB device is connected
+    Write::write(&mut tx, b"\0").await.ok();
+    Write::flush(&mut tx).await.ok();
     let builder = CliBuilder::default()
         .writer(tx)
         .command_buffer(command_buffer)
@@ -254,7 +261,7 @@ pub async fn menu_handler(
         }
     };
 
-    context.sender.send(context.logging_config.clone());
+    info!("CLI is ready and operational");
 
     let mut buf: [u8; 1] = [0; 1];
     loop {
