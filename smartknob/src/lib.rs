@@ -8,3 +8,4 @@ pub mod config;
 pub mod flash;
 pub mod knob_tilt;
 pub mod motor_control;
+pub mod shutdown;

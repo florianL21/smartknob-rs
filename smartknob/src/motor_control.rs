@@ -17,7 +17,7 @@ use esp_hal::{
     },
     time::Rate,
 };
-use fixed::{types::I16F16, FixedI32};
+use fixed::types::I16F16;
 use foc::pwm::Modulation;
 use foc::{park_clarke, pid::PIController, pwm::SpaceVector, Foc};
 use mt6701::{self, AngleSensorTrait};
@@ -447,17 +447,19 @@ pub async fn update_foc(
         }
 
         if let Some(angle) = alignment_state.get_aligned_angle(encoder_pos) {
-            let pwm: [u16; 3] = foc.update(
-                [FixedI32::from_num(0), FixedI32::from_num(0)],
-                angle,
-                I16F16::from_num(2),
-                I16F16::from_num(last_foc_update.elapsed().as_micros()),
-            );
-            last_foc_update = Instant::now();
-            pwm_u.set_timestamp_a(pwm[0]);
-            pwm_v.set_timestamp_a(pwm[1]);
-            pwm_w.set_timestamp_a(pwm[2]);
-            Timer::after_micros(50).await;
+            // let pwm: [u16; 3] = foc.update(
+            //     [FixedI32::from_num(0), FixedI32::from_num(0)],
+            //     angle,
+            //     I16F16::from_num(2),
+            //     I16F16::from_num(last_foc_update.elapsed().as_micros()),
+            // );
+            // last_foc_update = Instant::now();
+            // pwm_u.set_timestamp_a(pwm[0]);
+            // pwm_v.set_timestamp_a(pwm[1]);
+            // pwm_w.set_timestamp_a(pwm[2]);
+            // Timer::after_micros(50).await;
+            mcpwm.timer0.stop();
+            Timer::after_millis(50).await;
         }
     }
 }

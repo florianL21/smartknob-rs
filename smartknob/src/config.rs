@@ -1,22 +1,30 @@
 use alloc::string::{String, ToString};
-use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, watch};
+use embassy_sync::{
+    blocking_mutex::raw::CriticalSectionRawMutex,
+    watch::{self, Watch},
+};
 use postcard::experimental::max_size::MaxSize;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use ufmt::{derive::uDebug, uDisplay, uwrite, uwriteln};
 
-const NUM_LOG_TOGGLE_WATCHER_RECEIVERS: usize = 2;
+const NUM_LOG_TOGGLE_WATCHER_RECEIVERS: usize = 3;
 
 pub type LogToggleSender =
     watch::Sender<'static, CriticalSectionRawMutex, LogToggles, NUM_LOG_TOGGLE_WATCHER_RECEIVERS>;
 pub type LogToggleReceiver =
     watch::Receiver<'static, CriticalSectionRawMutex, LogToggles, NUM_LOG_TOGGLE_WATCHER_RECEIVERS>;
-pub type LogToggleWatcher =
-    watch::Watch<CriticalSectionRawMutex, LogToggles, NUM_LOG_TOGGLE_WATCHER_RECEIVERS>;
+
+pub static LOG_TOGGLES: Watch<
+    CriticalSectionRawMutex,
+    LogToggles,
+    NUM_LOG_TOGGLE_WATCHER_RECEIVERS,
+> = Watch::new();
 
 pub enum LogChannel {
     Encoder,
     PushEvents,
+    Brightness,
 }
 
 #[derive(Error, Debug)]
@@ -29,6 +37,7 @@ pub enum ConfigError {
 pub struct LogChannelToggles {
     encoder: bool,
     push_events: bool,
+    brightness: bool,
 }
 
 impl uDisplay for LogChannelToggles {
@@ -39,6 +48,7 @@ impl uDisplay for LogChannelToggles {
         uwriteln!(f, "Channel:       | Enabled:")?;
         uwriteln!(f, "---------------|---------")?;
         uwriteln!(f, "encoder        | {}", self.encoder)?;
+        uwriteln!(f, "brightness     | {}", self.brightness)?;
         uwrite!(f, "push_events    | {}", self.push_events)
     }
 }
@@ -48,6 +58,7 @@ impl LogChannelToggles {
         match channel {
             LogChannel::Encoder => self.encoder,
             LogChannel::PushEvents => self.push_events,
+            LogChannel::Brightness => self.brightness,
         }
     }
 
@@ -58,6 +69,9 @@ impl LogChannelToggles {
             }
             "push_events" => {
                 self.push_events = state;
+            }
+            "brightness" => {
+                self.brightness = state;
             }
             c => {
                 return Err(ConfigError::InvalidLogChannelError(c.to_string()));

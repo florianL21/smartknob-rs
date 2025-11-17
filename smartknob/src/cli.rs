@@ -9,9 +9,10 @@ use thiserror::Error;
 use ufmt::{uDebug, uwrite};
 
 use crate::{
-    config::{ConfigError, LogChannelToggles, LogToggleSender, LogToggles},
+    config::{ConfigError, LogChannelToggles, LogToggleSender, LogToggles, LOG_TOGGLES},
     flash::{FlashError, FlashKeys, FlashType},
     motor_control::{MotorCommand, MOTOR_COMMAND_SIGNAL},
+    shutdown::REQUEST_POWER_DOWN,
 };
 
 #[derive(Error, Debug)]
@@ -57,6 +58,8 @@ enum RootGroup<'a> {
 enum Base {
     /// Exit the CLI. This will start logging out all enabled channels. To start the CLI again simply press any button
     Exit,
+    /// This will initiate a system shutdown
+    Shutdown,
 }
 
 #[derive(Command)]
@@ -222,12 +225,11 @@ impl Motor {
 #[embassy_executor::task]
 pub async fn menu_handler(
     serial: UsbSerialJtag<'static, Async>,
-    sender: LogToggleSender,
     flash: &'static FlashType<'static>,
     initial_log_toggles: LogChannelToggles,
 ) {
     let mut context = Context {
-        sender,
+        sender: LOG_TOGGLES.sender(),
         logging_config: LogToggles {
             active: true,
             config: initial_log_toggles,
@@ -282,6 +284,10 @@ pub async fn menu_handler(
                                 context.interface_open = false;
                                 context.logging_config.active = true;
                                 context.sender.send(context.logging_config.clone());
+                                Ok(())
+                            }
+                            Base::Shutdown => {
+                                REQUEST_POWER_DOWN.signal(true);
                                 Ok(())
                             }
                         },

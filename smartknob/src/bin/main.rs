@@ -11,6 +11,12 @@ use embassy_time::{Delay, Duration, Timer};
 use embedded_graphics::pixelcolor::Rgb565;
 use embedded_graphics::prelude::RgbColor;
 use esp_backtrace as _;
+use esp_hal::analog::adc::{Adc, AdcConfig, Attenuation};
+use esp_hal::gpio::DriveMode;
+use esp_hal::ledc::channel::ChannelIFace;
+use esp_hal::ledc::timer::TimerIFace;
+use esp_hal::ledc::{self, LSGlobalClkSource, Ledc, LowSpeed};
+use esp_hal::peripherals::GPIO4;
 use esp_hal::spi;
 // use esp_hal::psram::{FlashFreq, PsramConfig, SpiRamFreq, SpiTimingConfigCoreClock};
 use embassy_embedded_hal::shared_bus::asynch::spi::SpiDevice;
@@ -42,9 +48,10 @@ use smart_leds::{
     colors::{BLACK, GREEN, RED},
     gamma, SmartLedsWrite,
 };
-use smartknob_rs::config::{may_log, LogChannel, LogToggleReceiver, LogToggleWatcher};
+use smartknob_rs::config::{may_log, LogChannel, LOG_TOGGLES};
 use smartknob_rs::flash::{FlashHandler, FlashType, RestoredState};
 use smartknob_rs::motor_control::ENCODER_ANGLE;
+use smartknob_rs::shutdown::shutdown_handler;
 use smartknob_rs::{
     cli::menu_handler,
     knob_tilt::KnobTiltEvent,
@@ -63,7 +70,10 @@ const ENCODER_SPI_DMA_BUFFER_SIZE: usize = 200;
 const DISPLAY_SPI_DMA_BUFFER_SIZE: usize = 32000;
 
 #[embassy_executor::task]
-async fn log_rotations(mut log_receiver: LogToggleReceiver) {
+async fn log_rotations() {
+    let mut log_receiver = LOG_TOGGLES
+        .receiver()
+        .expect("Log toggle receiver had not enough capacity");
     info!("Log encoder init done!");
     loop {
         let pos = ENCODER_POSITION.load(core::sync::atomic::Ordering::Relaxed);
@@ -97,10 +107,14 @@ async fn led_ring(
     rmt_channel: esp_hal::rmt::ChannelCreator<'static, esp_hal::Blocking, 0>,
     led_pin: AnyPin<'static>,
     mut receiver: embassy_sync::watch::Receiver<'static, CriticalSectionRawMutex, KnobTiltEvent, 2>,
-    mut log_receiver: LogToggleReceiver,
 ) {
     const NUM_LEDS: usize = 24;
     const _LED_OFFSET: usize = 1;
+
+    let mut log_receiver = LOG_TOGGLES
+        .receiver()
+        .expect("Log toggle receiver had not enough capacity");
+
     let mut rmt_buffer = smart_led_buffer!(NUM_LEDS);
     let mut led = SmartLedsAdapter::new(rmt_channel, led_pin, &mut rmt_buffer);
 
@@ -167,7 +181,7 @@ async fn main(spawner: Spawner) {
     let peripherals = esp_hal::init(config);
 
     esp_alloc::heap_allocator!(size: 72 * 1024);
-    // esp_alloc::psram_allocator!(peripherals.PSRAM, esp_hal::psram);
+    esp_alloc::psram_allocator!(peripherals.PSRAM, esp_hal::psram);
 
     let timer0 = SystemTimer::new(peripherals.SYSTIMER);
     esp_rtos::start(timer0.alarm0);
@@ -188,9 +202,6 @@ async fn main(spawner: Spawner) {
 
     static FLASH: StaticCell<FlashType<'static>> = StaticCell::new();
     let flash = FLASH.init(f.eject());
-
-    // watcher for log output toggles
-    static LOG_WATCH: LogToggleWatcher = Watch::new();
 
     // Pins for LDC1614
     let pins_ldc_int_pin = peripherals.GPIO40;
@@ -219,10 +230,15 @@ async fn main(spawner: Spawner) {
     let pin_lcd_sck = peripherals.GPIO13;
     // let pin_lcd_miso = peripherals.GPIO;
     let pin_lcd_mosi = peripherals.GPIO14;
-    let pin_lcd_cs = peripherals.GPIO8;
     let pin_lcd_dc = peripherals.GPIO16; //pin 22
-    let pin_lcd_reset = peripherals.GPIO9;
-    let pin_lcd_bl = peripherals.GPIO15; //pin 21
+                                         // BEWARE!!! Schematic has mismatched pins!
+    let pin_lcd_cs = peripherals.GPIO15; //pin 21 // BL pin on the base PCB; CS on the display PCB
+    let pin_lcd_bl = peripherals.GPIO9; // RST pin on the base PCB; BL on the display PCB
+    let pin_lcd_reset = peripherals.GPIO8; // CS pin on the base PCB; RST on the display PCB
+
+    // various other pins
+    let brightness_sensor_pin = peripherals.GPIO4;
+    let power_off_pin = peripherals.GPIO38;
 
     // Encoder initialization
     let (rx_buffer, rx_descriptors, tx_buffer, tx_descriptors) =
@@ -284,30 +300,16 @@ async fn main(spawner: Spawner) {
     spawner.must_spawn(read_ldc_task(i2c_bus, ldc_int_pin, sender));
 
     // log encoder values
-    let log_receiver = LOG_WATCH.receiver().unwrap();
-    spawner.must_spawn(log_rotations(log_receiver));
+    spawner.must_spawn(log_rotations());
 
     // LED ring
     let rmt = Rmt::new(peripherals.RMT, Rate::from_mhz(80)).unwrap();
     let receiver = TILT.receiver().unwrap();
-    let log_receiver = LOG_WATCH.receiver().unwrap();
-    spawner.must_spawn(led_ring(
-        rmt.channel0,
-        pin_led_data.into(),
-        receiver,
-        log_receiver,
-    ));
-    info!("Startup done!");
+    spawner.must_spawn(led_ring(rmt.channel0, pin_led_data.into(), receiver));
 
-    let log_toggle_sender = LOG_WATCH.sender();
     let serial = UsbSerialJtag::new(peripherals.USB_DEVICE).into_async();
     spawner
-        .spawn(menu_handler(
-            serial,
-            log_toggle_sender,
-            flash,
-            restored_state.log_channels,
-        ))
+        .spawn(menu_handler(serial, flash, restored_state.log_channels))
         .ok();
 
     // Display
@@ -336,8 +338,38 @@ async fn main(spawner: Spawner) {
 
     static DISPLAY_SPI_BUS: StaticCell<DisplaySpiBus> = StaticCell::new();
     let spi_bus = DISPLAY_SPI_BUS.init(Mutex::new(spi_bus));
+    let ledc = Ledc::new(peripherals.LEDC);
 
-    spawner.must_spawn(display_task(spi_bus, lcd_cs, lcd_dc, lcd_bl, lcd_rs));
+    spawner.must_spawn(display_task(spi_bus, lcd_cs, lcd_dc, lcd_bl, lcd_rs, ledc));
+
+    spawner.must_spawn(brightness_task(peripherals.ADC1, brightness_sensor_pin));
+
+    let power_off_pin = Output::new(power_off_pin, Level::High, OutputConfig::default());
+    spawner.must_spawn(shutdown_handler(power_off_pin));
+
+    info!("All tasks spawned");
+    let stats = esp_alloc::HEAP.stats();
+    info!("Current Heap stats: {}", stats);
+}
+
+#[embassy_executor::task]
+async fn brightness_task(adc_per: esp_hal::peripherals::ADC1<'static>, sensor_pin: GPIO4<'static>) {
+    let mut log_receiver = LOG_TOGGLES
+        .receiver()
+        .expect("Log toggle receiver had not enough capacity");
+
+    let mut adc1_config = AdcConfig::new();
+    let mut pin = adc1_config.enable_pin(sensor_pin, Attenuation::_11dB);
+    let mut adc1 = Adc::new(adc_per, adc1_config);
+    loop {
+        if let Ok(val) = adc1.read_oneshot(&mut pin) {
+            may_log(&mut log_receiver, LogChannel::Brightness, || {
+                info!("Brightness: {val}")
+            })
+            .await;
+        }
+        Timer::after_millis(200).await;
+    }
 }
 
 #[embassy_executor::task]
@@ -347,6 +379,7 @@ pub async fn display_task(
     dc_output: Output<'static>,
     mut backlight_output: Output<'static>,
     reset_output: Output<'static>,
+    mut ledc: Ledc<'static>,
 ) {
     let device = SpiDevice::new(spi_bus, lcd_cs);
     const DISPLAY_SIZE: (u16, u16) = GC9A01::FRAMEBUFFER_SIZE;
@@ -357,11 +390,35 @@ pub async fn display_task(
     let mut display = Builder::new(GC9A01, di)
         .reset_pin(reset_output)
         .invert_colors(ColorInversion::Inverted)
-        .color_order(ColorOrder::Rgb)
+        .color_order(ColorOrder::Bgr)
         .init(&mut delay)
         .await
         .unwrap();
-    backlight_output.set_high();
+
+    // backlight control
+
+    ledc.set_global_slow_clock(LSGlobalClkSource::APBClk);
+    let mut lstimer0 = ledc.timer::<LowSpeed>(ledc::timer::Number::Timer0);
+    lstimer0
+        .configure(ledc::timer::config::Config {
+            duty: ledc::timer::config::Duty::Duty10Bit,
+            clock_source: ledc::timer::LSClockSource::APBClk,
+            frequency: Rate::from_khz(24),
+        })
+        .unwrap();
+
+    let mut channel0 = ledc.channel(ledc::channel::Number::Channel0, backlight_output);
+    channel0
+        .configure(ledc::channel::config::Config {
+            timer: &lstimer0,
+            duty_pct: 0,
+            drive_mode: DriveMode::PushPull,
+        })
+        .unwrap();
+    if let Err(e) = channel0.start_duty_fade(0, 50, 1000) {
+        warn!("Display backlight fade failed: {e:?}");
+    }
+    // brightness sensor
     loop {
         let single_color = [Rgb565::RED].into_iter().cycle();
         display
@@ -375,5 +432,14 @@ pub async fn display_task(
             .await
             .ok();
         Timer::after_millis(300).await;
+        warn!("iter");
+        // Timer::after_millis(2000).await;
+        // if let Err(e) = channel0.start_duty_fade(100, 0, 1000) {
+        //     warn!("Display backlight fade failed: {e:?}");
+        // }
+        // Timer::after_millis(2000).await;
+        // if let Err(e) = channel0.start_duty_fade(0, 100, 1000) {
+        //     warn!("Display backlight fade failed: {e:?}");
+        // }
     }
 }
