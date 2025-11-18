@@ -7,19 +7,13 @@ use embassy_executor::Spawner;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::watch::Watch;
 use embassy_sync::{blocking_mutex::raw::NoopRawMutex, mutex::Mutex};
-use embassy_time::{Delay, Duration, Timer};
-use embedded_graphics::pixelcolor::Rgb565;
-use embedded_graphics::prelude::RgbColor;
+use embassy_time::{Duration, Timer};
 use esp_backtrace as _;
 use esp_hal::analog::adc::{Adc, AdcConfig, Attenuation};
-use esp_hal::gpio::DriveMode;
-use esp_hal::ledc::channel::ChannelIFace;
-use esp_hal::ledc::timer::TimerIFace;
-use esp_hal::ledc::{self, LSGlobalClkSource, Ledc, LowSpeed};
+use esp_hal::ledc::Ledc;
 use esp_hal::peripherals::GPIO4;
+use esp_hal::psram::{FlashFreq, PsramConfig, SpiRamFreq};
 use esp_hal::spi;
-// use esp_hal::psram::{FlashFreq, PsramConfig, SpiRamFreq, SpiTimingConfigCoreClock};
-use embassy_embedded_hal::shared_bus::asynch::spi::SpiDevice;
 use esp_hal::{
     clock::CpuClock,
     dma::{DmaRxBuf, DmaTxBuf},
@@ -37,18 +31,14 @@ use esp_hal::{
 };
 use esp_hal_smartled::{smart_led_buffer, SmartLedsAdapter};
 use log::{info, warn};
-use mipidsi::asynchronous::{
-    interface::SpiInterface,
-    models::{Model, GC9A01},
-    options::{ColorInversion, ColorOrder},
-    Builder,
-};
+
 use smart_leds::{
     brightness,
     colors::{BLACK, GREEN, RED},
     gamma, SmartLedsWrite,
 };
 use smartknob_rs::config::{may_log, LogChannel, LOG_TOGGLES};
+use smartknob_rs::display::{display_task, ui_task, DisplaySpiBus};
 use smartknob_rs::flash::{FlashHandler, FlashType, RestoredState};
 use smartknob_rs::motor_control::ENCODER_ANGLE;
 use smartknob_rs::shutdown::shutdown_handler;
@@ -63,11 +53,10 @@ use static_cell::StaticCell;
 esp_bootloader_esp_idf::esp_app_desc!();
 
 type EncoderSpiBus = Mutex<NoopRawMutex, esp_hal::spi::master::SpiDmaBus<'static, esp_hal::Async>>;
-type DisplaySpiBus = Mutex<NoopRawMutex, esp_hal::spi::master::SpiDmaBus<'static, esp_hal::Async>>;
 type I2cBus1 = Mutex<NoopRawMutex, esp_hal::i2c::master::I2c<'static, esp_hal::Async>>;
 
 const ENCODER_SPI_DMA_BUFFER_SIZE: usize = 200;
-const DISPLAY_SPI_DMA_BUFFER_SIZE: usize = 32000;
+const DISPLAY_SPI_DMA_BUFFER_SIZE: usize = 64000;
 
 #[embassy_executor::task]
 async fn log_rotations() {
@@ -167,20 +156,42 @@ async fn led_ring(
     }
 }
 
+#[embassy_executor::task]
+async fn brightness_task(adc_per: esp_hal::peripherals::ADC1<'static>, sensor_pin: GPIO4<'static>) {
+    let mut log_receiver = LOG_TOGGLES
+        .receiver()
+        .expect("Log toggle receiver had not enough capacity");
+
+    let mut adc1_config = AdcConfig::new();
+    let mut pin = adc1_config.enable_pin(sensor_pin, Attenuation::_11dB);
+    let mut adc1 = Adc::new(adc_per, adc1_config);
+    loop {
+        if let Ok(val) = adc1.read_oneshot(&mut pin) {
+            may_log(&mut log_receiver, LogChannel::Brightness, || {
+                info!("Brightness: {val}")
+            })
+            .await;
+        }
+        Timer::after_millis(200).await;
+    }
+}
+
 #[esp_rtos::main]
 async fn main(spawner: Spawner) {
     esp_println::logger::init_logger_from_env();
-    // let psram_config = PsramConfig {
-    //     flash_frequency: FlashFreq::FlashFreq120m,
-    //     ram_frequency: SpiRamFreq::Freq120m,
-    //     ..Default::default()
-    // };
+    let psram_config = PsramConfig {
+        flash_frequency: FlashFreq::FlashFreq80m,
+        ram_frequency: SpiRamFreq::Freq80m,
 
-    let config = esp_hal::Config::default().with_cpu_clock(CpuClock::max());
-    // .with_psram(psram_config);
+        ..Default::default()
+    };
+
+    let config = esp_hal::Config::default()
+        .with_cpu_clock(CpuClock::max())
+        .with_psram(psram_config);
     let peripherals = esp_hal::init(config);
 
-    esp_alloc::heap_allocator!(size: 72 * 1024);
+    esp_alloc::heap_allocator!(size: 120000);
     esp_alloc::psram_allocator!(peripherals.PSRAM, esp_hal::psram);
 
     let timer0 = SystemTimer::new(peripherals.SYSTIMER);
@@ -341,6 +352,7 @@ async fn main(spawner: Spawner) {
     let ledc = Ledc::new(peripherals.LEDC);
 
     spawner.must_spawn(display_task(spi_bus, lcd_cs, lcd_dc, lcd_bl, lcd_rs, ledc));
+    spawner.must_spawn(ui_task());
 
     spawner.must_spawn(brightness_task(peripherals.ADC1, brightness_sensor_pin));
 
@@ -350,96 +362,4 @@ async fn main(spawner: Spawner) {
     info!("All tasks spawned");
     let stats = esp_alloc::HEAP.stats();
     info!("Current Heap stats: {}", stats);
-}
-
-#[embassy_executor::task]
-async fn brightness_task(adc_per: esp_hal::peripherals::ADC1<'static>, sensor_pin: GPIO4<'static>) {
-    let mut log_receiver = LOG_TOGGLES
-        .receiver()
-        .expect("Log toggle receiver had not enough capacity");
-
-    let mut adc1_config = AdcConfig::new();
-    let mut pin = adc1_config.enable_pin(sensor_pin, Attenuation::_11dB);
-    let mut adc1 = Adc::new(adc_per, adc1_config);
-    loop {
-        if let Ok(val) = adc1.read_oneshot(&mut pin) {
-            may_log(&mut log_receiver, LogChannel::Brightness, || {
-                info!("Brightness: {val}")
-            })
-            .await;
-        }
-        Timer::after_millis(200).await;
-    }
-}
-
-#[embassy_executor::task]
-pub async fn display_task(
-    spi_bus: &'static DisplaySpiBus,
-    lcd_cs: Output<'static>,
-    dc_output: Output<'static>,
-    mut backlight_output: Output<'static>,
-    reset_output: Output<'static>,
-    mut ledc: Ledc<'static>,
-) {
-    let device = SpiDevice::new(spi_bus, lcd_cs);
-    const DISPLAY_SIZE: (u16, u16) = GC9A01::FRAMEBUFFER_SIZE;
-
-    let mut delay = Delay {};
-    let mut buffer = [0u8; DISPLAY_SPI_DMA_BUFFER_SIZE];
-    let di = SpiInterface::new(device, dc_output, &mut buffer);
-    let mut display = Builder::new(GC9A01, di)
-        .reset_pin(reset_output)
-        .invert_colors(ColorInversion::Inverted)
-        .color_order(ColorOrder::Bgr)
-        .init(&mut delay)
-        .await
-        .unwrap();
-
-    // backlight control
-
-    ledc.set_global_slow_clock(LSGlobalClkSource::APBClk);
-    let mut lstimer0 = ledc.timer::<LowSpeed>(ledc::timer::Number::Timer0);
-    lstimer0
-        .configure(ledc::timer::config::Config {
-            duty: ledc::timer::config::Duty::Duty10Bit,
-            clock_source: ledc::timer::LSClockSource::APBClk,
-            frequency: Rate::from_khz(24),
-        })
-        .unwrap();
-
-    let mut channel0 = ledc.channel(ledc::channel::Number::Channel0, backlight_output);
-    channel0
-        .configure(ledc::channel::config::Config {
-            timer: &lstimer0,
-            duty_pct: 0,
-            drive_mode: DriveMode::PushPull,
-        })
-        .unwrap();
-    if let Err(e) = channel0.start_duty_fade(0, 50, 1000) {
-        warn!("Display backlight fade failed: {e:?}");
-    }
-    // brightness sensor
-    loop {
-        let single_color = [Rgb565::RED].into_iter().cycle();
-        display
-            .set_pixels(0, 0, DISPLAY_SIZE.0 - 1, DISPLAY_SIZE.1 - 1, single_color)
-            .await
-            .ok();
-        Timer::after_millis(300).await;
-        let single_color = [Rgb565::BLACK].into_iter().cycle();
-        display
-            .set_pixels(0, 0, DISPLAY_SIZE.0 - 1, DISPLAY_SIZE.1 - 1, single_color)
-            .await
-            .ok();
-        Timer::after_millis(300).await;
-        warn!("iter");
-        // Timer::after_millis(2000).await;
-        // if let Err(e) = channel0.start_duty_fade(100, 0, 1000) {
-        //     warn!("Display backlight fade failed: {e:?}");
-        // }
-        // Timer::after_millis(2000).await;
-        // if let Err(e) = channel0.start_duty_fade(0, 100, 1000) {
-        //     warn!("Display backlight fade failed: {e:?}");
-        // }
-    }
 }
