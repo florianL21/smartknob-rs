@@ -179,13 +179,10 @@ pub async fn display_task(
     }
 
     let mut fb = fb;
+    let mut ticker = Ticker::every(TARGET_FRAME_DURATION / 2);
     loop {
         let t = Instant::now();
 
-        // wait for a new fb to transfer, once there is one send the old FB back and continue with transferring the just received one
-        let new_fb = rx.wait().await;
-        tx.signal(fb);
-        fb = new_fb;
         // Send the frame to the display
         display
             .set_pixels(
@@ -198,7 +195,12 @@ pub async fn display_task(
             )
             .await
             .ok();
-        info!("Frame took {} ms", t.elapsed().as_millis(),);
+        info!("Frame took {} ms", t.elapsed().as_millis());
+        // wait for a new fb to transfer, once there is one send the old FB back and continue with transferring the just received one
+        let new_fb = rx.wait().await;
+        tx.signal(fb);
+        fb = new_fb;
+        ticker.next().await;
     }
 }
 
