@@ -10,10 +10,13 @@ use embassy_sync::{blocking_mutex::raw::NoopRawMutex, mutex::Mutex};
 use embassy_time::{Duration, Timer};
 use esp_backtrace as _;
 use esp_hal::analog::adc::{Adc, AdcConfig, Attenuation};
+use esp_hal::interrupt::software::SoftwareInterruptControl;
 use esp_hal::ledc::Ledc;
 use esp_hal::peripherals::GPIO4;
 use esp_hal::psram::{FlashFreq, PsramConfig, SpiRamFreq};
 use esp_hal::spi;
+use esp_hal::system::Stack;
+use esp_hal::timer::timg::TimerGroup;
 use esp_hal::{
     clock::CpuClock,
     dma::{DmaRxBuf, DmaTxBuf},
@@ -26,10 +29,10 @@ use esp_hal::{
         Mode,
     },
     time::Rate,
-    timer::systimer::SystemTimer,
     usb_serial_jtag::UsbSerialJtag,
 };
 use esp_hal_smartled::{smart_led_buffer, SmartLedsAdapter};
+use esp_rtos::embassy::Executor;
 use log::{info, warn};
 
 use smart_leds::{
@@ -38,7 +41,7 @@ use smart_leds::{
     gamma, SmartLedsWrite,
 };
 use smartknob_rs::config::{may_log, LogChannel, LOG_TOGGLES};
-use smartknob_rs::display::{display_task, ui_task, DisplaySpiBus};
+use smartknob_rs::display::{spawn_display_tasks, DisplayHandles};
 use smartknob_rs::flash::{FlashHandler, FlashType, RestoredState};
 use smartknob_rs::motor_control::ENCODER_ANGLE;
 use smartknob_rs::shutdown::shutdown_handler;
@@ -56,7 +59,6 @@ type EncoderSpiBus = Mutex<NoopRawMutex, esp_hal::spi::master::SpiDmaBus<'static
 type I2cBus1 = Mutex<NoopRawMutex, esp_hal::i2c::master::I2c<'static, esp_hal::Async>>;
 
 const ENCODER_SPI_DMA_BUFFER_SIZE: usize = 200;
-const DISPLAY_SPI_DMA_BUFFER_SIZE: usize = 64000;
 
 #[embassy_executor::task]
 async fn log_rotations() {
@@ -182,7 +184,7 @@ async fn main(spawner: Spawner) {
     let psram_config = PsramConfig {
         flash_frequency: FlashFreq::FlashFreq80m,
         ram_frequency: SpiRamFreq::Freq80m,
-
+        // core_clock: Some(SpiTimingConfigCoreClock::SpiTimingConfigCoreClock240m),
         ..Default::default()
     };
 
@@ -191,11 +193,12 @@ async fn main(spawner: Spawner) {
         .with_psram(psram_config);
     let peripherals = esp_hal::init(config);
 
-    esp_alloc::heap_allocator!(size: 120000);
+    let timg0 = TimerGroup::new(peripherals.TIMG0);
+
+    esp_alloc::heap_allocator!(size: 72 * 1024);
     esp_alloc::psram_allocator!(peripherals.PSRAM, esp_hal::psram);
 
-    let timer0 = SystemTimer::new(peripherals.SYSTIMER);
-    esp_rtos::start(timer0.alarm0);
+    esp_rtos::start(timg0.timer0);
     info!("Embassy initialized!");
 
     let f = FlashHandler::new(peripherals.FLASH).await;
@@ -324,35 +327,43 @@ async fn main(spawner: Spawner) {
         .ok();
 
     // Display
-    let (rx_buffer, rx_descriptors, tx_buffer, tx_descriptors) =
-        dma_buffers!(DISPLAY_SPI_DMA_BUFFER_SIZE);
-    let dma_rx_buf = DmaRxBuf::new(rx_descriptors, rx_buffer).unwrap();
-    let dma_tx_buf = DmaTxBuf::new(tx_descriptors, tx_buffer).unwrap();
+    let sw_int = SoftwareInterruptControl::new(peripherals.SW_INTERRUPT);
 
-    let spi_bus = Spi::new(
-        peripherals.SPI3,
-        spi::master::Config::default()
-            .with_frequency(Rate::from_mhz(80))
-            .with_mode(Mode::_0),
-    )
-    .unwrap()
-    .with_sck(pin_lcd_sck)
-    .with_mosi(pin_lcd_mosi)
-    .with_dma(peripherals.DMA_CH1)
-    .with_buffers(dma_rx_buf, dma_tx_buf)
-    .into_async();
+    static APP_CORE_STACK: StaticCell<Stack<8192>> = StaticCell::new();
+    let app_core_stack = APP_CORE_STACK.init(Stack::new());
 
-    let lcd_cs = Output::new(pin_lcd_cs, Level::Low, OutputConfig::default());
-    let lcd_dc = Output::new(pin_lcd_dc, Level::Low, OutputConfig::default());
-    let lcd_bl = Output::new(pin_lcd_bl, Level::Low, OutputConfig::default());
-    let lcd_rs = Output::new(pin_lcd_reset, Level::Low, OutputConfig::default());
+    esp_rtos::start_second_core(
+        peripherals.CPU_CTRL,
+        sw_int.software_interrupt0,
+        sw_int.software_interrupt1,
+        app_core_stack,
+        move || {
+            static EXECUTOR: StaticCell<Executor> = StaticCell::new();
+            let executor = EXECUTOR.init(Executor::new());
+            executor.run(|spawner| {
+                let spi_bus: spi::master::SpiDma<'_, esp_hal::Blocking> = Spi::new(
+                    peripherals.SPI3,
+                    spi::master::Config::default()
+                        .with_frequency(Rate::from_mhz(80))
+                        .with_mode(Mode::_0),
+                )
+                .unwrap()
+                .with_sck(pin_lcd_sck)
+                .with_mosi(pin_lcd_mosi)
+                .with_dma(peripherals.DMA_CH1);
 
-    static DISPLAY_SPI_BUS: StaticCell<DisplaySpiBus> = StaticCell::new();
-    let spi_bus = DISPLAY_SPI_BUS.init(Mutex::new(spi_bus));
-    let ledc = Ledc::new(peripherals.LEDC);
-
-    spawner.must_spawn(display_task(spi_bus, lcd_cs, lcd_dc, lcd_bl, lcd_rs, ledc));
-    spawner.must_spawn(ui_task());
+                let display_handles = DisplayHandles {
+                    spi_bus,
+                    lcd_cs: Output::new(pin_lcd_cs, Level::Low, OutputConfig::default()),
+                    dc_output: Output::new(pin_lcd_dc, Level::Low, OutputConfig::default()),
+                    backlight_output: Output::new(pin_lcd_bl, Level::Low, OutputConfig::default()),
+                    reset_output: Output::new(pin_lcd_reset, Level::Low, OutputConfig::default()),
+                    ledc: Ledc::new(peripherals.LEDC),
+                };
+                spawn_display_tasks(spawner, display_handles);
+            });
+        },
+    );
 
     spawner.must_spawn(brightness_task(peripherals.ADC1, brightness_sensor_pin));
 
