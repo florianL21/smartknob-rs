@@ -1,22 +1,41 @@
 export global State {
-    in-out property <bool> toggle: false;
+    in property <angle> encoder_angle: 0.0;
+}
+
+export component Slider inherits Rectangle {
+    // in property <angle> rotation: 0;
+
+    clip: false;
+    visible: true;
+
+    Rectangle {
+        border-radius: 200px;
+        width: 180px;
+        height: 180px;
+        background: white;
+        transform-rotation: State.encoder_angle;
+        Rectangle {
+            border-radius: 20px;
+            width: 15px;
+            height: 15px;
+            background: red;
+            x: parent.x;
+            y: parent.y;
+        }
+    }
 }
 
 export component HelloWorld inherits Window {
     width: 240px;
     height: 240px;
-    background: State.toggle ? black : white;
-    animate background {
-        duration: 250ms;
-        easing: ease-out;
+    background: black;
+
+    Slider {
+        height: 240px;
+        width: 240px;
     }
+
     Text {
-        text: "Hello World";
-        color: State.toggle ? white : black;
-        font-size: 32px;
-        animate color {
-            duration: 250ms;
-            easing: ease-out;
-        }
+        text: "A: " + State.encoder_angle / 1deg;
     }
 }

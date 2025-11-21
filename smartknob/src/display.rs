@@ -30,7 +30,7 @@ use mipidsi::asynchronous::{
 
 use crate::config::{may_log, LogChannel, LOG_TOGGLES};
 use crate::knob_tilt::KnobTiltEvent;
-use crate::signals::KNOB_EVENTS_CHANNEL;
+use crate::signals::{ENCODER_ANGLE, KNOB_EVENTS_CHANNEL};
 
 slint::include_modules!();
 
@@ -70,7 +70,7 @@ pub fn spawn_display_tasks(spawner: Spawner, display_handles: DisplayHandles) {
 
     spawner.must_spawn(display_task(display_handles, &RX, &TX, fb1));
     spawner.must_spawn(render_task(&TX, &RX, fb0));
-    // spawner.must_spawn(ui_task());
+    spawner.must_spawn(ui_task());
 }
 
 struct MyPlatform {
@@ -263,23 +263,51 @@ pub async fn render_task(
 
     SLINT_READY_SIGNAL.signal(());
     let mut ticker = Ticker::every(TARGET_FRAME_DURATION);
+    let mut last_key = slint::platform::Key::Space;
     loop {
         slint::platform::update_timers_and_animations();
 
         // process and possibly dispatch events here
         match knob_tilt.try_next_message() {
             Some(WaitResult::Message(event)) => {
-                window.try_dispatch_event(match event {
-                    KnobTiltEvent::PressStart => WindowEvent::KeyPressed {
+                let event = match event {
+                    KnobTiltEvent::PressStart => Some(WindowEvent::KeyPressed {
                         text: slint::platform::Key::Return.into(),
-                    },
-                    KnobTiltEvent::PressEnd => WindowEvent::KeyReleased {
+                    }),
+                    KnobTiltEvent::PressEnd => Some(WindowEvent::KeyReleased {
                         text: slint::platform::Key::Return.into(),
-                    },
-                    KnobTiltEvent::TiltStart(dir) => WindowEvent::KeyPressed {
-                        text: slint::platform::Key::Return.into(),
-                    },
-                })?;
+                    }),
+                    KnobTiltEvent::TiltStart(dir) => Some(WindowEvent::KeyPressed {
+                        text: match dir {
+                            crate::knob_tilt::TiltDirection::Down => {
+                                last_key = slint::platform::Key::DownArrow;
+                                last_key
+                            }
+                            crate::knob_tilt::TiltDirection::Left => {
+                                last_key = slint::platform::Key::LeftArrow;
+                                last_key
+                            }
+                            crate::knob_tilt::TiltDirection::Right => {
+                                last_key = slint::platform::Key::RightArrow;
+                                last_key
+                            }
+                            crate::knob_tilt::TiltDirection::Up => {
+                                last_key = slint::platform::Key::UpArrow;
+                                last_key
+                            }
+                        }
+                        .into(),
+                    }),
+                    KnobTiltEvent::TiltEnd => Some(WindowEvent::KeyReleased {
+                        text: last_key.into(),
+                    }),
+                    _ => None,
+                };
+                if let Some(event) = event {
+                    if let Err(e) = window.try_dispatch_event(event) {
+                        error!("Slint platform error: {e}");
+                    }
+                }
             }
             Some(WaitResult::Lagged(n)) => {
                 error!("Lost {n} knob tilt/push events. UI state my be out of sync")
@@ -314,11 +342,10 @@ pub async fn ui_task() {
     SLINT_READY_SIGNAL.wait().await;
     let ui = HelloWorld::new().unwrap();
     ui.show().expect("unable to show main window");
-    let mut toggle = false;
     loop {
         // info!("Switiching toggle!");
-        ui.global::<State>().set_toggle(toggle);
-        toggle = !toggle;
-        Timer::after(Duration::from_secs(1)).await;
+        let angle = ENCODER_ANGLE.load(core::sync::atomic::Ordering::Relaxed);
+        ui.global::<State>().set_encoder_angle(angle);
+        Timer::after_millis(50).await;
     }
 }

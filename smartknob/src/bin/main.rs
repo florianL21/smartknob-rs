@@ -106,7 +106,6 @@ async fn led_ring(
     let mut data = [RED; NUM_LEDS];
     let _step_size = (2.0f32 * core::f32::consts::PI) / NUM_LEDS as f32;
 
-    let mut is_tilted = false;
     info!("LED init done!");
     loop {
         // Since this is only interested in displaying the current state we can ignore lag information
@@ -117,7 +116,6 @@ async fn led_ring(
         .await;
         match tilt_event {
             KnobTiltEvent::PressEnd | KnobTiltEvent::TiltEnd => {
-                is_tilted = false;
                 for item in data.iter_mut() {
                     *item = BLACK;
                 }
@@ -127,30 +125,27 @@ async fn led_ring(
                     *item = RED;
                 }
             }
-            KnobTiltEvent::TiltStart(_) => {
-                is_tilted = true;
-            }
-        }
-        if is_tilted {
-            let angle = KNOB_TILT_ANGLE.load(core::sync::atomic::Ordering::Relaxed);
-            let angle = if angle < 0.0 {
-                angle + 2.0 * core::f32::consts::PI
-            } else {
-                angle
-            };
-            let led_index = map(
-                angle,
-                0.0,
-                2.0 * core::f32::consts::PI,
-                0.0,
-                NUM_LEDS as f32,
-            );
-            // not yet working
-            for (i, item) in data.iter_mut().enumerate() {
-                if i == led_index as usize {
-                    *item = BLUE;
+            KnobTiltEvent::TiltStart(_) | KnobTiltEvent::TiltAdjust => {
+                let angle = KNOB_TILT_ANGLE.load(core::sync::atomic::Ordering::Relaxed);
+                let angle = if angle < 0.0 {
+                    angle + 2.0 * core::f32::consts::PI
                 } else {
-                    *item = BLACK;
+                    angle
+                };
+                let led_index = map(
+                    angle,
+                    2.0 * core::f32::consts::PI,
+                    0.0,
+                    0.0,
+                    NUM_LEDS as f32,
+                );
+                // not yet working
+                for (i, item) in data.iter_mut().enumerate() {
+                    if i == led_index as usize {
+                        *item = BLUE;
+                    } else {
+                        *item = BLACK;
+                    }
                 }
             }
         }

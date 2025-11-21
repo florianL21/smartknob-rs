@@ -48,6 +48,7 @@ pub enum TiltDirection {
 #[derive(Debug, Clone)]
 pub enum KnobTiltEvent {
     TiltStart(TiltDirection),
+    TiltAdjust,
     TiltEnd,
     PressStart,
     PressEnd,
@@ -56,7 +57,13 @@ pub enum KnobTiltEvent {
 enum KnobTiltState {
     Pressed,
     Idle,
-    Tilted,
+    Tilted(TiltInfo),
+}
+
+impl TiltInfo {
+    fn new(angle: f32, magnitude: u32) -> Self {
+        TiltInfo { angle, magnitude }
+    }
 }
 
 struct KnobTiltConfig {
@@ -136,7 +143,8 @@ impl KnobTilt {
         match &self.state {
             KnobTiltState::Idle => {
                 if (self.magnitude as u32) > self.config.tilt_trigger {
-                    self.state = KnobTiltState::Tilted;
+                    self.state =
+                        KnobTiltState::Tilted(TiltInfo::new(self.angle, self.magnitude as u32));
                     Some(match self.angle {
                         a if a > -1.0 && a <= 1.0 => KnobTiltEvent::TiltStart(TiltDirection::Up),
                         a if a > -2.5 && a <= -1.0 => KnobTiltEvent::TiltStart(TiltDirection::Left),
@@ -158,10 +166,14 @@ impl KnobTilt {
                     None
                 }
             }
-            KnobTiltState::Tilted => {
+            KnobTiltState::Tilted(tilt) => {
                 if (self.magnitude as u32) < self.config.tilt_release {
                     self.state = KnobTiltState::Idle;
                     Some(KnobTiltEvent::TiltEnd)
+                } else if tilt.angle != self.angle || tilt.magnitude != (self.magnitude as u32) {
+                    self.state =
+                        KnobTiltState::Tilted(TiltInfo::new(self.angle, self.magnitude as u32));
+                    Some(KnobTiltEvent::TiltAdjust)
                 } else {
                     None
                 }
@@ -257,7 +269,7 @@ pub async fn read_ldc_task(i2c: &'static I2cBus1, mut int_pin: Input<'static>) {
             raw_coil_values[i] = reading;
         }
         if let Some(t) = kt.update(raw_coil_values) {
-            sender.publish_immediate(t);
+            // sender.publish_immediate(t);
         }
         // int_pin.wait_for_rising_edge().await;
         Timer::after(Duration::from_millis(100)).await;
