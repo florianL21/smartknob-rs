@@ -1,12 +1,13 @@
 use alloc::boxed::Box;
 use alloc::rc::Rc;
 use embassy_executor::Spawner;
+use embassy_sync::pubsub::WaitResult;
 use embassy_sync::signal::Signal;
 use esp_hal::dma::{DmaRxBuf, DmaTxBuf};
 use esp_hal::gpio::DriveMode;
 use esp_hal::{dma_buffers, spi};
 use esp_hal::{gpio::Output, time::Rate};
-use log::{info, warn};
+use log::{error, info, warn};
 use slint::platform::software_renderer::{MinimalSoftwareWindow, Rgb565Pixel};
 use slint::platform::WindowEvent;
 use slint::platform::{Platform, PointerEventButton};
@@ -28,6 +29,8 @@ use mipidsi::asynchronous::{
 };
 
 use crate::config::{may_log, LogChannel, LOG_TOGGLES};
+use crate::knob_tilt::KnobTiltEvent;
+use crate::signals::KNOB_EVENTS_CHANNEL;
 
 slint::include_modules!();
 
@@ -240,6 +243,9 @@ pub async fn render_task(
     let mut log_receiver = LOG_TOGGLES
         .receiver()
         .expect("Could not create log receiver. Increase the receiver count");
+    let mut knob_tilt = KNOB_EVENTS_CHANNEL.subscriber().expect(
+        "Could not get knob event channel subscriber. Please increase number of maximal subs",
+    );
     // UI setup
     let window = MinimalSoftwareWindow::new(
         slint::platform::software_renderer::RepaintBufferType::SwappedBuffers,
@@ -261,12 +267,25 @@ pub async fn render_task(
         slint::platform::update_timers_and_animations();
 
         // process and possibly dispatch events here
-        // WindowEvent::PointerPressed {
-        //     position: pos,
-        //     button: PointerEventButton::Left,
-        // };
-
-        // window.try_dispatch_event(event)?;
+        match knob_tilt.try_next_message() {
+            Some(WaitResult::Message(event)) => {
+                window.try_dispatch_event(match event {
+                    KnobTiltEvent::PressStart => WindowEvent::KeyPressed {
+                        text: slint::platform::Key::Return.into(),
+                    },
+                    KnobTiltEvent::PressEnd => WindowEvent::KeyReleased {
+                        text: slint::platform::Key::Return.into(),
+                    },
+                    KnobTiltEvent::TiltStart(dir) => WindowEvent::KeyPressed {
+                        text: slint::platform::Key::Return.into(),
+                    },
+                })?;
+            }
+            Some(WaitResult::Lagged(n)) => {
+                error!("Lost {n} knob tilt/push events. UI state my be out of sync")
+            }
+            None => {}
+        }
 
         let t = Instant::now();
         let is_dirty = window.draw_if_needed(|renderer| {
