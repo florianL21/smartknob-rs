@@ -1,5 +1,6 @@
 use core::usize;
 
+use atomic_float::AtomicF32;
 use average::Mean;
 use embassy_embedded_hal::shared_bus::asynch::i2c::I2cDevice;
 use embassy_sync::{
@@ -19,6 +20,9 @@ type I2cBus1 = Mutex<NoopRawMutex, esp_hal::i2c::master::I2c<'static, esp_hal::A
 pub static KNOB_EVENTS_CHANNEL: PubSubChannel<CriticalSectionRawMutex, KnobTiltEvent, 10, 4, 1> =
     PubSubChannel::new();
 
+pub static KNOB_TILT_ANGLE: AtomicF32 = AtomicF32::new(0.0);
+pub static KNOB_TILT_MAGNITUDE: AtomicF32 = AtomicF32::new(0.0);
+
 const ORIGIN: Vector2<f32> = Vector2::new(0.0f32, -1.0f32);
 const CHANNELS: [Channel; 3] = [
     ldc1x1x::Channel::Zero,
@@ -34,9 +38,16 @@ pub struct TiltInfo {
 }
 
 #[derive(Debug, Clone)]
+pub enum TiltDirection {
+    Up,
+    Right,
+    Down,
+    Left,
+}
+
+#[derive(Debug, Clone)]
 pub enum KnobTiltEvent {
-    TiltStart(TiltInfo),
-    TiltAdjust(TiltInfo),
+    TiltStart(TiltDirection),
     TiltEnd,
     PressStart,
     PressEnd,
@@ -45,7 +56,7 @@ pub enum KnobTiltEvent {
 enum KnobTiltState {
     Pressed,
     Idle,
-    Tilted(TiltInfo),
+    Tilted,
 }
 
 struct KnobTiltConfig {
@@ -63,12 +74,6 @@ impl KnobTiltConfig {
             press_trigger: 10000,
             press_release: 8000,
         }
-    }
-}
-
-impl TiltInfo {
-    fn new(angle: f32, magnitude: u32) -> Self {
-        TiltInfo { angle, magnitude }
     }
 }
 
@@ -125,16 +130,19 @@ impl KnobTilt {
         self.rotation = Rotation2::rotation_between(&ORIGIN, &self.direction);
         self.angle = self.rotation.angle();
         self.magnitude = self.direction.magnitude();
+        KNOB_TILT_ANGLE.store(self.angle, core::sync::atomic::Ordering::Relaxed);
+        KNOB_TILT_MAGNITUDE.store(self.magnitude, core::sync::atomic::Ordering::Relaxed);
 
         match &self.state {
             KnobTiltState::Idle => {
                 if (self.magnitude as u32) > self.config.tilt_trigger {
-                    self.state =
-                        KnobTiltState::Tilted(TiltInfo::new(self.angle, self.magnitude as u32));
-                    Some(KnobTiltEvent::TiltStart(TiltInfo::new(
-                        self.angle,
-                        self.magnitude as u32,
-                    )))
+                    self.state = KnobTiltState::Tilted;
+                    Some(match self.angle {
+                        a if a > -1.0 && a <= 1.0 => KnobTiltEvent::TiltStart(TiltDirection::Up),
+                        a if a > -2.5 && a <= -1.0 => KnobTiltEvent::TiltStart(TiltDirection::Left),
+                        a if a > 1.0 && a <= 2.5 => KnobTiltEvent::TiltStart(TiltDirection::Right),
+                        _ => KnobTiltEvent::TiltStart(TiltDirection::Down),
+                    })
                 } else if self.compensated_coil_values[0] > self.config.press_trigger {
                     self.state = KnobTiltState::Pressed;
                     Some(KnobTiltEvent::PressStart)
@@ -150,17 +158,10 @@ impl KnobTilt {
                     None
                 }
             }
-            KnobTiltState::Tilted(tilt) => {
+            KnobTiltState::Tilted => {
                 if (self.magnitude as u32) < self.config.tilt_release {
                     self.state = KnobTiltState::Idle;
                     Some(KnobTiltEvent::TiltEnd)
-                } else if tilt.angle != self.angle || tilt.magnitude != (self.magnitude as u32) {
-                    self.state =
-                        KnobTiltState::Tilted(TiltInfo::new(self.angle, self.magnitude as u32));
-                    Some(KnobTiltEvent::TiltAdjust(TiltInfo::new(
-                        self.angle,
-                        self.magnitude as u32,
-                    )))
                 } else {
                     None
                 }

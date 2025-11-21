@@ -33,10 +33,10 @@ use log::{info, warn};
 
 use smart_leds::{
     brightness,
-    colors::{BLACK, GREEN, RED},
+    colors::{BLACK, BLUE, RED},
     gamma, SmartLedsWrite,
 };
-use smartknob_rs::signals::KNOB_EVENTS_CHANNEL;
+use smartknob_rs::signals::{KNOB_EVENTS_CHANNEL, KNOB_TILT_ANGLE};
 use smartknob_rs::{
     cli::menu_handler,
     config::{may_log, LogChannel},
@@ -124,11 +124,12 @@ async fn led_ring(
                     *item = RED;
                 }
             }
-            KnobTiltEvent::TiltAdjust(tilt) | KnobTiltEvent::TiltStart(tilt) => {
-                let angle = if tilt.angle < 0.0 {
-                    tilt.angle + 2.0 * core::f32::consts::PI
+            KnobTiltEvent::TiltStart(_) => {
+                let angle = KNOB_TILT_ANGLE.load(core::sync::atomic::Ordering::Relaxed);
+                let angle = if angle < 0.0 {
+                    angle + 2.0 * core::f32::consts::PI
                 } else {
-                    tilt.angle
+                    angle
                 };
                 let led_index = map(
                     angle,
@@ -140,7 +141,7 @@ async fn led_ring(
                 // not yet working
                 for (i, item) in data.iter_mut().enumerate() {
                     if i == led_index as usize {
-                        *item = GREEN;
+                        *item = BLUE;
                     } else {
                         *item = BLACK;
                     }

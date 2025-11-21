@@ -27,7 +27,7 @@ use mipidsi::asynchronous::{
     Builder,
 };
 
-use crate::config::{LOG_TOGGLES, LogChannel, may_log};
+use crate::config::{may_log, LogChannel, LOG_TOGGLES};
 
 slint::include_modules!();
 
@@ -65,9 +65,9 @@ pub fn spawn_display_tasks(spawner: Spawner, display_handles: DisplayHandles) {
     static RX: FrameBufferExchange = FrameBufferExchange::new();
     let (fb0, fb1) = init_fbs_heap();
 
-    // spawner.must_spawn(display_task(display_handles, &RX, &TX, fb1));
+    spawner.must_spawn(display_task(display_handles, &RX, &TX, fb1));
     spawner.must_spawn(render_task(&TX, &RX, fb0));
-    spawner.must_spawn(ui_task());
+    // spawner.must_spawn(ui_task());
 }
 
 struct MyPlatform {
@@ -136,7 +136,9 @@ pub async fn display_task(
     tx: &'static FrameBufferExchange,
     fb: &'static mut FBType,
 ) {
-    let mut log_receiver = LOG_TOGGLES.receiver().expect("Could not create log receiver. Increase the receiver count");
+    let mut log_receiver = LOG_TOGGLES
+        .receiver()
+        .expect("Could not create log receiver. Increase the receiver count");
     let (rx_buffer, rx_descriptors, tx_buffer, tx_descriptors) =
         dma_buffers!(DISPLAY_SPI_DMA_BUFFER_SIZE);
     let dma_rx_buf = DmaRxBuf::new(rx_descriptors, rx_buffer).unwrap();
@@ -235,7 +237,9 @@ pub async fn render_task(
     tx: &'static FrameBufferExchange,
     mut fb: &'static mut FBType,
 ) {
-    let mut log_receiver = LOG_TOGGLES.receiver().expect("Could not create log receiver. Increase the receiver count");
+    let mut log_receiver = LOG_TOGGLES
+        .receiver()
+        .expect("Could not create log receiver. Increase the receiver count");
     // UI setup
     let window = MinimalSoftwareWindow::new(
         slint::platform::software_renderer::RepaintBufferType::SwappedBuffers,
@@ -270,13 +274,16 @@ pub async fn render_task(
         });
         if is_dirty {
             may_log(&mut log_receiver, LogChannel::render, || {
-                info!("New frame available. Rendering took {} ms", t.elapsed().as_millis())
+                info!(
+                    "New frame available. Rendering took {} ms",
+                    t.elapsed().as_millis()
+                )
             })
             .await;
             // send the frame buffer to be rendered
-            // tx.signal(fb);
-            // // get the next frame buffer
-            // fb = rx.wait().await;
+            tx.signal(fb);
+            // get the next frame buffer
+            fb = rx.wait().await;
         } else {
             ticker.next().await;
         }
