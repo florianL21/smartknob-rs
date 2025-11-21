@@ -10,10 +10,10 @@ use thiserror::Error;
 use ufmt::{uDebug, uwrite};
 
 use crate::{
-    config::{ConfigError, LogChannelToggles, LogToggleSender, LogToggles, LOG_TOGGLES},
+    config::{ConfigError, LogChannelToggles, LogToggleSender, LogToggles},
     flash::{FlashError, FlashKeys, FlashType},
-    motor_control::{MotorCommand, MOTOR_COMMAND_SIGNAL},
-    shutdown::REQUEST_POWER_DOWN,
+    motor_control::MotorCommand,
+    signals::{LOG_TOGGLES, MOTOR_COMMAND_SIGNAL, REQUEST_POWER_DOWN},
 };
 
 #[derive(Error, Debug)]

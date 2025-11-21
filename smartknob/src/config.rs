@@ -6,9 +6,9 @@ use embassy_sync::{
 use postcard::experimental::max_size::MaxSize;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
-use ufmt::{derive::uDebug, uDisplay, uwrite, uwriteln};
+use ufmt::{derive::uDebug, uDisplay, uwriteln};
 
-const NUM_LOG_TOGGLE_WATCHER_RECEIVERS: usize = 3;
+const NUM_LOG_TOGGLE_WATCHER_RECEIVERS: usize = 5;
 
 pub type LogToggleSender =
     watch::Sender<'static, CriticalSectionRawMutex, LogToggles, NUM_LOG_TOGGLE_WATCHER_RECEIVERS>;
@@ -21,65 +21,56 @@ pub static LOG_TOGGLES: Watch<
     NUM_LOG_TOGGLE_WATCHER_RECEIVERS,
 > = Watch::new();
 
-pub enum LogChannel {
-    Encoder,
-    PushEvents,
-    Brightness,
-}
-
 #[derive(Error, Debug)]
 pub enum ConfigError {
     #[error("There is no logging channel called {0}")]
     InvalidLogChannelError(String),
 }
 
-#[derive(Clone, Debug, uDebug, Default, Serialize, Deserialize, MaxSize)]
-pub struct LogChannelToggles {
-    encoder: bool,
-    push_events: bool,
-    brightness: bool,
-}
-
-impl uDisplay for LogChannelToggles {
-    fn fmt<W>(&self, f: &mut ufmt::Formatter<'_, W>) -> Result<(), W::Error>
-    where
-        W: ufmt::uWrite + ?Sized,
-    {
-        uwriteln!(f, "Channel:       | Enabled:")?;
-        uwriteln!(f, "---------------|---------")?;
-        uwriteln!(f, "encoder        | {}", self.encoder)?;
-        uwriteln!(f, "brightness     | {}", self.brightness)?;
-        uwrite!(f, "push_events    | {}", self.push_events)
-    }
-}
-
-impl LogChannelToggles {
-    fn should_log(&self, channel: LogChannel) -> bool {
-        match channel {
-            LogChannel::Encoder => self.encoder,
-            LogChannel::PushEvents => self.push_events,
-            LogChannel::Brightness => self.brightness,
+macro_rules! log_toggles {
+    ($($variant:ident),*) => {
+        #[derive(Clone, Debug, uDebug, Default, Serialize, Deserialize, MaxSize)]
+        pub struct LogChannelToggles {
+            $($variant: bool),+
         }
-    }
 
-    pub fn set_from_str(&mut self, channel: &str, state: bool) -> Result<(), ConfigError> {
-        match channel {
-            "encoder" => {
-                self.encoder = state;
-            }
-            "push_events" => {
-                self.push_events = state;
-            }
-            "brightness" => {
-                self.brightness = state;
-            }
-            c => {
-                return Err(ConfigError::InvalidLogChannelError(c.to_string()));
+        pub enum LogChannel {
+            $($variant),+
+        }
+
+
+        impl uDisplay for LogChannelToggles {
+            fn fmt<W>(&self, f: &mut ufmt::Formatter<'_, W>) -> Result<(), W::Error>
+            where
+                W: ufmt::uWrite + ?Sized,
+            {
+                uwriteln!(f, "Channel:       | Enabled:")?;
+                uwriteln!(f, "---------------|---------")?;
+                $(uwriteln!(f, "{} | {}", stringify!($variant), self.$variant)?;)+
+                Ok(())
             }
         }
-        Ok(())
-    }
+        impl LogChannelToggles {
+            fn should_log(&self, channel: LogChannel) -> bool {
+                match channel {
+                    $(LogChannel::$variant => self.$variant),+
+                }
+            }
+
+            pub fn set_from_str(&mut self, channel: &str, state: bool) -> Result<(), ConfigError> {
+                match channel {
+                    $(stringify!($variant) => self.$variant = state,)+
+                    c => {
+                        return Err(ConfigError::InvalidLogChannelError(c.to_string()));
+                    }
+                }
+                Ok(())
+            }
+        }
+    };
 }
+
+log_toggles!(encoder, push, brightness, render, display_transfer);
 
 #[derive(Clone, Debug, uDebug, Default)]
 pub struct LogToggles {

@@ -144,7 +144,7 @@ pub struct RestoredState {
 
 impl FlashHandler {
     pub async fn new(flash: FLASH<'static>) -> Self {
-        let flash = make_static!(FlashStorage::new(flash));
+        let flash = make_static!(FlashStorage::new(flash).multicore_auto_park());
         let pt_mem = make_static!([0u8; partitions::PARTITION_TABLE_MAX_LEN]);
         let pt = partitions::read_partition_table(flash, pt_mem).unwrap();
         let fat = make_static!(pt

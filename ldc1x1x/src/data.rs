@@ -381,7 +381,7 @@ pub struct MuxConfig(pub u16);
 impl Default for MuxConfig {
     fn default() -> Self {
         Self(
-            0b0100_0001_111, /* reserved + default 33 MHz deglitch */
+            0b010_0000_1111, /* reserved + default 33 MHz deglitch */
         )
     }
 }

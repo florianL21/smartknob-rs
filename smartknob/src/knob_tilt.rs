@@ -1,20 +1,23 @@
 use core::usize;
 
 use average::Mean;
+use embassy_embedded_hal::shared_bus::asynch::i2c::I2cDevice;
 use embassy_sync::{
     blocking_mutex::raw::{CriticalSectionRawMutex, NoopRawMutex},
     mutex::Mutex,
+    pubsub::PubSubChannel,
 };
 use embassy_time::{Duration, Timer};
 use esp_hal::gpio::Input;
 use ldc1x1x::{AutoScanSequence, Channel};
-
-use embassy_embedded_hal::shared_bus::asynch::i2c::I2cDevice;
 use libm::sqrtf;
 use log::info;
+use nalgebra::{Rotation2, Vector2};
 
 type I2cBus1 = Mutex<NoopRawMutex, esp_hal::i2c::master::I2c<'static, esp_hal::Async>>;
-use nalgebra::{Rotation2, Vector2};
+
+pub static KNOB_EVENTS_CHANNEL: PubSubChannel<CriticalSectionRawMutex, KnobTiltEvent, 10, 4, 1> =
+    PubSubChannel::new();
 
 const ORIGIN: Vector2<f32> = Vector2::new(0.0f32, -1.0f32);
 const CHANNELS: [Channel; 3] = [
@@ -198,11 +201,8 @@ async fn take_mean_measurement(
 }
 
 #[embassy_executor::task]
-pub async fn read_ldc_task(
-    i2c: &'static I2cBus1,
-    mut int_pin: Input<'static>,
-    sender: embassy_sync::watch::Sender<'static, CriticalSectionRawMutex, KnobTiltEvent, 2>,
-) {
+pub async fn read_ldc_task(i2c: &'static I2cBus1, mut int_pin: Input<'static>) {
+    let sender = KNOB_EVENTS_CHANNEL.publisher().unwrap();
     let i2c_device = I2cDevice::new(i2c);
     let mut ldc = ldc1x1x::Ldc::new(i2c_device, 0x2A);
     let mut init_ok = false;
@@ -256,7 +256,7 @@ pub async fn read_ldc_task(
             raw_coil_values[i] = reading;
         }
         if let Some(t) = kt.update(raw_coil_values) {
-            sender.send(t);
+            sender.publish_immediate(t);
         }
         // int_pin.wait_for_rising_edge().await;
         Timer::after(Duration::from_millis(100)).await;

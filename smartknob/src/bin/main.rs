@@ -4,8 +4,6 @@
 extern crate alloc;
 
 use embassy_executor::Spawner;
-use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
-use embassy_sync::watch::Watch;
 use embassy_sync::{blocking_mutex::raw::NoopRawMutex, mutex::Mutex};
 use embassy_time::{Duration, Timer};
 use esp_backtrace as _;
@@ -19,8 +17,6 @@ use esp_hal::system::Stack;
 use esp_hal::timer::timg::TimerGroup;
 use esp_hal::{
     clock::CpuClock,
-    dma::{DmaRxBuf, DmaTxBuf},
-    dma_buffers,
     gpio::{AnyPin, Input, InputConfig, Level, Output, OutputConfig},
     i2c::master::{Config as I2cConfig, I2c},
     rmt::Rmt,
@@ -40,25 +36,22 @@ use smart_leds::{
     colors::{BLACK, GREEN, RED},
     gamma, SmartLedsWrite,
 };
-use smartknob_rs::config::{may_log, LogChannel, LOG_TOGGLES};
-use smartknob_rs::display::{spawn_display_tasks, DisplayHandles};
-use smartknob_rs::flash::{FlashHandler, FlashType, RestoredState};
-use smartknob_rs::motor_control::ENCODER_ANGLE;
-use smartknob_rs::shutdown::shutdown_handler;
+use smartknob_rs::signals::KNOB_EVENTS_CHANNEL;
 use smartknob_rs::{
     cli::menu_handler,
-    knob_tilt::KnobTiltEvent,
-    motor_control::{update_foc, ENCODER_POSITION},
+    config::{may_log, LogChannel},
+    display::{spawn_display_tasks, DisplayHandles},
+    flash::{FlashHandler, FlashType, RestoredState},
+    knob_tilt::{read_ldc_task, KnobTiltEvent},
+    motor_control::{update_foc, Pins6PWM},
+    shutdown::shutdown_handler,
+    signals::{ENCODER_ANGLE, ENCODER_POSITION, LOG_TOGGLES},
 };
-use smartknob_rs::{knob_tilt::read_ldc_task, motor_control::Pins6PWM};
 use static_cell::StaticCell;
 
 esp_bootloader_esp_idf::esp_app_desc!();
 
-type EncoderSpiBus = Mutex<NoopRawMutex, esp_hal::spi::master::SpiDmaBus<'static, esp_hal::Async>>;
 type I2cBus1 = Mutex<NoopRawMutex, esp_hal::i2c::master::I2c<'static, esp_hal::Async>>;
-
-const ENCODER_SPI_DMA_BUFFER_SIZE: usize = 200;
 
 #[embassy_executor::task]
 async fn log_rotations() {
@@ -69,7 +62,7 @@ async fn log_rotations() {
     loop {
         let pos = ENCODER_POSITION.load(core::sync::atomic::Ordering::Relaxed);
         let angle = ENCODER_ANGLE.load(core::sync::atomic::Ordering::Relaxed);
-        may_log(&mut log_receiver, LogChannel::Encoder, || {
+        may_log(&mut log_receiver, LogChannel::encoder, || {
             info!("Position: {pos}; Angle: {angle}")
         })
         .await;
@@ -97,7 +90,6 @@ fn map<
 async fn led_ring(
     rmt_channel: esp_hal::rmt::ChannelCreator<'static, esp_hal::Blocking, 0>,
     led_pin: AnyPin<'static>,
-    mut receiver: embassy_sync::watch::Receiver<'static, CriticalSectionRawMutex, KnobTiltEvent, 2>,
 ) {
     const NUM_LEDS: usize = 24;
     const _LED_OFFSET: usize = 1;
@@ -105,6 +97,8 @@ async fn led_ring(
     let mut log_receiver = LOG_TOGGLES
         .receiver()
         .expect("Log toggle receiver had not enough capacity");
+    let mut tilt_receiver = KNOB_EVENTS_CHANNEL.subscriber()
+    .expect("No subscriber channels were left for the knob events channel. Consider increating tha number of subscribers");
 
     let mut rmt_buffer = smart_led_buffer!(NUM_LEDS);
     let mut led = SmartLedsAdapter::new(rmt_channel, led_pin, &mut rmt_buffer);
@@ -113,8 +107,9 @@ async fn led_ring(
     let _step_size = (2.0f32 * core::f32::consts::PI) / NUM_LEDS as f32;
     info!("LED init done!");
     loop {
-        let tilt_event = receiver.changed().await;
-        may_log(&mut log_receiver, LogChannel::PushEvents, || {
+        // Since this is only interested in displaying the current state we can ignore lag information
+        let tilt_event = tilt_receiver.next_message_pure().await;
+        may_log(&mut log_receiver, LogChannel::push, || {
             info!("Event: {:#?}", &tilt_event)
         })
         .await;
@@ -169,7 +164,7 @@ async fn brightness_task(adc_per: esp_hal::peripherals::ADC1<'static>, sensor_pi
     let mut adc1 = Adc::new(adc_per, adc1_config);
     loop {
         if let Ok(val) = adc1.read_oneshot(&mut pin) {
-            may_log(&mut log_receiver, LogChannel::Brightness, || {
+            may_log(&mut log_receiver, LogChannel::brightness, || {
                 info!("Brightness: {val}")
             })
             .await;
@@ -255,11 +250,6 @@ async fn main(spawner: Spawner) {
     let power_off_pin = peripherals.GPIO38;
 
     // Encoder initialization
-    let (rx_buffer, rx_descriptors, tx_buffer, tx_descriptors) =
-        dma_buffers!(ENCODER_SPI_DMA_BUFFER_SIZE);
-    let dma_rx_buf = DmaRxBuf::new(rx_descriptors, rx_buffer).unwrap();
-    let dma_tx_buf = DmaTxBuf::new(tx_descriptors, tx_buffer).unwrap();
-
     let spi_bus = Spi::new(
         peripherals.SPI2,
         SpiConfig::default()
@@ -269,12 +259,7 @@ async fn main(spawner: Spawner) {
     .unwrap()
     .with_sck(pin_mag_clk)
     .with_miso(pin_mag_do)
-    .with_dma(peripherals.DMA_CH0)
-    .with_buffers(dma_rx_buf, dma_tx_buf)
-    .into_async();
-
-    static ENCODER_SPI_BUS: StaticCell<EncoderSpiBus> = StaticCell::new();
-    let spi_bus = ENCODER_SPI_BUS.init(Mutex::new(spi_bus));
+    .with_dma(peripherals.DMA_CH0);
 
     let mag_cs = Output::new(pin_mag_csn, Level::Low, OutputConfig::default());
     let pwm_pins = Pins6PWM {
@@ -308,18 +293,15 @@ async fn main(spawner: Spawner) {
     let i2c_bus = I2C_BUS.init(Mutex::new(i2c_bus));
 
     let ldc_int_pin = Input::new(pins_ldc_int_pin, InputConfig::default());
-    static TILT: Watch<CriticalSectionRawMutex, KnobTiltEvent, 2> = Watch::new();
-    let sender = TILT.sender();
 
-    spawner.must_spawn(read_ldc_task(i2c_bus, ldc_int_pin, sender));
+    spawner.must_spawn(read_ldc_task(i2c_bus, ldc_int_pin));
 
     // log encoder values
     spawner.must_spawn(log_rotations());
 
     // LED ring
     let rmt = Rmt::new(peripherals.RMT, Rate::from_mhz(80)).unwrap();
-    let receiver = TILT.receiver().unwrap();
-    spawner.must_spawn(led_ring(rmt.channel0, pin_led_data.into(), receiver));
+    spawner.must_spawn(led_ring(rmt.channel0, pin_led_data.into()));
 
     let serial = UsbSerialJtag::new(peripherals.USB_DEVICE).into_async();
     spawner

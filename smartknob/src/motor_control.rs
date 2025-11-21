@@ -9,15 +9,18 @@ use embassy_sync::{
 use embassy_time::{Instant, Timer};
 use esp_backtrace as _;
 use esp_hal::{
+    dma::{DmaRxBuf, DmaTxBuf},
+    dma_buffers,
     gpio::{AnyPin, Output},
     mcpwm::{
         operator::{DeadTimeCfg, PwmPinConfig},
         timer::PwmWorkingMode,
         McPwm, PeripheralClockConfig,
     },
+    spi,
     time::Rate,
 };
-use fixed::types::I16F16;
+use fixed::{types::I16F16};
 use foc::pwm::Modulation;
 use foc::{park_clarke, pid::PIController, pwm::SpaceVector, Foc};
 use mt6701::{self, AngleSensorTrait};
@@ -34,9 +37,9 @@ pub type SpiBus1 = Mutex<NoopRawMutex, esp_hal::spi::master::SpiDmaBus<'static, 
 
 pub static ENCODER_POSITION: AtomicF32 = AtomicF32::new(0.0);
 pub static ENCODER_ANGLE: AtomicF32 = AtomicF32::new(0.0);
-
 pub static MOTOR_COMMAND_SIGNAL: Signal<CriticalSectionRawMutex, MotorCommand> = Signal::new();
 
+const ENCODER_SPI_DMA_BUFFER_SIZE: usize = 200;
 const PWM_RESOLUTION: u16 = 999;
 const MOTOR_POLE_PAIRS: I16F16 = I16F16::lit("4");
 
@@ -318,14 +321,13 @@ fn get_phase_voltage(uq: I16F16, ud: I16F16, angle: I16F16) -> [u16; 3] {
 
 #[embassy_executor::task]
 pub async fn update_foc(
-    spi_bus: &'static SpiBus1,
+    spi_bus: spi::master::SpiDma<'static, esp_hal::Blocking>,
     mag_csn: Output<'static>,
     mcpwm0: esp_hal::peripherals::MCPWM0<'static>,
     pwm_pins: Pins6PWM,
     flash: &'static FlashType<'static>,
     restored_alignment: Option<MotorAlignment>,
 ) {
-    const MAX_CURRENT: u8 = 2;
     // about 2% dead time
     const PWM_DEAD_TIME: u16 = 20;
 
@@ -336,16 +338,16 @@ pub async fn update_foc(
         AlignmentState::new()
     };
 
-    let spi_device = SpiDevice::new(spi_bus, mag_csn);
+    // setup encoder SPI communication
+    let (rx_buffer, rx_descriptors, tx_buffer, tx_descriptors) =
+        dma_buffers!(ENCODER_SPI_DMA_BUFFER_SIZE);
+    let dma_rx_buf = DmaRxBuf::new(rx_descriptors, rx_buffer).unwrap();
+    let dma_tx_buf = DmaTxBuf::new(tx_descriptors, tx_buffer).unwrap();
 
-    let mut encoder: mt6701::MT6701Spi<
-        SpiDevice<
-            '_,
-            NoopRawMutex,
-            esp_hal::spi::master::SpiDmaBus<'_, esp_hal::Async>,
-            Output<'_>,
-        >,
-    > = mt6701::MT6701Spi::new(spi_device);
+    let spi_bus = spi_bus.with_buffers(dma_rx_buf, dma_tx_buf).into_async();
+    let spi_bus: Mutex<NoopRawMutex, _> = Mutex::new(spi_bus);
+    let spi_device = SpiDevice::new(&spi_bus, mag_csn);
+    let mut encoder = mt6701::MT6701Spi::new(spi_device);
     let mut last_encoder_update = Instant::now();
     let mut last_foc_update = Instant::now();
     info!("encoder init done!");
@@ -450,7 +452,7 @@ pub async fn update_foc(
             // let pwm: [u16; 3] = foc.update(
             //     [FixedI32::from_num(0), FixedI32::from_num(0)],
             //     angle,
-            //     I16F16::from_num(2),
+            //     I16F16::from_num(5),
             //     I16F16::from_num(last_foc_update.elapsed().as_micros()),
             // );
             // last_foc_update = Instant::now();

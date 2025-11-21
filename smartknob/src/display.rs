@@ -27,9 +27,13 @@ use mipidsi::asynchronous::{
     Builder,
 };
 
+use crate::config::{LOG_TOGGLES, LogChannel, may_log};
+
 slint::include_modules!();
 
 const TARGET_FPS: u64 = 60;
+const INITIAL_DISPLAY_BRIGHTNESS: u8 = 50;
+const BRIGHTNESS_FADE_DURATION_MS: u16 = 1000;
 
 const DISPLAY_SIZE: (u16, u16) = GC9A01::FRAMEBUFFER_SIZE;
 const FRAME_BUFFER_SIZE: usize = (DISPLAY_SIZE.0 * DISPLAY_SIZE.1) as usize;
@@ -43,6 +47,9 @@ const SPI_TRANSFER_BUFFER_SIZE: usize = DISPLAY_BUFFER_SIZE;
 
 pub static SLINT_READY_SIGNAL: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 type FrameBufferExchange = Signal<CriticalSectionRawMutex, &'static mut FBType>;
+
+/// Set the display brightness with a percentage between 0 - 100%
+pub static DISPLAY_BRIGHTNESS_SIGNAL: Signal<CriticalSectionRawMutex, u8> = Signal::new();
 
 pub struct DisplayHandles {
     pub spi_bus: DisplaySpiBus,
@@ -58,7 +65,7 @@ pub fn spawn_display_tasks(spawner: Spawner, display_handles: DisplayHandles) {
     static RX: FrameBufferExchange = FrameBufferExchange::new();
     let (fb0, fb1) = init_fbs_heap();
 
-    spawner.must_spawn(display_task(display_handles, &RX, &TX, fb1));
+    // spawner.must_spawn(display_task(display_handles, &RX, &TX, fb1));
     spawner.must_spawn(render_task(&TX, &RX, fb0));
     spawner.must_spawn(ui_task());
 }
@@ -129,6 +136,7 @@ pub async fn display_task(
     tx: &'static FrameBufferExchange,
     fb: &'static mut FBType,
 ) {
+    let mut log_receiver = LOG_TOGGLES.receiver().expect("Could not create log receiver. Increase the receiver count");
     let (rx_buffer, rx_descriptors, tx_buffer, tx_descriptors) =
         dma_buffers!(DISPLAY_SPI_DMA_BUFFER_SIZE);
     let dma_rx_buf = DmaRxBuf::new(rx_descriptors, rx_buffer).unwrap();
@@ -174,7 +182,8 @@ pub async fn display_task(
             drive_mode: DriveMode::PushPull,
         })
         .unwrap();
-    if let Err(e) = channel0.start_duty_fade(0, 50, 1000) {
+    let mut current_brightness = INITIAL_DISPLAY_BRIGHTNESS;
+    if let Err(e) = channel0.start_duty_fade(0, current_brightness, BRIGHTNESS_FADE_DURATION_MS) {
         warn!("Display backlight fade failed: {e:?}");
     }
 
@@ -182,6 +191,19 @@ pub async fn display_task(
     let mut ticker = Ticker::every(TARGET_FRAME_DURATION / 2);
     loop {
         let t = Instant::now();
+        if !channel0.is_duty_fade_running() {
+            if let Some(new_brighness) = DISPLAY_BRIGHTNESS_SIGNAL.try_take() {
+                if let Err(e) = channel0.start_duty_fade(
+                    current_brightness,
+                    new_brighness,
+                    BRIGHTNESS_FADE_DURATION_MS,
+                ) {
+                    warn!("Display backlight fade failed: {e:?}");
+                } else {
+                    current_brightness = new_brighness;
+                }
+            }
+        }
 
         // Send the frame to the display
         display
@@ -195,7 +217,10 @@ pub async fn display_task(
             )
             .await
             .ok();
-        info!("Frame took {} ms", t.elapsed().as_millis());
+        may_log(&mut log_receiver, LogChannel::display_transfer, || {
+            info!("Frame took {} ms", t.elapsed().as_millis());
+        })
+        .await;
         // wait for a new fb to transfer, once there is one send the old FB back and continue with transferring the just received one
         let new_fb = rx.wait().await;
         tx.signal(fb);
@@ -210,6 +235,7 @@ pub async fn render_task(
     tx: &'static FrameBufferExchange,
     mut fb: &'static mut FBType,
 ) {
+    let mut log_receiver = LOG_TOGGLES.receiver().expect("Could not create log receiver. Increase the receiver count");
     // UI setup
     let window = MinimalSoftwareWindow::new(
         slint::platform::software_renderer::RepaintBufferType::SwappedBuffers,
@@ -243,14 +269,14 @@ pub async fn render_task(
             renderer.render(fb, DISPLAY_SIZE.0 as usize);
         });
         if is_dirty {
-            info!(
-                "New frame available. Rendering took {} ms",
-                t.elapsed().as_millis()
-            );
+            may_log(&mut log_receiver, LogChannel::render, || {
+                info!("New frame available. Rendering took {} ms", t.elapsed().as_millis())
+            })
+            .await;
             // send the frame buffer to be rendered
-            tx.signal(fb);
-            // get the next frame buffer
-            fb = rx.wait().await;
+            // tx.signal(fb);
+            // // get the next frame buffer
+            // fb = rx.wait().await;
         } else {
             ticker.next().await;
         }
@@ -264,7 +290,7 @@ pub async fn ui_task() {
     ui.show().expect("unable to show main window");
     let mut toggle = false;
     loop {
-        info!("Switiching toggle!");
+        // info!("Switiching toggle!");
         ui.global::<State>().set_toggle(toggle);
         toggle = !toggle;
         Timer::after(Duration::from_secs(1)).await;
