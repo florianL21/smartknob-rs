@@ -146,10 +146,10 @@ impl KnobTilt {
                     self.state =
                         KnobTiltState::Tilted(TiltInfo::new(self.angle, self.magnitude as u32));
                     Some(match self.angle {
-                        a if a > -1.0 && a <= 1.0 => KnobTiltEvent::TiltStart(TiltDirection::Up),
+                        a if a > -1.0 && a <= 1.0 => KnobTiltEvent::TiltStart(TiltDirection::Down),
                         a if a > -2.5 && a <= -1.0 => KnobTiltEvent::TiltStart(TiltDirection::Left),
                         a if a > 1.0 && a <= 2.5 => KnobTiltEvent::TiltStart(TiltDirection::Right),
-                        _ => KnobTiltEvent::TiltStart(TiltDirection::Down),
+                        _ => KnobTiltEvent::TiltStart(TiltDirection::Up),
                     })
                 } else if self.compensated_coil_values[0] > self.config.press_trigger {
                     self.state = KnobTiltState::Pressed;
@@ -269,7 +269,7 @@ pub async fn read_ldc_task(i2c: &'static I2cBus1, mut int_pin: Input<'static>) {
             raw_coil_values[i] = reading;
         }
         if let Some(t) = kt.update(raw_coil_values) {
-            // sender.publish_immediate(t);
+            sender.publish_immediate(t);
         }
         // int_pin.wait_for_rising_edge().await;
         Timer::after(Duration::from_millis(100)).await;

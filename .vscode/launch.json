@@ -12,26 +12,40 @@
                 "flashingEnabled": true,
                 "haltAfterReset": true,
                 "formatOptions": {
-                    "binaryFormat": "idf"
-                }
+                    "binaryFormat": "idf",
+                    "idf_partition_table": "smartknob/partition_table.csv"
+                },
             },
             "coreConfigs": [
                 {
                     "coreIndex": 0,
-                    "programBinary": "target/xtensa-esp32s3-none-elf/debug/${workspaceFolderBasename}",
+                    "programBinary": "target/xtensa-esp32s3-none-elf/debug/smartknob-rs",
                 }
             ]
         },
         {
             "type": "probe-rs-debug",
             "request": "attach",
-            "name": "Attach",
+            "name": "Attach core 0",
             "cwd": "${workspaceFolder}",
             "chip": "esp32s3",
             "coreConfigs": [
                 {
                     "coreIndex": 0,
-                    "programBinary": "target/xtensa-esp32s3-none-elf/debug/${workspaceFolderBasename}",
+                    "programBinary": "target/xtensa-esp32s3-none-elf/debug/smartknob-rs",
+                }
+            ]
+        },
+        {
+            "type": "probe-rs-debug",
+            "request": "attach",
+            "name": "Attach core 1",
+            "cwd": "${workspaceFolder}",
+            "chip": "esp32s3",
+            "coreConfigs": [
+                {
+                    "coreIndex": 1,
+                    "programBinary": "target/xtensa-esp32s3-none-elf/debug/smartknob-rs",
                 }
             ]
         }

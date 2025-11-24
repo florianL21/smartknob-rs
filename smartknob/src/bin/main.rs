@@ -60,9 +60,9 @@ async fn log_rotations() {
         .expect("Log toggle receiver had not enough capacity");
     info!("Log encoder init done!");
     loop {
-        let pos = ENCODER_POSITION.load(core::sync::atomic::Ordering::Relaxed);
-        let angle = ENCODER_ANGLE.load(core::sync::atomic::Ordering::Relaxed);
         may_log(&mut log_receiver, LogChannel::encoder, || {
+            let pos = ENCODER_POSITION.load(core::sync::atomic::Ordering::Relaxed);
+            let angle = ENCODER_ANGLE.load(core::sync::atomic::Ordering::Relaxed);
             info!("Position: {pos}; Angle: {angle}")
         })
         .await;
