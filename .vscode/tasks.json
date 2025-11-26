@@ -3,7 +3,7 @@
     "tasks": [
         {
             "label": "build-debug",
-            "command": ". $HOME/export-esp.sh && cargo build",
+            "command": ". $HOME/export-esp.sh && cargo build --release",
             "type": "shell",
         }
     ]

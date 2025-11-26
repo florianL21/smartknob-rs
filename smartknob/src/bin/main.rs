@@ -7,13 +7,9 @@ use embassy_executor::Spawner;
 use embassy_sync::{blocking_mutex::raw::NoopRawMutex, mutex::Mutex};
 use embassy_time::{Duration, Timer};
 use esp_backtrace as _;
-use esp_hal::analog::adc::{Adc, AdcConfig, Attenuation};
-use esp_hal::interrupt::software::SoftwareInterruptControl;
 use esp_hal::ledc::Ledc;
-use esp_hal::peripherals::GPIO4;
 use esp_hal::psram::{FlashFreq, PsramConfig, SpiRamFreq};
 use esp_hal::spi;
-use esp_hal::system::Stack;
 use esp_hal::timer::timg::TimerGroup;
 use esp_hal::{
     clock::CpuClock,
@@ -28,7 +24,6 @@ use esp_hal::{
     usb_serial_jtag::UsbSerialJtag,
 };
 use esp_hal_smartled::{smart_led_buffer, SmartLedsAdapter};
-use esp_rtos::embassy::Executor;
 use log::{info, warn};
 
 use smart_leds::{
@@ -36,6 +31,7 @@ use smart_leds::{
     colors::{BLACK, BLUE, RED},
     gamma, SmartLedsWrite,
 };
+use smartknob_rs::display::BacklightHandles;
 use smartknob_rs::signals::{KNOB_EVENTS_CHANNEL, KNOB_TILT_ANGLE};
 use smartknob_rs::{
     cli::menu_handler,
@@ -152,26 +148,6 @@ async fn led_ring(
         led.write(brightness(gamma(data.iter().cloned()), 10))
             .unwrap();
         Timer::after(Duration::from_millis(20)).await;
-    }
-}
-
-#[embassy_executor::task]
-async fn brightness_task(adc_per: esp_hal::peripherals::ADC1<'static>, sensor_pin: GPIO4<'static>) {
-    let mut log_receiver = LOG_TOGGLES
-        .receiver()
-        .expect("Log toggle receiver had not enough capacity");
-
-    let mut adc1_config = AdcConfig::new();
-    let mut pin = adc1_config.enable_pin(sensor_pin, Attenuation::_11dB);
-    let mut adc1 = Adc::new(adc_per, adc1_config);
-    loop {
-        if let Ok(val) = adc1.read_oneshot(&mut pin) {
-            may_log(&mut log_receiver, LogChannel::brightness, || {
-                info!("Brightness: {val}")
-            })
-            .await;
-        }
-        Timer::after_millis(200).await;
     }
 }
 
@@ -311,45 +287,53 @@ async fn main(spawner: Spawner) {
         .ok();
 
     // Display
-    let sw_int = SoftwareInterruptControl::new(peripherals.SW_INTERRUPT);
 
-    static APP_CORE_STACK: StaticCell<Stack<8192>> = StaticCell::new();
-    let app_core_stack = APP_CORE_STACK.init(Stack::new());
+    // TODO: Running the display stack on the second core is causing the system to freeze randomly.
+    // Need to figure out why this is happening before activating it again
 
-    esp_rtos::start_second_core(
-        peripherals.CPU_CTRL,
-        sw_int.software_interrupt0,
-        sw_int.software_interrupt1,
-        app_core_stack,
-        move || {
-            static EXECUTOR: StaticCell<Executor> = StaticCell::new();
-            let executor = EXECUTOR.init(Executor::new());
-            executor.run(|spawner| {
-                let spi_bus: spi::master::SpiDma<'_, esp_hal::Blocking> = Spi::new(
-                    peripherals.SPI3,
-                    spi::master::Config::default()
-                        .with_frequency(Rate::from_mhz(80))
-                        .with_mode(Mode::_0),
-                )
-                .unwrap()
-                .with_sck(pin_lcd_sck)
-                .with_mosi(pin_lcd_mosi)
-                .with_dma(peripherals.DMA_CH1);
+    // let sw_int = SoftwareInterruptControl::new(peripherals.SW_INTERRUPT);
+    // static APP_CORE_STACK: StaticCell<Stack<8192>> = StaticCell::new();
+    // let app_core_stack = APP_CORE_STACK.init(Stack::new());
 
-                let display_handles = DisplayHandles {
-                    spi_bus,
-                    lcd_cs: Output::new(pin_lcd_cs, Level::Low, OutputConfig::default()),
-                    dc_output: Output::new(pin_lcd_dc, Level::Low, OutputConfig::default()),
-                    backlight_output: Output::new(pin_lcd_bl, Level::Low, OutputConfig::default()),
-                    reset_output: Output::new(pin_lcd_reset, Level::Low, OutputConfig::default()),
-                    ledc: Ledc::new(peripherals.LEDC),
-                };
-                spawn_display_tasks(spawner, display_handles);
-            });
-        },
-    );
+    // esp_rtos::start_second_core(
+    //     peripherals.CPU_CTRL,
+    //     sw_int.software_interrupt0,
+    //     sw_int.software_interrupt1,
+    //     app_core_stack,
+    //     move || {
+    //         static EXECUTOR: StaticCell<Executor> = StaticCell::new();
+    //         let executor = EXECUTOR.init(Executor::new());
+    //         executor.run(|spawner| {
 
-    spawner.must_spawn(brightness_task(peripherals.ADC1, brightness_sensor_pin));
+    //         });
+    //     },
+    // );
+    let spi_bus: spi::master::SpiDma<'_, esp_hal::Blocking> = Spi::new(
+        peripherals.SPI3,
+        spi::master::Config::default()
+            .with_frequency(Rate::from_mhz(80))
+            .with_mode(Mode::_0),
+    )
+    .unwrap()
+    .with_sck(pin_lcd_sck)
+    .with_mosi(pin_lcd_mosi)
+    .with_dma(peripherals.DMA_CH1);
+
+    let display_handles = DisplayHandles {
+        spi_bus,
+        lcd_cs: Output::new(pin_lcd_cs, Level::Low, OutputConfig::default()),
+        dc_output: Output::new(pin_lcd_dc, Level::Low, OutputConfig::default()),
+        reset_output: Output::new(pin_lcd_reset, Level::Low, OutputConfig::default()),
+    };
+
+    let backlight_stuff = BacklightHandles {
+        adc_instance: peripherals.ADC1,
+        backlight_output: Output::new(pin_lcd_bl, Level::Low, OutputConfig::default()),
+        brightness_sensor_pin,
+        ledc: Ledc::new(peripherals.LEDC),
+    };
+
+    spawn_display_tasks(spawner, display_handles, backlight_stuff);
 
     let power_off_pin = Output::new(power_off_pin, Level::High, OutputConfig::default());
     spawner.must_spawn(shutdown_handler(power_off_pin));

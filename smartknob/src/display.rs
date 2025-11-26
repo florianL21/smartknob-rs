@@ -3,14 +3,17 @@ use alloc::rc::Rc;
 use embassy_executor::Spawner;
 use embassy_sync::pubsub::WaitResult;
 use embassy_sync::signal::Signal;
+use esp_hal::analog::adc::{Adc, AdcConfig, Attenuation};
 use esp_hal::dma::{DmaRxBuf, DmaTxBuf};
 use esp_hal::gpio::DriveMode;
+use esp_hal::peripherals::GPIO4;
 use esp_hal::{dma_buffers, spi};
 use esp_hal::{gpio::Output, time::Rate};
 use log::{error, info, warn};
 use slint::platform::software_renderer::{MinimalSoftwareWindow, Rgb565Pixel};
+use slint::platform::Platform;
 use slint::platform::WindowEvent;
-use slint::platform::{Platform, PointerEventButton};
+use slint::LogicalPosition;
 
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 
@@ -30,12 +33,12 @@ use mipidsi::asynchronous::{
 
 use crate::config::{may_log, LogChannel, LOG_TOGGLES};
 use crate::knob_tilt::KnobTiltEvent;
-use crate::signals::{ENCODER_ANGLE, KNOB_EVENTS_CHANNEL};
+use crate::signals::{ENCODER_ANGLE, ENCODER_POSITION, KNOB_EVENTS_CHANNEL};
 
 slint::include_modules!();
 
 const TARGET_FPS: u64 = 60;
-const INITIAL_DISPLAY_BRIGHTNESS: u8 = 50;
+const INITIAL_DISPLAY_BRIGHTNESS: u8 = 100;
 const BRIGHTNESS_FADE_DURATION_MS: u16 = 1000;
 
 const DISPLAY_SIZE: (u16, u16) = GC9A01::FRAMEBUFFER_SIZE;
@@ -58,12 +61,22 @@ pub struct DisplayHandles {
     pub spi_bus: DisplaySpiBus,
     pub lcd_cs: Output<'static>,
     pub dc_output: Output<'static>,
-    pub backlight_output: Output<'static>,
+
     pub reset_output: Output<'static>,
-    pub ledc: Ledc<'static>,
 }
 
-pub fn spawn_display_tasks(spawner: Spawner, display_handles: DisplayHandles) {
+pub struct BacklightHandles {
+    pub ledc: Ledc<'static>,
+    pub adc_instance: esp_hal::peripherals::ADC1<'static>,
+    pub brightness_sensor_pin: GPIO4<'static>,
+    pub backlight_output: Output<'static>,
+}
+
+pub fn spawn_display_tasks(
+    spawner: Spawner,
+    display_handles: DisplayHandles,
+    backlight_handles: BacklightHandles,
+) {
     static TX: FrameBufferExchange = FrameBufferExchange::new();
     static RX: FrameBufferExchange = FrameBufferExchange::new();
     let (fb0, fb1) = init_fbs_heap();
@@ -71,6 +84,7 @@ pub fn spawn_display_tasks(spawner: Spawner, display_handles: DisplayHandles) {
     spawner.must_spawn(display_task(display_handles, &RX, &TX, fb1));
     spawner.must_spawn(render_task(&TX, &RX, fb0));
     spawner.must_spawn(ui_task());
+    spawner.must_spawn(brightness_task(backlight_handles));
 }
 
 struct MyPlatform {
@@ -164,51 +178,12 @@ pub async fn display_task(
         .await
         .unwrap();
 
-    // backlight control
-    let mut ledc = display_handles.ledc;
-    ledc.set_global_slow_clock(LSGlobalClkSource::APBClk);
-    let mut lstimer0 = ledc.timer::<LowSpeed>(ledc::timer::Number::Timer0);
-    lstimer0
-        .configure(ledc::timer::config::Config {
-            duty: ledc::timer::config::Duty::Duty10Bit,
-            clock_source: ledc::timer::LSClockSource::APBClk,
-            frequency: Rate::from_khz(24),
-        })
-        .unwrap();
-
-    let mut channel0 = ledc.channel(
-        ledc::channel::Number::Channel0,
-        display_handles.backlight_output,
-    );
-    channel0
-        .configure(ledc::channel::config::Config {
-            timer: &lstimer0,
-            duty_pct: 0,
-            drive_mode: DriveMode::PushPull,
-        })
-        .unwrap();
-    let mut current_brightness = INITIAL_DISPLAY_BRIGHTNESS;
-    if let Err(e) = channel0.start_duty_fade(0, current_brightness, BRIGHTNESS_FADE_DURATION_MS) {
-        warn!("Display backlight fade failed: {e:?}");
-    }
+    DISPLAY_BRIGHTNESS_SIGNAL.signal(INITIAL_DISPLAY_BRIGHTNESS);
 
     let mut fb = fb;
     let mut ticker = Ticker::every(TARGET_FRAME_DURATION / 2);
     loop {
         let t = Instant::now();
-        if !channel0.is_duty_fade_running() {
-            if let Some(new_brighness) = DISPLAY_BRIGHTNESS_SIGNAL.try_take() {
-                if let Err(e) = channel0.start_duty_fade(
-                    current_brightness,
-                    new_brighness,
-                    BRIGHTNESS_FADE_DURATION_MS,
-                ) {
-                    warn!("Display backlight fade failed: {e:?}");
-                } else {
-                    current_brightness = new_brighness;
-                }
-            }
-        }
 
         // Send the frame to the display
         display
@@ -264,6 +239,8 @@ pub async fn render_task(
     SLINT_READY_SIGNAL.signal(());
     let mut ticker = Ticker::every(TARGET_FRAME_DURATION);
     let mut last_key = slint::platform::Key::Space;
+    let mut last_encoder_position = ENCODER_POSITION.load(core::sync::atomic::Ordering::Relaxed);
+    let center = LogicalPosition::new(DISPLAY_SIZE.0 as f32 / 2.0, DISPLAY_SIZE.1 as f32 / 2.0);
     loop {
         slint::platform::update_timers_and_animations();
 
@@ -314,6 +291,20 @@ pub async fn render_task(
             }
             None => {}
         }
+        let current_encoder_position = ENCODER_POSITION.load(core::sync::atomic::Ordering::Relaxed);
+        // Emulate the encoder position by sending scroll events to slint
+        if last_encoder_position != current_encoder_position {
+            let delta = current_encoder_position - last_encoder_position;
+            last_encoder_position = current_encoder_position;
+            let event = WindowEvent::PointerScrolled {
+                position: center,
+                delta_x: delta,
+                delta_y: 0.0,
+            };
+            if let Err(e) = window.try_dispatch_event(event) {
+                error!("Slint platform error: {e}");
+            }
+        }
 
         let t = Instant::now();
         let is_dirty = window.draw_if_needed(|renderer| {
@@ -340,12 +331,70 @@ pub async fn render_task(
 #[embassy_executor::task]
 pub async fn ui_task() {
     SLINT_READY_SIGNAL.wait().await;
-    let ui = HelloWorld::new().unwrap();
+    let ui = MainWindow::new().unwrap();
     ui.show().expect("unable to show main window");
     loop {
         // info!("Switiching toggle!");
         let angle = ENCODER_ANGLE.load(core::sync::atomic::Ordering::Relaxed);
-        ui.global::<State>().set_encoder_angle(angle);
+        ui.set_encoder_angle(angle);
+        // ui.global::<State>().set_encoder_angle(angle);
         Timer::after_millis(50).await;
+    }
+}
+
+#[embassy_executor::task]
+async fn brightness_task(handles: BacklightHandles) {
+    let mut log_receiver = LOG_TOGGLES
+        .receiver()
+        .expect("Log toggle receiver had not enough capacity");
+
+    let mut current_brightness = 0;
+
+    // backlight control
+    let mut ledc = handles.ledc;
+    ledc.set_global_slow_clock(LSGlobalClkSource::APBClk);
+    let mut lstimer0 = ledc.timer::<LowSpeed>(ledc::timer::Number::Timer0);
+    lstimer0
+        .configure(ledc::timer::config::Config {
+            duty: ledc::timer::config::Duty::Duty10Bit,
+            clock_source: ledc::timer::LSClockSource::APBClk,
+            frequency: Rate::from_khz(24),
+        })
+        .unwrap();
+
+    let mut channel0 = ledc.channel(ledc::channel::Number::Channel0, handles.backlight_output);
+    channel0
+        .configure(ledc::channel::config::Config {
+            timer: &lstimer0,
+            duty_pct: current_brightness,
+            drive_mode: DriveMode::PushPull,
+        })
+        .unwrap();
+
+    let mut adc1_config = AdcConfig::new();
+    let mut pin = adc1_config.enable_pin(handles.brightness_sensor_pin, Attenuation::_0dB);
+    let mut adc1 = Adc::new(handles.adc_instance, adc1_config);
+    loop {
+        if !channel0.is_duty_fade_running() {
+            if let Some(new_brighness) = DISPLAY_BRIGHTNESS_SIGNAL.try_take() {
+                if let Err(e) = channel0.start_duty_fade(
+                    current_brightness,
+                    new_brighness,
+                    BRIGHTNESS_FADE_DURATION_MS,
+                ) {
+                    warn!("Display backlight fade failed: {e:?}");
+                } else {
+                    current_brightness = new_brighness;
+                }
+            }
+        }
+
+        if let Ok(val) = adc1.read_oneshot(&mut pin) {
+            may_log(&mut log_receiver, LogChannel::brightness, || {
+                info!("Brightness: {val}")
+            })
+            .await;
+        }
+        Timer::after_millis(200).await;
     }
 }

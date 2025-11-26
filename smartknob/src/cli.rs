@@ -11,6 +11,7 @@ use ufmt::{uDebug, uwrite};
 
 use crate::{
     config::{ConfigError, LogChannelToggles, LogToggleSender, LogToggles},
+    display::DISPLAY_BRIGHTNESS_SIGNAL,
     flash::{FlashError, FlashKeys, FlashType},
     motor_control::MotorCommand,
     signals::{LOG_TOGGLES, MOTOR_COMMAND_SIGNAL, REQUEST_POWER_DOWN},
@@ -52,6 +53,7 @@ enum RootGroup<'a> {
     Logging(Logging<'a>),
     Storage(Flash<'a>),
     Motor(Motor),
+    Display(Display),
 }
 
 #[derive(Command)]
@@ -78,22 +80,6 @@ enum Logging<'a> {
     },
     /// List all available logging channels
     LogList,
-}
-
-#[derive(Command)]
-#[command(help_title = "Manage values stored in flash")]
-enum Flash<'a> {
-    /// Store a value to flash
-    FlashStore {
-        /// What value to store
-        value: &'a str,
-    },
-
-    /// Load a value from flash
-    FlashLoad,
-
-    /// Format the flash
-    FlashFormat,
 }
 
 async fn set_log(
@@ -159,6 +145,22 @@ impl Logging<'_> {
     }
 }
 
+#[derive(Command)]
+#[command(help_title = "Manage values stored in flash")]
+enum Flash<'a> {
+    /// Store a value to flash
+    FlashStore {
+        /// What value to store
+        value: &'a str,
+    },
+
+    /// Load a value from flash
+    FlashLoad,
+
+    /// Format the flash
+    FlashFormat,
+}
+
 impl Flash<'_> {
     async fn handle(
         self: &Self,
@@ -217,6 +219,37 @@ impl Motor {
             Motor::Align => {
                 uwrite!(cli.writer(), "Starting motor alignment")?;
                 MOTOR_COMMAND_SIGNAL.signal(MotorCommand::StartAlignment);
+            }
+        }
+        Ok(())
+    }
+}
+
+#[derive(Command)]
+#[command(help_title = "Manage settings related to the display")]
+enum Display {
+    /// Set the backlight brightness of the display
+    Brightness {
+        /// Brightness in percent 0-100
+        percent: u8,
+    },
+}
+
+impl Display {
+    async fn handle(
+        self: &Self,
+        cli: &mut embedded_cli::cli::CliHandle<
+            '_,
+            esp_hal::usb_serial_jtag::UsbSerialJtagTx<'static, Async>,
+            core::convert::Infallible,
+        >,
+        _context: &mut Context,
+    ) -> Result<(), HandlerError> {
+        match self {
+            Display::Brightness { percent } => {
+                let percent = (*percent).clamp(0, 100);
+                uwrite!(cli.writer(), "Setting display brightness to {}%", percent)?;
+                DISPLAY_BRIGHTNESS_SIGNAL.signal(percent);
             }
         }
         Ok(())
@@ -286,6 +319,7 @@ pub async fn menu_handler(
                         RootGroup::Logging(logging) => logging.handle(cli, &mut context).await,
                         RootGroup::Storage(storage) => storage.handle(cli, &mut context).await,
                         RootGroup::Motor(motor) => motor.handle(cli, &mut context).await,
+                        RootGroup::Display(display) => display.handle(cli, &mut context).await,
                         RootGroup::Base(base) => match base {
                             Base::Exit => {
                                 context.interface_open = false;
