@@ -3,7 +3,7 @@ use alloc::rc::Rc;
 use embassy_executor::Spawner;
 use embassy_sync::pubsub::WaitResult;
 use embassy_sync::signal::Signal;
-use esp_hal::analog::adc::{Adc, AdcConfig, Attenuation};
+use esp_hal::analog::adc::{Adc, AdcCalBasic, AdcCalScheme, AdcConfig, Attenuation};
 use esp_hal::dma::{DmaRxBuf, DmaTxBuf};
 use esp_hal::gpio::DriveMode;
 use esp_hal::peripherals::GPIO4;
@@ -33,7 +33,9 @@ use mipidsi::asynchronous::{
 
 use crate::config::{may_log, LogChannel, LOG_TOGGLES};
 use crate::knob_tilt::KnobTiltEvent;
-use crate::signals::{ENCODER_ANGLE, ENCODER_POSITION, KNOB_EVENTS_CHANNEL};
+use crate::signals::{
+    ENCODER_ANGLE, ENCODER_POSITION, KNOB_EVENTS_CHANNEL, KNOB_TILT_ANGLE, KNOB_TILT_MAGNITUDE,
+};
 
 slint::include_modules!();
 
@@ -336,9 +338,14 @@ pub async fn ui_task() {
     loop {
         // info!("Switiching toggle!");
         let angle = ENCODER_ANGLE.load(core::sync::atomic::Ordering::Relaxed);
+        let tilt_angle = KNOB_TILT_ANGLE.load(core::sync::atomic::Ordering::Relaxed);
+        let magnitude = KNOB_TILT_MAGNITUDE.load(core::sync::atomic::Ordering::Relaxed);
         ui.set_encoder_angle(angle);
-        // ui.global::<State>().set_encoder_angle(angle);
-        Timer::after_millis(50).await;
+        ui.global::<State>().set_encoder_angle(angle);
+        ui.global::<State>()
+            .set_tilt_angle(tilt_angle * 180.0 / core::f32::consts::PI);
+        ui.global::<State>().set_tilt_magnitude(magnitude);
+        Timer::after_millis(30).await;
     }
 }
 
@@ -372,7 +379,8 @@ async fn brightness_task(handles: BacklightHandles) {
         .unwrap();
 
     let mut adc1_config = AdcConfig::new();
-    let mut pin = adc1_config.enable_pin(handles.brightness_sensor_pin, Attenuation::_0dB);
+    let mut pin = adc1_config
+        .enable_pin_with_cal::<_, AdcCalBasic<_>>(handles.brightness_sensor_pin, Attenuation::_0dB);
     let mut adc1 = Adc::new(handles.adc_instance, adc1_config);
     loop {
         if !channel0.is_duty_fade_running() {
