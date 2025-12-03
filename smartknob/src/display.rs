@@ -3,7 +3,7 @@ use alloc::rc::Rc;
 use embassy_executor::Spawner;
 use embassy_sync::pubsub::WaitResult;
 use embassy_sync::signal::Signal;
-use esp_hal::analog::adc::{Adc, AdcCalBasic, AdcCalScheme, AdcConfig, Attenuation};
+use esp_hal::analog::adc::{Adc, AdcCalBasic, AdcConfig, Attenuation};
 use esp_hal::dma::{DmaRxBuf, DmaTxBuf};
 use esp_hal::gpio::DriveMode;
 use esp_hal::peripherals::GPIO4;

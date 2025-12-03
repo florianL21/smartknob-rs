@@ -6,7 +6,7 @@ use embassy_sync::{
     mutex::Mutex,
     signal::Signal,
 };
-use embassy_time::{Instant, Timer};
+use embassy_time::{Duration, Instant, Ticker, Timer};
 use esp_backtrace as _;
 use esp_hal::{
     dma::{DmaRxBuf, DmaTxBuf},
@@ -20,7 +20,7 @@ use esp_hal::{
     spi,
     time::Rate,
 };
-use fixed::{types::I16F16};
+use fixed::types::I16F16;
 use foc::pwm::Modulation;
 use foc::{park_clarke, pid::PIController, pwm::SpaceVector, Foc};
 use mt6701::{self, AngleSensorTrait};
@@ -408,6 +408,8 @@ pub async fn update_foc(
     let mut foc: Foc<SpaceVector, PWM_RESOLUTION> = Foc::new(fcc, tcc);
     let mut encoder_pos: f64 = 0.0;
     let mut encoder_angle: f32 = 0.0;
+    let mut currents = [I16F16::from_num(0); 2];
+    let mut ticker = Ticker::every(Duration::from_millis(3));
     loop {
         if encoder
             .update(last_encoder_update.elapsed().into())
@@ -449,19 +451,18 @@ pub async fn update_foc(
         }
 
         if let Some(angle) = alignment_state.get_aligned_angle(encoder_pos) {
-            // let pwm: [u16; 3] = foc.update(
-            //     [FixedI32::from_num(0), FixedI32::from_num(0)],
-            //     angle,
-            //     I16F16::from_num(5),
-            //     I16F16::from_num(last_foc_update.elapsed().as_micros()),
-            // );
-            // last_foc_update = Instant::now();
-            // pwm_u.set_timestamp_a(pwm[0]);
-            // pwm_v.set_timestamp_a(pwm[1]);
-            // pwm_w.set_timestamp_a(pwm[2]);
-            // Timer::after_micros(50).await;
-            mcpwm.timer0.stop();
-            Timer::after_millis(50).await;
+            let pwm: [u16; 3] = foc.update(
+                currents,
+                angle,
+                I16F16::from_num(2),
+                I16F16::from_num(last_foc_update.elapsed().as_micros()),
+            );
+            last_foc_update = Instant::now();
+            pwm_u.set_timestamp_a(pwm[0]);
+            pwm_v.set_timestamp_a(pwm[1]);
+            pwm_w.set_timestamp_a(pwm[2]);
+            // currents = [I16F16::from_num(pwm[0]), I16F16::from_num(pwm[1])];
+            ticker.next().await;
         }
     }
 }
