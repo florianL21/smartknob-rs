@@ -1,3 +1,0 @@
-[submodule "embedded-cli-rs"]
-	path = embedded-cli-rs
-	url = https://github.com/florianL21/embedded-cli-rs.git
