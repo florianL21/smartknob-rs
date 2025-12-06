@@ -28,14 +28,14 @@ pub enum ConfigError {
 }
 
 macro_rules! log_toggles {
-    ($($variant:ident),*) => {
+    ($($variant:ident, $enum:ident),*) => {
         #[derive(Clone, Debug, uDebug, Default, Serialize, Deserialize, MaxSize)]
         pub struct LogChannelToggles {
             $($variant: bool),+
         }
 
         pub enum LogChannel {
-            $($variant),+
+            $($enum),+
         }
 
 
@@ -53,7 +53,7 @@ macro_rules! log_toggles {
         impl LogChannelToggles {
             fn should_log(&self, channel: LogChannel) -> bool {
                 match channel {
-                    $(LogChannel::$variant => self.$variant),+
+                    $(LogChannel::$enum => self.$variant),+
                 }
             }
 
@@ -70,7 +70,18 @@ macro_rules! log_toggles {
     };
 }
 
-log_toggles!(encoder, push, brightness, render, display_transfer);
+log_toggles!(
+    encoder,
+    Encoder,
+    push,
+    Push,
+    brightness,
+    Brightness,
+    render,
+    Render,
+    display_transfer,
+    DisplayTransfer
+);
 
 #[derive(Clone, Debug, uDebug, Default)]
 pub struct LogToggles {

@@ -44,7 +44,7 @@ use smartknob_rs::{
     knob_tilt::{read_ldc_task, KnobTiltEvent},
     motor_control::{update_foc, Pins6PWM},
     shutdown::shutdown_handler,
-    signals::{ENCODER_ANGLE, ENCODER_POSITION, LOG_TOGGLES},
+    signals::{ENCODER_POSITION, LOG_TOGGLES},
 };
 use static_cell::StaticCell;
 
@@ -59,10 +59,9 @@ async fn log_rotations() {
         .expect("Log toggle receiver had not enough capacity");
     info!("Log encoder init done!");
     loop {
-        may_log(&mut log_receiver, LogChannel::encoder, || {
+        may_log(&mut log_receiver, LogChannel::Encoder, || {
             let pos = ENCODER_POSITION.load(core::sync::atomic::Ordering::Relaxed);
-            let angle = ENCODER_ANGLE.load(core::sync::atomic::Ordering::Relaxed);
-            info!("Position: {pos}; Angle: {angle}")
+            info!("Position: {pos}")
         })
         .await;
         Timer::after_millis(200).await;
@@ -109,7 +108,7 @@ async fn led_ring(
     loop {
         // Since this is only interested in displaying the current state we can ignore lag information
         let tilt_event = tilt_receiver.next_message_pure().await;
-        may_log(&mut log_receiver, LogChannel::push, || {
+        may_log(&mut log_receiver, LogChannel::Push, || {
             info!("Event: {:#?}", &tilt_event)
         })
         .await;
@@ -233,7 +232,7 @@ async fn main(spawner: Spawner) {
     // Encoder initialization
 
     let sw_int = SoftwareInterruptControl::new(peripherals.SW_INTERRUPT);
-    static APP_CORE_STACK: StaticCell<Stack<8192>> = StaticCell::new();
+    static APP_CORE_STACK: StaticCell<Stack<32768>> = StaticCell::new();
     let app_core_stack = APP_CORE_STACK.init(Stack::new());
 
     esp_rtos::start_second_core(

@@ -33,9 +33,7 @@ use mipidsi::asynchronous::{
 
 use crate::config::{may_log, LogChannel, LOG_TOGGLES};
 use crate::knob_tilt::KnobTiltEvent;
-use crate::signals::{
-    ENCODER_ANGLE, ENCODER_POSITION, KNOB_EVENTS_CHANNEL, KNOB_TILT_ANGLE, KNOB_TILT_MAGNITUDE,
-};
+use crate::signals::{ENCODER_POSITION, KNOB_EVENTS_CHANNEL, KNOB_TILT_ANGLE, KNOB_TILT_MAGNITUDE};
 
 slint::include_modules!();
 
@@ -199,7 +197,7 @@ pub async fn display_task(
             )
             .await
             .ok();
-        may_log(&mut log_receiver, LogChannel::display_transfer, || {
+        may_log(&mut log_receiver, LogChannel::DisplayTransfer, || {
             info!("Frame took {} ms", t.elapsed().as_millis());
         })
         .await;
@@ -313,7 +311,7 @@ pub async fn render_task(
             renderer.render(fb, DISPLAY_SIZE.0 as usize);
         });
         if is_dirty {
-            may_log(&mut log_receiver, LogChannel::render, || {
+            may_log(&mut log_receiver, LogChannel::Render, || {
                 info!(
                     "New frame available. Rendering took {} ms",
                     t.elapsed().as_millis()
@@ -337,11 +335,8 @@ pub async fn ui_task() {
     ui.show().expect("unable to show main window");
     loop {
         // info!("Switiching toggle!");
-        let angle = ENCODER_ANGLE.load(core::sync::atomic::Ordering::Relaxed);
         let tilt_angle = KNOB_TILT_ANGLE.load(core::sync::atomic::Ordering::Relaxed);
         let magnitude = KNOB_TILT_MAGNITUDE.load(core::sync::atomic::Ordering::Relaxed);
-        ui.set_encoder_angle(angle);
-        ui.global::<State>().set_encoder_angle(angle);
         ui.global::<State>()
             .set_tilt_angle(tilt_angle * 180.0 / core::f32::consts::PI);
         ui.global::<State>().set_tilt_magnitude(magnitude);
@@ -398,7 +393,7 @@ async fn brightness_task(handles: BacklightHandles) {
         }
 
         if let Ok(val) = adc1.read_oneshot(&mut pin) {
-            may_log(&mut log_receiver, LogChannel::brightness, || {
+            may_log(&mut log_receiver, LogChannel::Brightness, || {
                 info!("Brightness: {val}")
             })
             .await;

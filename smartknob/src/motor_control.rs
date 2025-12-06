@@ -22,7 +22,7 @@ use esp_hal::{
 };
 use fixed::types::I16F16;
 use foc::pwm::Modulation;
-use foc::{park_clarke, pid::PIController, pwm::SpaceVector, Foc};
+use foc::{park_clarke, pwm::SpaceVector};
 use mt6701::{self, AngleSensorTrait};
 use postcard::experimental::max_size::MaxSize;
 use serde::{Deserialize, Serialize};
@@ -36,18 +36,17 @@ use crate::flash::{FlashError, FlashKeys, FlashType};
 pub type SpiBus1 = Mutex<NoopRawMutex, esp_hal::spi::master::SpiDmaBus<'static, esp_hal::Async>>;
 
 pub static ENCODER_POSITION: AtomicF32 = AtomicF32::new(0.0);
-pub static ENCODER_ANGLE: AtomicF32 = AtomicF32::new(0.0);
 pub static MOTOR_COMMAND_SIGNAL: Signal<CriticalSectionRawMutex, MotorCommand> = Signal::new();
-
-const ENCODER_SPI_DMA_BUFFER_SIZE: usize = 200;
-const PWM_RESOLUTION: u16 = 999;
-const MOTOR_POLE_PAIRS: I16F16 = I16F16::lit("4");
 
 const _3PI_2: I16F16 = I16F16::PI
     .unwrapped_mul(I16F16::lit("3.0"))
     .unwrapped_div(I16F16::lit("2.0"));
-const _2PI: I16F16 = I16F16::PI.unwrapped_mul(I16F16::lit("2.0"));
-const MIN_ANGLE_DETECT_MOVEMENT: I16F16 = _2PI.unwrapped_div(I16F16::lit("101.0"));
+
+const ENCODER_SPI_DMA_BUFFER_SIZE: usize = 200;
+const PWM_RESOLUTION: u16 = 999;
+const MOTOR_POLE_PAIRS: I16F16 = I16F16::lit("7");
+
+const MIN_ANGLE_DETECT_MOVEMENT: I16F16 = I16F16::TAU.unwrapped_div(I16F16::lit("101.0"));
 const ALIGNMENT_VOLTAGE: I16F16 = I16F16::lit("1.0");
 
 pub struct Pins6PWM {
@@ -66,11 +65,11 @@ pub enum SensorDirection {
 }
 
 fn normalize_angle(angle: I16F16) -> I16F16 {
-    let ang = angle % _2PI;
+    let ang = angle % I16F16::TAU;
     if ang >= I16F16::ZERO {
         ang
     } else {
-        ang + _2PI
+        ang + I16F16::TAU
     }
 }
 
@@ -124,6 +123,7 @@ enum AlignmentState {
         sensor_direction: SensorDirection,
     },
     IsAligned(MotorAlignment),
+    Failed,
 }
 
 #[derive(Debug, PartialEq, Deserialize, Serialize)]
@@ -138,14 +138,8 @@ impl postcard::experimental::max_size::MaxSize for MotorAlignment {
 
 impl MotorAlignment {
     fn electrical_angle(&self, mechanical_angle: I16F16) -> I16F16 {
-        match self.sensor_direction {
-            SensorDirection::CW => {
-                normalize_angle(MOTOR_POLE_PAIRS * mechanical_angle - self.electric_zero_angle)
-            }
-            SensorDirection::CCW => {
-                normalize_angle(-MOTOR_POLE_PAIRS * mechanical_angle - self.electric_zero_angle)
-            }
-        }
+        self.sensor_direction
+            .electrical_angle(mechanical_angle, self.electric_zero_angle)
     }
 }
 
@@ -172,7 +166,6 @@ impl AlignmentState {
     async fn do_alignment(
         &mut self,
         encoder_position: I16F16,
-        encoder_angle: I16F16,
         flash: &'static FlashType<'static>,
     ) -> Result<Option<[u16; 3]>, AlignmentError> {
         match self {
@@ -189,7 +182,7 @@ impl AlignmentState {
                     // Waiting before is acceptable here because we don't care for super accurate encoder values yet
                     Timer::after_millis(2).await;
                     let angle =
-                        _3PI_2 + _2PI * I16F16::from_num(*counter) / I16F16::from_num(500.0);
+                        _3PI_2 + I16F16::TAU * I16F16::from_num(*counter) / I16F16::from_num(500.0);
                     let pwm = get_phase_voltage(ALIGNMENT_VOLTAGE, I16F16::ZERO, angle);
                     *self = AlignmentState::AlignForward {
                         counter: *counter + 1,
@@ -210,7 +203,7 @@ impl AlignmentState {
                     // Waiting before is acceptable here because we don't care for super accurate encoder values yet
                     Timer::after_millis(2).await;
                     let angle =
-                        _3PI_2 + _2PI * I16F16::from_num(*counter) / I16F16::from_num(500.0);
+                        _3PI_2 + I16F16::TAU * I16F16::from_num(*counter) / I16F16::from_num(500.0);
                     let pwm = get_phase_voltage(ALIGNMENT_VOLTAGE, I16F16::ZERO, angle);
                     *self = AlignmentState::AlignBackward {
                         counter: *counter - 1,
@@ -225,6 +218,7 @@ impl AlignmentState {
             } => {
                 let moved = (*mid_angle - *end_angle).abs();
                 if moved < MIN_ANGLE_DETECT_MOVEMENT {
+                    *self = AlignmentState::Failed;
                     return Err(AlignmentError::NoMovementDetected);
                 }
                 let sensor_direction = if mid_angle < end_angle {
@@ -236,9 +230,11 @@ impl AlignmentState {
                 // 0.5f is arbitrary number it can be lower or higher!
                 // Something here seems fishy because with 0.5 it never passes.
                 // Increased to 0.9 for now, will need to check back at a later time
-                if (moved * I16F16::from_num(MOTOR_POLE_PAIRS) - _2PI).abs() > I16F16::from_num(0.8)
+                if (moved * I16F16::from_num(MOTOR_POLE_PAIRS) - I16F16::TAU).abs()
+                    > I16F16::from_num(0.8)
                 {
-                    let estimated_pole_pairs = (_2PI / moved).to_num();
+                    let estimated_pole_pairs = (I16F16::TAU / moved).to_num();
+                    *self = AlignmentState::Failed;
                     return Err(AlignmentError::PolePairMismatch(estimated_pole_pairs));
                 }
                 *self = AlignmentState::PrepareMeasureAngleOffset { sensor_direction };
@@ -269,10 +265,14 @@ impl AlignmentState {
             AlignmentState::MeasureAngleOffset { sensor_direction } => {
                 let alignment_data = MotorAlignment {
                     sensor_direction: *sensor_direction,
-                    electric_zero_angle: sensor_direction
-                        .electrical_angle(encoder_angle, I16F16::ZERO),
+                    electric_zero_angle: normalize_angle(
+                        sensor_direction.electrical_angle(encoder_position, I16F16::ZERO),
+                    ),
                 };
-                info!("Alignment finished. Electrical zero angle is: {encoder_angle}");
+                info!(
+                    "Alignment finished. Electrical zero angle is: {}",
+                    alignment_data.electric_zero_angle
+                );
                 // Save alignment data to flash
                 let mut wt = flash.write_transaction().await;
                 let mut buffer = [0u8; MotorAlignment::POSTCARD_MAX_SIZE];
@@ -291,6 +291,7 @@ impl AlignmentState {
             }
             AlignmentState::IsAligned { .. } => Ok(None),
             AlignmentState::NeedsAlignment => Ok(None),
+            AlignmentState::Failed => Ok(Some([0; 3])),
         }
     }
 
@@ -349,7 +350,6 @@ pub async fn update_foc(
     let spi_device = SpiDevice::new(&spi_bus, mag_csn);
     let mut encoder = mt6701::MT6701Spi::new(spi_device);
     let mut last_encoder_update = Instant::now();
-    let mut last_foc_update = Instant::now();
     info!("encoder init done!");
 
     let clock_cfg = PeripheralClockConfig::with_frequency(Rate::from_mhz(32)).unwrap();
@@ -396,20 +396,14 @@ pub async fn update_foc(
     pwm_w.set_timestamp_b(0);
 
     // period here is in relation to all other periods further down.
-    // Dead time and set_timestamp methods respectiveley
+    // Dead time and set_timestamp methods respectively
     let timer_clock_cfg = clock_cfg
         .timer_clock_with_frequency(PWM_RESOLUTION, PwmWorkingMode::Increase, Rate::from_khz(25))
         .unwrap();
     mcpwm.timer0.start(timer_clock_cfg);
 
-    let fcc = PIController::new(I16F16::from_num(0.2), I16F16::from_num(0));
-    let tcc = PIController::new(I16F16::from_num(0.2), I16F16::from_num(0));
-
-    let mut foc: Foc<SpaceVector, PWM_RESOLUTION> = Foc::new(fcc, tcc);
     let mut encoder_pos: f64 = 0.0;
-    let mut encoder_angle: f32 = 0.0;
-    let mut currents = [I16F16::from_num(0); 2];
-    let mut ticker = Ticker::every(Duration::from_millis(3));
+    let mut ticker = Ticker::every(Duration::from_millis(5));
     loop {
         if encoder
             .update(last_encoder_update.elapsed().into())
@@ -417,22 +411,16 @@ pub async fn update_foc(
             .is_ok()
         {
             last_encoder_update = Instant::now();
-            encoder_pos = encoder.get_position();
-            encoder_angle = encoder.get_angle();
+            encoder_pos = encoder.get_position() / 2.0;
             ENCODER_POSITION.store(encoder_pos as f32, core::sync::atomic::Ordering::Relaxed);
-            ENCODER_ANGLE.store(encoder_angle, core::sync::atomic::Ordering::Relaxed);
         }
         let encoder_pos = I16F16::from_num(encoder_pos);
-        let encoder_angle = I16F16::from_num(encoder_angle);
         if MOTOR_COMMAND_SIGNAL.signaled() {
             alignment_state.start_alignment();
             MOTOR_COMMAND_SIGNAL.reset();
         }
         // In case the alignment was not yet done, this will do it in a non blocking way
-        match alignment_state
-            .do_alignment(encoder_pos, encoder_angle, flash)
-            .await
-        {
+        match alignment_state.do_alignment(encoder_pos, flash).await {
             Ok(pwm_data) => {
                 if let Some(pwm) = pwm_data {
                     pwm_u.set_timestamp_a(pwm[0]);
@@ -451,17 +439,10 @@ pub async fn update_foc(
         }
 
         if let Some(angle) = alignment_state.get_aligned_angle(encoder_pos) {
-            let pwm: [u16; 3] = foc.update(
-                currents,
-                angle,
-                I16F16::from_num(2),
-                I16F16::from_num(last_foc_update.elapsed().as_micros()),
-            );
-            last_foc_update = Instant::now();
+            let pwm = get_phase_voltage(I16F16::from_num(0.5), I16F16::ZERO, angle);
             pwm_u.set_timestamp_a(pwm[0]);
             pwm_v.set_timestamp_a(pwm[1]);
             pwm_w.set_timestamp_a(pwm[2]);
-            // currents = [I16F16::from_num(pwm[0]), I16F16::from_num(pwm[1])];
             ticker.next().await;
         }
     }
