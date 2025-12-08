@@ -23,6 +23,7 @@ use esp_hal::{
 use fixed::types::I16F16;
 use foc::pwm::Modulation;
 use foc::{park_clarke, pwm::SpaceVector};
+use haptic_lib::{CurveBuilder, HapticPlayer};
 use mt6701::{self, AngleSensorTrait};
 use postcard::experimental::max_size::MaxSize;
 use serde::{Deserialize, Serialize};
@@ -404,6 +405,25 @@ pub async fn update_foc(
 
     let mut encoder_pos: f64 = 0.0;
     let mut ticker = Ticker::every(Duration::from_millis(5));
+
+    let test_curve = CurveBuilder::<6>::new()
+        .add_linear(I16F16::from_num(0.3), I16F16::from_num(2.0), I16F16::ZERO)
+        .unwrap()
+        .add_const(I16F16::from_num(0.05), I16F16::ZERO)
+        .unwrap()
+        .add_linear(I16F16::from_num(0.5), I16F16::ZERO, I16F16::from_num(-2.0))
+        .unwrap()
+        .add_linear(I16F16::from_num(0.5), I16F16::from_num(2.0), I16F16::ZERO)
+        .unwrap()
+        .add_const(I16F16::from_num(0.05), I16F16::ZERO)
+        .unwrap()
+        .add_linear(I16F16::from_num(0.3), I16F16::ZERO, I16F16::from_num(-2.0))
+        .unwrap()
+        .build()
+        .unwrap()
+        .make_absolute(I16F16::from_num(2), I16F16::from_num(-2), I16F16::ZERO);
+    let player = HapticPlayer::new(I16F16::ZERO, &test_curve);
+
     loop {
         if encoder
             .update(last_encoder_update.elapsed().into())
@@ -439,10 +459,16 @@ pub async fn update_foc(
         }
 
         if let Some(angle) = alignment_state.get_aligned_angle(encoder_pos) {
-            let pwm = get_phase_voltage(I16F16::from_num(0.5), I16F16::ZERO, angle);
-            pwm_u.set_timestamp_a(pwm[0]);
-            pwm_v.set_timestamp_a(pwm[1]);
-            pwm_w.set_timestamp_a(pwm[2]);
+            let pwm = get_phase_voltage(player.play(encoder_pos), I16F16::ZERO, angle);
+            if pwm[0] == pwm[1] && pwm[2] == pwm[1] {
+                pwm_u.set_timestamp_a(0);
+                pwm_v.set_timestamp_a(0);
+                pwm_w.set_timestamp_a(0);
+            } else {
+                pwm_u.set_timestamp_a(pwm[0]);
+                pwm_v.set_timestamp_a(pwm[1]);
+                pwm_w.set_timestamp_a(pwm[2]);
+            }
             ticker.next().await;
         }
     }

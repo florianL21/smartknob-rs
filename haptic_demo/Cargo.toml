@@ -1,0 +1,9 @@
+[package]
+name = "haptic_demo"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+charming = "0.6.0"
+fixed = { version = "1.29.0", features = ["std"] }
+haptic_lib = { path = "../haptic_lib" }
