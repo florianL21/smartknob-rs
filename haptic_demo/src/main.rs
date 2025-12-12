@@ -22,8 +22,6 @@ fn create_graph<const N: usize>(
     let start_angle = start - 1.0;
     let end_anlge = start_angle + width + 2.0;
 
-    println!("{}..{}", start_angle, end_anlge);
-
     let steps = ((end_anlge - start_angle) / sample_step) as u32;
     let mut x = start_angle;
     let mut x_data: Vec<f32> = Vec::new();
@@ -33,8 +31,6 @@ fn create_graph<const N: usize>(
         x_data.push(x);
         x += sample_step;
     }
-
-    println!("{:?}", data);
 
     Chart::new()
         .x_axis(
@@ -49,18 +45,12 @@ fn create_graph<const N: usize>(
 
 fn main() {
     let test_curve = CurveBuilder::<6>::new()
-        .add_linear(I16F16::from_num(0.3), I16F16::from_num(2.0), I16F16::ZERO)
-        .unwrap()
-        .add_const(I16F16::from_num(0.1), I16F16::ZERO)
-        .unwrap()
-        .add_linear(I16F16::from_num(0.5), I16F16::ZERO, I16F16::from_num(-2.0))
-        .unwrap()
-        .add_linear(I16F16::from_num(0.5), I16F16::from_num(2.0), I16F16::ZERO)
-        .unwrap()
-        .add_const(I16F16::from_num(0.1), I16F16::ZERO)
-        .unwrap()
-        .add_linear(I16F16::from_num(0.3), I16F16::ZERO, I16F16::from_num(-2.0))
-        .unwrap()
+        .add_linear(0.3, 2.0, 0.0)
+        .add_const(0.05, 0.0)
+        .add_linear(0.5, 0.0, -2.0)
+        .add_linear(0.5, 2.0, 0.0)
+        .add_const(0.05, 0.0)
+        .add_linear(0.3, 0.0, -2.0)
         .build()
         .unwrap();
 

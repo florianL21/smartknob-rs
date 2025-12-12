@@ -12,8 +12,8 @@ use thiserror::Error;
 pub enum CurveError {
     #[error("curve was empty")]
     EmptyCurve,
-    #[error("curve capacity exhausted")]
-    NoCapacityLeft,
+    #[error("Not enough capacity for holding all curve components")]
+    NotEnoughCapacity,
 }
 
 type Angle = I16F16;
@@ -120,39 +120,45 @@ impl<const N: usize> HapticCurve<N> {
 
 pub struct CurveBuilder<const N: usize> {
     components: Vec<CurveComponent, N>,
+    capacity_left: bool,
 }
 
 impl<const N: usize> CurveBuilder<N> {
     pub fn new() -> Self {
         CurveBuilder {
             components: Vec::new(),
+            capacity_left: true,
         }
     }
 
-    pub fn add_const(mut self, width: Angle, value: Value) -> Result<Self, CurveError> {
-        self.components
-            .push(CurveComponent::Const { width, value })
-            .map_err(|_| CurveError::NoCapacityLeft)?;
-        Ok(self)
+    pub fn add_const(mut self, width: f32, value: f32) -> Self {
+        if self.capacity_left {
+            if let Err(_) = self.components.push(CurveComponent::Const {
+                width: I16F16::from_num(width),
+                value: I16F16::from_num(value),
+            }) {
+                self.capacity_left = false;
+            }
+        }
+
+        self
     }
 
-    pub fn add_linear(
-        mut self,
-        width: Angle,
-        start_value: Value,
-        end_value: Value,
-    ) -> Result<Self, CurveError> {
-        self.components
-            .push(CurveComponent::Linear {
-                width,
-                start: start_value,
-                end: end_value,
-            })
-            .map_err(|_| CurveError::NoCapacityLeft)?;
-        Ok(self)
+    pub fn add_linear(mut self, width: f32, start_value: f32, end_value: f32) -> Self {
+        if let Err(_) = self.components.push(CurveComponent::Linear {
+            width: I16F16::from_num(width),
+            start: I16F16::from_num(start_value),
+            end: I16F16::from_num(end_value),
+        }) {
+            self.capacity_left = false;
+        }
+        self
     }
 
     pub fn build(self) -> Result<HapticCurve<N>, CurveError> {
+        if !self.capacity_left {
+            return Err(CurveError::NotEnoughCapacity);
+        }
         let min = self
             .components
             .iter()
