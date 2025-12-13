@@ -1,22 +1,19 @@
 extern crate std;
 
 use charming::{
-    component::{Axis, Legend},
-    element::{AxisLine, AxisType, ItemStyle},
-    series::{Graph, Line},
     Chart, HtmlRenderer,
+    component::{
+        Axis, DataZoom, DataZoomType, Feature, Legend, Restore, SaveAsImage, Title, Toolbox,
+        ToolboxDataZoom,
+    },
+    element::{AxisLine, AxisType, ItemStyle, Tooltip},
+    series::{Graph, Line},
 };
 use fixed::types::I16F16;
 use haptic_lib::{AbsoluteCurve, CurveBuilder, HapticCurve, HapticPlayer};
 
-fn create_graph<const N: usize>(
-    start: f32,
-    start_value: I16F16,
-    end_value: I16F16,
-    curve: HapticCurve<N>,
-    sample_step: f32,
-) -> Chart {
-    let absolut_curve = curve.make_absolute(start_value, end_value, I16F16::from_num(start));
+fn create_graph<const N: usize>(start: f32, curve: HapticCurve<N>, sample_step: f32) -> Chart {
+    let absolut_curve = curve.make_absolute(I16F16::from_num(start));
     let player = HapticPlayer::new(I16F16::from_num(start), &absolut_curve);
     let width: f32 = player.curve_width().to_num();
     let start_angle = start - 1.0;
@@ -33,13 +30,25 @@ fn create_graph<const N: usize>(
     }
 
     Chart::new()
+        .tooltip(Tooltip::new())
+        .title(Title::new().text("Torque response"))
+        .toolbox(
+            Toolbox::new().feature(
+                Feature::new()
+                    .data_zoom(ToolboxDataZoom::new().y_axis_index("none"))
+                    .restore(Restore::new())
+                    .save_as_image(SaveAsImage::new()),
+            ),
+        )
         .x_axis(
             Axis::new()
+                .name("Position (rad)")
                 .type_(AxisType::Category)
-                .axis_line(AxisLine::new().on_zero(false))
                 .data(x_data.iter().map(|&x| x.to_string()).collect()),
         )
-        .y_axis(Axis::new().type_(AxisType::Value))
+        .y_axis(Axis::new().name("Torque").type_(AxisType::Value))
+        .data_zoom(DataZoom::new().type_(DataZoomType::Inside))
+        .data_zoom(DataZoom::new())
         .series(Line::new().data(data))
 }
 
@@ -54,13 +63,7 @@ fn main() {
         .build()
         .unwrap();
 
-    let chart = create_graph(
-        0.0,
-        I16F16::from_num(2.0),
-        I16F16::from_num(-2.0),
-        test_curve,
-        0.05,
-    );
+    let chart = create_graph(0.0, test_curve, 0.01);
 
     let mut renderer = HtmlRenderer::new("Force graph", 1000, 800);
     renderer.save(&chart, "chart.html").unwrap();

@@ -415,7 +415,7 @@ pub async fn update_foc(
         .add_linear(0.3, 0.0, -2.0)
         .build()
         .unwrap()
-        .make_absolute(I16F16::from_num(2), I16F16::from_num(-2), I16F16::ZERO);
+        .make_absolute(I16F16::ZERO);
     let player = HapticPlayer::new(I16F16::ZERO, &test_curve);
 
     loop {

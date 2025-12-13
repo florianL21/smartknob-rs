@@ -36,13 +36,6 @@ enum CurveComponent {
         start: Value,
         end: Value,
     },
-    /// Start a loop from the next curve component and repeat
-    /// it the specified amount of times
-    Loop {
-        times: u16,
-    },
-    /// Marker for signaling the end of a loop
-    EndLoop,
 }
 
 impl CurveComponent {
@@ -54,33 +47,50 @@ impl CurveComponent {
         }
     }
 
-    fn value(&self, angle: Angle) -> Option<Value> {
+    fn value(&self, angle: Angle) -> Value {
         match self {
-            CurveComponent::Const { value, .. } => Some(value.clone()),
-            CurveComponent::Linear { start, end, width } => {
-                Some(((end - start) / width) * angle + start)
-            }
-            _ => None,
+            CurveComponent::Const { value, .. } => value.clone(),
+            CurveComponent::Linear { start, end, width } => ((end - start) / width) * angle + start,
         }
     }
 
-    fn min(&self) -> Option<&Value> {
+    fn min(&self) -> &Value {
         match self {
-            CurveComponent::Const { value, .. } => Some(value),
+            CurveComponent::Const { value, .. } => value,
             CurveComponent::Linear { start, end, .. } => {
-                Some(if start < end { start } else { end })
+                if start < end {
+                    start
+                } else {
+                    end
+                }
             }
-            _ => None,
         }
     }
 
-    fn max(&self) -> Option<&Value> {
+    fn max(&self) -> &Value {
         match self {
-            CurveComponent::Const { value, .. } => Some(value),
+            CurveComponent::Const { value, .. } => value,
             CurveComponent::Linear { start, end, .. } => {
-                Some(if start > end { start } else { end })
+                if start > end {
+                    start
+                } else {
+                    end
+                }
             }
-            _ => None,
+        }
+    }
+
+    fn start(&self) -> &Value {
+        match self {
+            CurveComponent::Const { value, .. } => value,
+            CurveComponent::Linear { start, .. } => start,
+        }
+    }
+
+    fn end(&self) -> &Value {
+        match self {
+            CurveComponent::Const { value, .. } => value,
+            CurveComponent::Linear { end, .. } => end,
         }
     }
 }
@@ -103,17 +113,20 @@ impl<const N: usize> HapticCurve<N> {
         CurveIter::new(&self.components)
     }
 
-    pub fn make_absolute(
-        self,
-        start_value: Value,
-        end_value: Value,
-        start_angle: Angle,
-    ) -> AbsoluteCurve<N> {
+    pub fn make_absolute(self, start_angle: Angle) -> AbsoluteCurve<N> {
+        let start_value = self
+            .components
+            .first()
+            .map_or(Angle::ZERO, |c| c.start().clone());
+        let end_value = self
+            .components
+            .last()
+            .map_or(Angle::ZERO, |c| c.end().clone());
         AbsoluteCurve {
             curve: self,
+            start_value,
             end_value,
             start_angle,
-            start_value,
         }
     }
 }
@@ -162,14 +175,14 @@ impl<const N: usize> CurveBuilder<N> {
         let min = self
             .components
             .iter()
-            .filter_map(CurveComponent::min)
+            .map(CurveComponent::min)
             .min()
             .ok_or(CurveError::EmptyCurve)?
             .clone();
         let max = self
             .components
             .iter()
-            .filter_map(CurveComponent::min)
+            .map(CurveComponent::min)
             .max()
             .ok_or(CurveError::EmptyCurve)?
             .clone();
@@ -265,9 +278,7 @@ impl<'a, const N: usize> HapticPlayer<'a, N> {
         for component in self.curve.curve.as_iter() {
             if angle >= component.start_angle && angle < component.end_angle {
                 // We found our current component
-                if let Some(val) = component.component.value(angle - component.start_angle) {
-                    return val;
-                }
+                return component.component.value(angle - component.start_angle);
             }
         }
         Value::ZERO
@@ -288,11 +299,10 @@ mod tests {
     #[test]
     fn test_basic_curve() {
         let test_curve = CurveBuilder::<5>::new()
-            .add_const(I16F16::from_num(2.0), I16F16::from_num(5.0))
-            .unwrap()
+            .add_const(2.0, 5.0)
             .build()
             .unwrap()
-            .make_absolute(I16F16::ZERO, I16F16::ZERO, I16F16::ZERO);
+            .make_absolute(I16F16::ZERO);
         let player = HapticPlayer::new(I16F16::ZERO, &test_curve);
         assert_eq!(player.play(I16F16::from_num(-1)), I16F16::ZERO);
         assert_eq!(player.play(I16F16::from_num(1)), I16F16::from_num(5.0));
