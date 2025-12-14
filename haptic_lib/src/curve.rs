@@ -1,5 +1,5 @@
 pub use crate::easings::Easing;
-use crate::{Angle, Value};
+use crate::{Angle, HapticPattern, Value};
 use core::slice::Iter;
 
 use fixed::types::I16F16;
@@ -31,6 +31,8 @@ pub enum CurveComponent {
         width: Angle,
         /// The constant torque value to apply over this range
         value: Value,
+        /// Optional haptic pattern to play when entering the angle range of this component
+        pattern_on_entry: Option<HapticPattern>,
     },
     /// An transition from a start value to an end value over a certain angle range with a specified easing function
     Eased {
@@ -42,6 +44,8 @@ pub enum CurveComponent {
         end: Value,
         /// The easing function to use for this transition
         easing: Easing,
+        /// Optional haptic pattern to play when entering the angle range of this component
+        pattern_on_entry: Option<HapticPattern>,
     },
 }
 
@@ -64,6 +68,7 @@ impl CurveComponent {
                 end,
                 width,
                 easing,
+                ..
             } => start + (end - start) * easing.at_normalized(angle / width),
         }
     }
@@ -217,6 +222,7 @@ impl<const N: usize> CurveBuilder<N> {
         self.add_component(CurveComponent::Const {
             width: I16F16::from_num(width),
             value: I16F16::from_num(value),
+            pattern_on_entry: None,
         })
     }
 
@@ -235,6 +241,7 @@ impl<const N: usize> CurveBuilder<N> {
             start: I16F16::from_num(start_value),
             end: I16F16::from_num(end_value),
             easing,
+            pattern_on_entry: None,
         })
     }
 
