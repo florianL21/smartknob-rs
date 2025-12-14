@@ -14,7 +14,7 @@ use haptic_lib::{AbsoluteCurve, CurveBuilder, HapticCurve, HapticPlayer, Easing,
 
 fn create_graph<const N: usize>(start: f32, curve: HapticCurve<N>, sample_step: f32) -> Chart {
     let absolut_curve = curve.make_absolute(I16F16::from_num(start));
-    let player = HapticPlayer::new(I16F16::from_num(start), &absolut_curve);
+    let mut player = HapticPlayer::new(I16F16::from_num(start), &absolut_curve);
     let width: f32 = player.curve_width().to_num();
     let start_angle = start - 1.0;
     let end_anlge = start_angle + width + 2.0;
@@ -54,10 +54,10 @@ fn create_graph<const N: usize>(start: f32, curve: HapticCurve<N>, sample_step: 
 
 fn main() {
     let test_curve = CurveBuilder::<6>::new()
-        .add_eased(0.3, 2.0, 0.0, Easing::Quadratic(EasingType::Out))
-        .add_eased(0.5, 0.0, -2.0, Easing::Quadratic(EasingType::In))
-        .add_eased(0.5, 2.0, 0.0, Easing::Quadratic(EasingType::Out))
-        .add_eased(0.3, 0.0, -2.0, Easing::Quadratic(EasingType::In))
+        .add_eased(0.3, 1.0, 0.0, Easing::Quadratic(EasingType::Out))
+        .add_eased(0.5, 0.0, -1.0, Easing::Quadratic(EasingType::In))
+        .add_eased(0.5, 1.0, 0.0, Easing::Quadratic(EasingType::Out))
+        .add_eased(0.3, 0.0, -1.0, Easing::Quadratic(EasingType::In))
         .build()
         .unwrap();
 

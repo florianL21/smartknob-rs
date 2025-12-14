@@ -419,14 +419,14 @@ pub async fn update_foc(
     let mut ticker = Ticker::every(Duration::from_millis(5));
 
     let test_curve = CurveBuilder::<6>::new()
-        .add_eased(0.3, 2.0, 0.0, Easing::Quadratic(EasingType::Out))
-        .add_eased(0.5, 0.0, -2.0, Easing::Quadratic(EasingType::In))
-        .add_eased(0.5, 2.0, 0.0, Easing::Quadratic(EasingType::Out))
-        .add_eased(0.3, 0.0, -2.0, Easing::Quadratic(EasingType::In))
+        .add_eased(0.3, 1.0, 0.0, Easing::Quadratic(EasingType::Out))
+        .add_eased(0.5, 0.0, -1.0, Easing::Quadratic(EasingType::In))
+        .add_eased(0.5, 1.0, 0.0, Easing::Quadratic(EasingType::Out))
+        .add_eased(0.3, 0.0, -1.0, Easing::Quadratic(EasingType::In))
         .build()
         .unwrap()
         .make_absolute(I16F16::ZERO);
-    let player = HapticPlayer::new(I16F16::ZERO, &test_curve);
+    let mut player = HapticPlayer::new(I16F16::ZERO, &test_curve).with_scale(1.0);
 
     loop {
         if let Ok(key) = KEY_PRESS_EVENTS.try_receive() {
