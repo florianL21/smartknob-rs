@@ -1,6 +1,9 @@
 #![no_std]
 
+mod easings;
+
 use core::slice::Iter;
+pub use easings::{Easing, EasingType};
 
 use fixed::types::I16F16;
 use heapless::Vec;
@@ -26,15 +29,23 @@ type Value = I16F16;
 /// There are special components for repeating sections of a curve.
 #[derive(Serialize, Deserialize, Debug)]
 enum CurveComponent {
+    /// A constant value over a certain angle range
     Const {
+        /// The width of this component in the curve
         width: Angle,
+        /// The constant torque value to apply over this range
         value: Value,
     },
-    /// Linear transition of a curve with a given start and end point
-    Linear {
+    /// An transition from a start value to an end value over a certain angle range with a specified easing function
+    Eased {
+        /// The width of this component in the curve
         width: Angle,
+        /// The torque value at the start of this component
         start: Value,
+        /// The torque value at the end of this component
         end: Value,
+        /// The easing function to use for this transition
+        easing: easings::Easing,
     },
 }
 
@@ -42,22 +53,26 @@ impl CurveComponent {
     fn width(&self) -> &Angle {
         match self {
             CurveComponent::Const { width, .. } => width,
-            CurveComponent::Linear { width, .. } => width,
-            _ => &Angle::ZERO,
+            CurveComponent::Eased { width, .. } => width,
         }
     }
 
     fn value(&self, angle: Angle) -> Value {
         match self {
             CurveComponent::Const { value, .. } => value.clone(),
-            CurveComponent::Linear { start, end, width } => ((end - start) / width) * angle + start,
+            CurveComponent::Eased {
+                start,
+                end,
+                width,
+                easing,
+            } => start + (end - start) * easing.at_normalized(angle / width),
         }
     }
 
     fn min(&self) -> &Value {
         match self {
             CurveComponent::Const { value, .. } => value,
-            CurveComponent::Linear { start, end, .. } => {
+            CurveComponent::Eased { start, end, .. } => {
                 if start < end {
                     start
                 } else {
@@ -70,7 +85,7 @@ impl CurveComponent {
     fn max(&self) -> &Value {
         match self {
             CurveComponent::Const { value, .. } => value,
-            CurveComponent::Linear { start, end, .. } => {
+            CurveComponent::Eased { start, end, .. } => {
                 if start > end {
                     start
                 } else {
@@ -83,14 +98,14 @@ impl CurveComponent {
     fn start(&self) -> &Value {
         match self {
             CurveComponent::Const { value, .. } => value,
-            CurveComponent::Linear { start, .. } => start,
+            CurveComponent::Eased { start, .. } => start,
         }
     }
 
     fn end(&self) -> &Value {
         match self {
             CurveComponent::Const { value, .. } => value,
-            CurveComponent::Linear { end, .. } => end,
+            CurveComponent::Eased { end, .. } => end,
         }
     }
 }
@@ -158,10 +173,29 @@ impl<const N: usize> CurveBuilder<N> {
     }
 
     pub fn add_linear(mut self, width: f32, start_value: f32, end_value: f32) -> Self {
-        if let Err(_) = self.components.push(CurveComponent::Linear {
+        if let Err(_) = self.components.push(CurveComponent::Eased {
             width: I16F16::from_num(width),
             start: I16F16::from_num(start_value),
             end: I16F16::from_num(end_value),
+            easing: easings::Easing::Linear,
+        }) {
+            self.capacity_left = false;
+        }
+        self
+    }
+
+    pub fn add_eased(
+        mut self,
+        width: f32,
+        start_value: f32,
+        end_value: f32,
+        easing: easings::Easing,
+    ) -> Self {
+        if let Err(_) = self.components.push(CurveComponent::Eased {
+            width: I16F16::from_num(width),
+            start: I16F16::from_num(start_value),
+            end: I16F16::from_num(end_value),
+            easing,
         }) {
             self.capacity_left = false;
         }

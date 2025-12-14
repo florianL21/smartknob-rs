@@ -23,7 +23,7 @@ use esp_hal::{
 use fixed::types::I16F16;
 use foc::pwm::Modulation;
 use foc::{park_clarke, pwm::SpaceVector};
-use haptic_lib::{CurveBuilder, HapticPlayer};
+use haptic_lib::{CurveBuilder, Easing, EasingType, HapticPlayer};
 use mt6701::{self, AngleSensorTrait};
 use postcard::experimental::max_size::MaxSize;
 use serde::{Deserialize, Serialize};
@@ -419,12 +419,10 @@ pub async fn update_foc(
     let mut ticker = Ticker::every(Duration::from_millis(5));
 
     let test_curve = CurveBuilder::<6>::new()
-        .add_linear(0.3, 2.0, 0.0)
-        .add_const(0.05, 0.0)
-        .add_linear(0.5, 0.0, -2.0)
-        .add_linear(0.5, 2.0, 0.0)
-        .add_const(0.05, 0.0)
-        .add_linear(0.3, 0.0, -2.0)
+        .add_eased(0.3, 2.0, 0.0, Easing::Quadratic(EasingType::Out))
+        .add_eased(0.5, 0.0, -2.0, Easing::Quadratic(EasingType::In))
+        .add_eased(0.5, 2.0, 0.0, Easing::Quadratic(EasingType::Out))
+        .add_eased(0.3, 0.0, -2.0, Easing::Quadratic(EasingType::In))
         .build()
         .unwrap()
         .make_absolute(I16F16::ZERO);

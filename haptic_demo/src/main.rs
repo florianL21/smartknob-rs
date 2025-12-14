@@ -10,7 +10,7 @@ use charming::{
     series::{Graph, Line},
 };
 use fixed::types::I16F16;
-use haptic_lib::{AbsoluteCurve, CurveBuilder, HapticCurve, HapticPlayer};
+use haptic_lib::{AbsoluteCurve, CurveBuilder, HapticCurve, HapticPlayer, Easing, EasingType};
 
 fn create_graph<const N: usize>(start: f32, curve: HapticCurve<N>, sample_step: f32) -> Chart {
     let absolut_curve = curve.make_absolute(I16F16::from_num(start));
@@ -54,12 +54,10 @@ fn create_graph<const N: usize>(start: f32, curve: HapticCurve<N>, sample_step: 
 
 fn main() {
     let test_curve = CurveBuilder::<6>::new()
-        .add_linear(0.3, 2.0, 0.0)
-        .add_const(0.05, 0.0)
-        .add_linear(0.5, 0.0, -2.0)
-        .add_linear(0.5, 2.0, 0.0)
-        .add_const(0.05, 0.0)
-        .add_linear(0.3, 0.0, -2.0)
+        .add_eased(0.3, 2.0, 0.0, Easing::Quadratic(EasingType::Out))
+        .add_eased(0.5, 0.0, -2.0, Easing::Quadratic(EasingType::In))
+        .add_eased(0.5, 2.0, 0.0, Easing::Quadratic(EasingType::Out))
+        .add_eased(0.3, 0.0, -2.0, Easing::Quadratic(EasingType::In))
         .build()
         .unwrap();
 
