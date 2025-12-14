@@ -1,5 +1,6 @@
 use alloc::format;
 use core::{convert::Infallible, fmt::Debug, str::Utf8Error};
+use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, channel::Channel};
 use embedded_cli::{cli::CliBuilder, Command, CommandGroup};
 use embedded_io_async::{Read, Write};
 use esp_backtrace as _;
@@ -16,6 +17,8 @@ use crate::{
     motor_control::MotorCommand,
     signals::{LOG_TOGGLES, MOTOR_COMMAND_SIGNAL, REQUEST_POWER_DOWN},
 };
+
+pub static KEY_PRESS_EVENTS: Channel<CriticalSectionRawMutex, u8, 10> = Channel::new();
 
 #[derive(Error, Debug)]
 pub enum HandlerError {
@@ -304,6 +307,7 @@ pub async fn menu_handler(
         // if the interface is not open open it and skip processing the CLI
         if context.interface_open == false {
             if buf[0] != 13 {
+                KEY_PRESS_EVENTS.send(buf[0]).await;
                 continue;
             }
             context.interface_open = true;

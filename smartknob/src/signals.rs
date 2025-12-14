@@ -1,3 +1,4 @@
+pub use crate::cli::KEY_PRESS_EVENTS;
 pub use crate::config::LOG_TOGGLES;
 pub use crate::display::DISPLAY_BRIGHTNESS_SIGNAL;
 pub use crate::knob_tilt::{KNOB_EVENTS_CHANNEL, KNOB_TILT_ANGLE, KNOB_TILT_MAGNITUDE};

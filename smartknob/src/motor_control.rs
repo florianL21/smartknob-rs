@@ -32,7 +32,10 @@ use embassy_embedded_hal::shared_bus::asynch::spi::SpiDevice;
 use log::{error, info};
 use thiserror::Error;
 
-use crate::flash::{FlashError, FlashKeys, FlashType};
+use crate::{
+    cli::KEY_PRESS_EVENTS,
+    flash::{FlashError, FlashKeys, FlashType},
+};
 
 pub type SpiBus1 = Mutex<NoopRawMutex, esp_hal::spi::master::SpiDmaBus<'static, esp_hal::Async>>;
 
@@ -127,7 +130,7 @@ enum AlignmentState {
     Failed,
 }
 
-#[derive(Debug, PartialEq, Deserialize, Serialize)]
+#[derive(Debug, PartialEq, Deserialize, Serialize, Clone)]
 pub struct MotorAlignment {
     sensor_direction: SensorDirection,
     electric_zero_angle: I16F16,
@@ -141,6 +144,22 @@ impl MotorAlignment {
     fn electrical_angle(&self, mechanical_angle: I16F16) -> I16F16 {
         self.sensor_direction
             .electrical_angle(mechanical_angle, self.electric_zero_angle)
+    }
+
+    async fn save_to_flash(
+        &self,
+        flash: &'static FlashType<'static>,
+    ) -> Result<(), AlignmentError> {
+        let mut wt = flash.write_transaction().await;
+        let mut buffer = [0u8; MotorAlignment::POSTCARD_MAX_SIZE];
+        postcard::to_slice(&self, &mut buffer)
+            .map_err(|_| AlignmentError::PostcardSerializationError)?;
+
+        wt.write(&FlashKeys::MotorAlignment.key(), &buffer)
+            .await
+            .map_err(FlashError::from)?;
+        wt.commit().await.map_err(FlashError::from)?;
+        Ok(())
     }
 }
 
@@ -274,19 +293,12 @@ impl AlignmentState {
                     "Alignment finished. Electrical zero angle is: {}",
                     alignment_data.electric_zero_angle
                 );
-                // Save alignment data to flash
-                let mut wt = flash.write_transaction().await;
-                let mut buffer = [0u8; MotorAlignment::POSTCARD_MAX_SIZE];
-                postcard::to_slice(&alignment_data, &mut buffer)
-                    .map_err(|_| AlignmentError::PostcardSerializationError)?;
 
-                // change own state now because if there is a flash error we can still continue to operate
-                *self = AlignmentState::IsAligned(alignment_data);
+                // Set the state first as operation can continue even if saving to flash fails
+                *self = AlignmentState::IsAligned(alignment_data.clone());
 
-                wt.write(&FlashKeys::MotorAlignment.key(), &buffer)
-                    .await
-                    .map_err(FlashError::from)?;
-                wt.commit().await.map_err(FlashError::from)?;
+                // Save alignment data to flash so it can be restored on next boot
+                alignment_data.save_to_flash(flash).await?;
 
                 Ok(Some([0; 3]))
             }
@@ -419,6 +431,25 @@ pub async fn update_foc(
     let player = HapticPlayer::new(I16F16::ZERO, &test_curve);
 
     loop {
+        if let Ok(key) = KEY_PRESS_EVENTS.try_receive() {
+            if let AlignmentState::IsAligned(ref mut alignment) = alignment_state {
+                match key {
+                    b'+' => {
+                        alignment.electric_zero_angle += I16F16::from_num(0.01);
+                        info!("{alignment:?}");
+                    }
+                    b'-' => {
+                        alignment.electric_zero_angle -= I16F16::from_num(0.01);
+                        info!("{alignment:?}");
+                    }
+                    b'w' => {
+                        let res = alignment.save_to_flash(flash).await;
+                        info!("Save to flash result: {res:?}");
+                    }
+                    _ => { /* ignore other keys */ }
+                }
+            }
+        }
         if encoder
             .update(last_encoder_update.elapsed().into())
             .await
