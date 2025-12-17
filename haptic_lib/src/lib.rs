@@ -11,7 +11,7 @@ pub use easings::{Easing, EasingType};
 pub use patterns::HapticPattern;
 pub use player::HapticPlayer;
 
-pub use curve::{AbsoluteCurve, CurveBuilder, HapticCurve};
+pub use curve::{AbsoluteCurve, CurveBuilder, CurveError, HapticCurve};
 
 pub type Angle = I16F16;
 pub type Value = I16F16;

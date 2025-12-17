@@ -62,7 +62,7 @@ impl CurveComponent {
     /// `angle` must be in the range of 0 to width of this component
     pub(crate) fn value(&self, angle: Angle) -> Value {
         match self {
-            CurveComponent::Const { value, .. } => value.clone(),
+            CurveComponent::Const { value, .. } => *value,
             CurveComponent::Eased {
                 start,
                 end,
@@ -101,6 +101,17 @@ impl CurveComponent {
             }
         }
     }
+
+    pub(crate) fn pattern(&self) -> &Option<HapticPattern> {
+        match self {
+            CurveComponent::Const {
+                pattern_on_entry, ..
+            } => pattern_on_entry,
+            CurveComponent::Eased {
+                pattern_on_entry, ..
+            } => pattern_on_entry,
+        }
+    }
 }
 
 /// Curves always start at negative infinity. They always go left to right (increasing angle values).
@@ -119,14 +130,8 @@ impl<const N: usize> HapticCurve<N> {
 
     /// Convert this curve into an absolute curve starting at a given absolute angle
     pub fn make_absolute(self, start_angle: Angle) -> AbsoluteCurve<N> {
-        let start_value = self
-            .components
-            .first()
-            .map_or(Angle::ZERO, |c| c.start().clone());
-        let end_value = self
-            .components
-            .last()
-            .map_or(Angle::ZERO, |c| c.end().clone());
+        let start_value = self.components.first().map_or(Angle::ZERO, |c| *c.start());
+        let end_value = self.components.last().map_or(Angle::ZERO, |c| *c.end());
         AbsoluteCurve {
             curve: self,
             start_value,
@@ -178,7 +183,7 @@ impl<'a> Iterator for CurveIter<'a> {
         self.curr_angle = end_angle;
         Some(ComponentView {
             component: current,
-            start_angle: start_angle,
+            start_angle,
             end_angle,
         })
     }
@@ -191,14 +196,20 @@ pub struct CurveBuilder<const N: usize> {
     range_error: Option<CurveError>,
 }
 
-impl<const N: usize> CurveBuilder<N> {
-    /// Start constructing a new haptic curve
-    pub fn new() -> Self {
+impl<const N: usize> Default for CurveBuilder<N> {
+    fn default() -> Self {
         CurveBuilder {
             components: Vec::new(),
             over_capacity: 0,
             range_error: None,
         }
+    }
+}
+
+impl<const N: usize> CurveBuilder<N> {
+    /// Start constructing a new haptic curve
+    pub fn new() -> Self {
+        Self::default()
     }
 
     fn add_component(mut self, component: CurveComponent) -> Self {
@@ -210,7 +221,7 @@ impl<const N: usize> CurveBuilder<N> {
             self.range_error = Some(CurveError::ValueOutOfRange(component));
             return self;
         }
-        if let Err(_) = self.components.push(component) {
+        if self.components.push(component).is_err() {
             self.over_capacity = 1;
         }
         self
@@ -223,6 +234,27 @@ impl<const N: usize> CurveBuilder<N> {
             width: I16F16::from_num(width),
             value: I16F16::from_num(value),
             pattern_on_entry: None,
+        })
+    }
+
+    /// Add a segment to the curve which plays a haptic pattern upon entry, the value otherwise remains constant.
+    /// `value` must be in the range of -1.0 to 1.0
+    pub fn add_pattern(
+        self,
+        width: f32,
+        value: f32,
+        pattern: &[f32],
+        repeat: u16,
+        multiply: u16,
+    ) -> Self {
+        self.add_component(CurveComponent::Const {
+            width: I16F16::from_num(width),
+            value: I16F16::from_num(value),
+            pattern_on_entry: Some(HapticPattern::new(
+                Vec::from_iter(pattern.iter().map(|v| Value::from_num(*v))),
+                repeat,
+                multiply,
+            )),
         })
     }
 
@@ -259,17 +291,5 @@ impl<const N: usize> CurveBuilder<N> {
         Ok(HapticCurve {
             components: self.components,
         })
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    extern crate std;
-
-    #[test]
-    fn test_empty_curve() {
-        let test_curve = CurveBuilder::<5>::new().build();
-        assert!(matches!(test_curve, Err(CurveError::EmptyCurve)));
     }
 }

@@ -1,16 +1,16 @@
 extern crate std;
 
 use charming::{
-    Chart, HtmlRenderer,
     component::{
         Axis, DataZoom, DataZoomType, Feature, Legend, Restore, SaveAsImage, Title, Toolbox,
         ToolboxDataZoom,
     },
     element::{AxisLine, AxisType, ItemStyle, Tooltip},
     series::{Graph, Line},
+    Chart, HtmlRenderer,
 };
 use fixed::types::I16F16;
-use haptic_lib::{AbsoluteCurve, CurveBuilder, HapticCurve, HapticPlayer, Easing, EasingType};
+use haptic_lib::{AbsoluteCurve, CurveBuilder, Easing, EasingType, HapticCurve, HapticPlayer};
 
 fn create_graph<const N: usize>(start: f32, curve: HapticCurve<N>, sample_step: f32) -> Chart {
     let absolut_curve = curve.make_absolute(I16F16::from_num(start));

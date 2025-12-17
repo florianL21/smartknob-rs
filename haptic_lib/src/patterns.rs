@@ -1,20 +1,21 @@
-use core::{
-    iter::{self, FlatMap, Repeat, Take},
-    slice::Iter,
-};
+use core::iter;
 
 use fixed::types::I16F16;
 use heapless::Vec;
 use serde::{Deserialize, Serialize};
 
-const MAX_PATTERN_COMMANDS: usize = 6;
+pub const MAX_PATTERN_COMMANDS: usize = 6;
 
 type CommandVec = Vec<I16F16, MAX_PATTERN_COMMANDS>;
 
+/// Definition of a haptic pattern. This returns a fixed sequence of values when played back
 #[derive(Serialize, Deserialize, Debug)]
 pub struct HapticPattern {
+    /// Fixed values to return
     commands: CommandVec,
+    /// How often to repeat the given pattern before the pattern is considered complete
     repeat: u16,
+    /// How many times each command should be repeated before moving to the next command
     multiply: u16,
 }
 
@@ -33,19 +34,13 @@ impl HapticPattern {
         }
     }
 
-    // pub(crate) fn as_iter(
-    //     &self,
-    // ) -> Take<
-    //     Repeat<
-    //         FlatMap<Iter<'_, f32>, Take<Repeat<f32>>, impl FnMut(&f32) -> Take<Repeat<f32>> + '_>,
-    //     >,
-    // > {
-    //     let num = (self.repeat * self.multiply) as usize;
-    //     iter::repeat(
-    //         self.commands
-    //             .iter()
-    //             .flat_map(|item| iter::repeat(item.clone()).take(self.multiply as usize)),
-    //     )
-    //     .take(num)
-    // }
+    pub(crate) fn as_iter(&self) -> impl Iterator<Item = &I16F16> {
+        let num = (self.repeat * self.multiply) as usize;
+        let mult = self.multiply as usize;
+        self.commands
+            .iter()
+            .cycle()
+            .flat_map(move |item| iter::repeat_n(item, mult))
+            .take(num)
+    }
 }
