@@ -41,7 +41,7 @@ foc = "0.3.0"
 log = "0.4.28"
 smart-leds = "0.4.0"
 static_cell = { version = "2.1.1", features = ["nightly"] }
-mt6701 = { git = "https://github.com/florianL21/mt6701.git", rev = "132702092cf8202ade63943d3ab7fef9f5ac750f" }
+mt6701 = { git = "https://github.com/florianL21/mt6701.git", rev = "6c01fab" }
 ldc1x1x = { path = "../ldc1x1x" }
 nalgebra = { version = "0.34.1", default-features = false, features = [
   "macros",

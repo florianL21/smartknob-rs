@@ -54,10 +54,10 @@ fn create_graph<const N: usize>(start: f32, curve: HapticCurve<N>, sample_step: 
 
 fn main() {
     let test_curve = CurveBuilder::<6>::new()
-        .add_eased(0.3, 1.0, 0.0, Easing::Quadratic(EasingType::Out))
-        .add_eased(0.5, 0.0, -1.0, Easing::Quadratic(EasingType::In))
-        .add_eased(0.5, 1.0, 0.0, Easing::Quadratic(EasingType::Out))
-        .add_eased(0.3, 0.0, -1.0, Easing::Quadratic(EasingType::In))
+        .add_eased(0.3, 1.0, 0.0, Easing::Sinusoidal(EasingType::Out))
+        .add_eased(0.5, 0.0, -1.0, Easing::Sinusoidal(EasingType::In))
+        .add_eased(0.5, 1.0, 0.0, Easing::Sinusoidal(EasingType::Out))
+        .add_eased(0.3, 0.0, -1.0, Easing::Sinusoidal(EasingType::In))
         .build()
         .unwrap();
 

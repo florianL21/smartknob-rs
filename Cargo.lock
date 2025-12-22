@@ -3499,9 +3499,10 @@ dependencies = [
 [[package]]
 name = "mt6701"
 version = "0.2.6"
-source = "git+https://github.com/florianL21/mt6701.git?rev=132702092cf8202ade63943d3ab7fef9f5ac750f#132702092cf8202ade63943d3ab7fef9f5ac750f"
+source = "git+https://github.com/florianL21/mt6701.git?rev=6c01fab#6c01fab54134b3cd643949cea78e5dfd622feedd"
 dependencies = [
  "embedded-hal-async",
+ "fixed",
  "libm",
 ]
 

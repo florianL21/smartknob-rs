@@ -1,5 +1,3 @@
-use core::{f32, f64};
-
 use atomic_float::AtomicF32;
 use embassy_sync::{
     blocking_mutex::raw::{CriticalSectionRawMutex, NoopRawMutex},
@@ -24,7 +22,7 @@ use fixed::types::I16F16;
 use foc::pwm::Modulation;
 use foc::{park_clarke, pwm::SpaceVector};
 use haptic_lib::{CurveBuilder, Easing, EasingType, HapticPlayer};
-use mt6701::{self, AngleSensorTrait};
+use mt6701::{self, AbsolutePositionEncoder};
 use postcard::experimental::max_size::MaxSize;
 use serde::{Deserialize, Serialize};
 
@@ -362,7 +360,6 @@ pub async fn update_foc(
     let spi_bus: Mutex<NoopRawMutex, _> = Mutex::new(spi_bus);
     let spi_device = SpiDevice::new(&spi_bus, mag_csn);
     let mut encoder = mt6701::MT6701Spi::new(spi_device);
-    let mut last_encoder_update = Instant::now();
     info!("encoder init done!");
 
     let clock_cfg = PeripheralClockConfig::with_frequency(Rate::from_mhz(32)).unwrap();
@@ -415,14 +412,14 @@ pub async fn update_foc(
         .unwrap();
     mcpwm.timer0.start(timer_clock_cfg);
 
-    let mut encoder_pos: f64 = 0.0;
+    let mut encoder_pos: I16F16 = I16F16::ZERO;
     let mut ticker = Ticker::every(Duration::from_millis(5));
 
     let test_curve = CurveBuilder::<6>::new()
-        .add_eased(0.3, 1.0, 0.0, Easing::Quadratic(EasingType::Out))
-        .add_eased(0.5, 0.0, -1.0, Easing::Quadratic(EasingType::In))
-        .add_eased(0.5, 1.0, 0.0, Easing::Quadratic(EasingType::Out))
-        .add_eased(0.3, 0.0, -1.0, Easing::Quadratic(EasingType::In))
+        .add_eased(0.3, 1.0, 0.0, Easing::Cubic(EasingType::Out))
+        .add_eased(0.5, 0.0, -1.0, Easing::Cubic(EasingType::In))
+        .add_eased(0.5, 1.0, 0.0, Easing::Cubic(EasingType::Out))
+        .add_eased(0.3, 0.0, -1.0, Easing::Cubic(EasingType::In))
         .build()
         .unwrap()
         .make_absolute(I16F16::ZERO);
@@ -448,14 +445,9 @@ pub async fn update_foc(
                 }
             }
         }
-        if encoder
-            .update(last_encoder_update.elapsed().into())
-            .await
-            .is_ok()
-        {
-            last_encoder_update = Instant::now();
-            encoder_pos = encoder.get_position() / 2.0;
-            ENCODER_POSITION.store(encoder_pos as f32, core::sync::atomic::Ordering::Relaxed);
+        if let Ok(pos) = encoder.get_position().await {
+            encoder_pos = pos;
+            ENCODER_POSITION.store(encoder_pos.to_num(), core::sync::atomic::Ordering::Relaxed);
         }
         let encoder_pos = I16F16::from_num(encoder_pos);
         if MOTOR_COMMAND_SIGNAL.signaled() {
