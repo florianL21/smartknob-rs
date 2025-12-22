@@ -1,3 +1,5 @@
+mod encoder;
+
 use atomic_float::AtomicF32;
 use embassy_sync::{
     blocking_mutex::raw::{CriticalSectionRawMutex, NoopRawMutex},
@@ -5,6 +7,7 @@ use embassy_sync::{
     signal::Signal,
 };
 use embassy_time::{Duration, Instant, Ticker, Timer};
+use encoder::{AbsolutePositionEncoder, MT6701Spi};
 use esp_backtrace as _;
 use esp_hal::{
     dma::{DmaRxBuf, DmaTxBuf},
@@ -18,11 +21,11 @@ use esp_hal::{
     spi,
     time::Rate,
 };
+use esp_println::println;
 use fixed::types::I16F16;
 use foc::pwm::Modulation;
 use foc::{park_clarke, pwm::SpaceVector};
 use haptic_lib::{CurveBuilder, Easing, EasingType, HapticPlayer};
-use mt6701::{self, AbsolutePositionEncoder};
 use postcard::experimental::max_size::MaxSize;
 use serde::{Deserialize, Serialize};
 
@@ -103,26 +106,24 @@ enum AlignmentError {
 #[derive(PartialEq, Debug)]
 enum AlignmentState {
     NeedsAlignment,
-    AlignForward {
-        counter: u16,
-    },
-    AlignBackward {
-        counter: u16,
-        mid_angle: I16F16,
-    },
-    CalculateDirection {
-        mid_angle: I16F16,
-        end_angle: I16F16,
-    },
-    PrepareMeasureAngleOffset {
-        sensor_direction: SensorDirection,
-    },
-    WaitForMotorToSettle {
-        sensor_direction: SensorDirection,
+    AlignUV,
+    SettleUV {
         start_time: Instant,
     },
-    MeasureAngleOffset {
-        sensor_direction: SensorDirection,
+    MeasureUV,
+    AlignUW {
+        uv_angle: I16F16,
+    },
+    SettleUW {
+        start_time: Instant,
+        uv_angle: I16F16,
+    },
+    MeasureUW {
+        uv_angle: I16F16,
+    },
+    Calc {
+        uv_angle: I16F16,
+        uw_angle: I16F16,
     },
     IsAligned(MotorAlignment),
     Failed,
@@ -174,7 +175,7 @@ impl AlignmentState {
 
     /// Initiate the alignment procedure
     fn start_alignment(&mut self) {
-        *self = AlignmentState::AlignForward { counter: 0 };
+        *self = AlignmentState::AlignUV;
     }
 
     /// Runs the alignment procedure.
@@ -187,118 +188,59 @@ impl AlignmentState {
         flash: &'static FlashType<'static>,
     ) -> Result<Option<[u16; 3]>, AlignmentError> {
         match self {
-            AlignmentState::AlignForward { counter } => {
-                if *counter >= 500 {
-                    info!("Captured mid angle: {}", encoder_position);
-                    *self = AlignmentState::AlignBackward {
-                        counter: 500,
-                        mid_angle: encoder_position,
-                    };
-                    Ok(None)
-                } else {
-                    // We can wait here to make the movement to the motor slow and hopefully not miss a step.
-                    // Waiting before is acceptable here because we don't care for super accurate encoder values yet
-                    Timer::after_millis(2).await;
-                    let angle =
-                        _3PI_2 + I16F16::TAU * I16F16::from_num(*counter) / I16F16::from_num(500.0);
-                    let pwm = get_phase_voltage(ALIGNMENT_VOLTAGE, I16F16::ZERO, angle);
-                    *self = AlignmentState::AlignForward {
-                        counter: *counter + 1,
-                    };
-                    Ok(Some(pwm))
-                }
-            }
-            AlignmentState::AlignBackward { counter, mid_angle } => {
-                if *counter == 0 {
-                    info!("Captured end angle: {}", encoder_position);
-                    *self = AlignmentState::CalculateDirection {
-                        mid_angle: *mid_angle,
-                        end_angle: encoder_position,
-                    };
-                    Ok(None)
-                } else {
-                    // We can wait here to make the movement to the motor slow and hopefully not miss a step.
-                    // Waiting before is acceptable here because we don't care for super accurate encoder values yet
-                    Timer::after_millis(2).await;
-                    let angle =
-                        _3PI_2 + I16F16::TAU * I16F16::from_num(*counter) / I16F16::from_num(500.0);
-                    let pwm = get_phase_voltage(ALIGNMENT_VOLTAGE, I16F16::ZERO, angle);
-                    *self = AlignmentState::AlignBackward {
-                        counter: *counter - 1,
-                        mid_angle: *mid_angle,
-                    };
-                    Ok(Some(pwm))
-                }
-            }
-            AlignmentState::CalculateDirection {
-                mid_angle,
-                end_angle,
-            } => {
-                let moved = (*mid_angle - *end_angle).abs();
-                if moved < MIN_ANGLE_DETECT_MOVEMENT {
-                    *self = AlignmentState::Failed;
-                    return Err(AlignmentError::NoMovementDetected);
-                }
-                let sensor_direction = if mid_angle < end_angle {
-                    SensorDirection::CCW
-                } else {
-                    SensorDirection::CW
-                };
-                info!("Mid angle: {}, End angle: {}", mid_angle, end_angle);
-                // 0.5f is arbitrary number it can be lower or higher!
-                // Something here seems fishy because with 0.5 it never passes.
-                // Increased to 0.9 for now, will need to check back at a later time
-                if (moved * I16F16::from_num(MOTOR_POLE_PAIRS) - I16F16::TAU).abs()
-                    > I16F16::from_num(0.8)
-                {
-                    let estimated_pole_pairs = (I16F16::TAU / moved).to_num();
-                    *self = AlignmentState::Failed;
-                    return Err(AlignmentError::PolePairMismatch(estimated_pole_pairs));
-                }
-                *self = AlignmentState::PrepareMeasureAngleOffset { sensor_direction };
-                Ok(None)
-            }
-            AlignmentState::PrepareMeasureAngleOffset { sensor_direction } => {
-                *self = AlignmentState::WaitForMotorToSettle {
-                    sensor_direction: *sensor_direction,
+            AlignmentState::AlignUV => {
+                info!("UV alignment");
+                *self = AlignmentState::SettleUV {
                     start_time: Instant::now(),
                 };
-                Ok(Some(get_phase_voltage(
-                    ALIGNMENT_VOLTAGE,
-                    I16F16::ZERO,
-                    _3PI_2,
-                )))
+                Ok(Some([400, 400, 0]))
             }
-            AlignmentState::WaitForMotorToSettle {
-                sensor_direction,
+            AlignmentState::SettleUV { start_time } => {
+                if start_time.elapsed().as_millis() > 300 {
+                    *self = AlignmentState::MeasureUV;
+                }
+                Ok(None)
+            }
+            AlignmentState::MeasureUV => {
+                *self = AlignmentState::AlignUW {
+                    uv_angle: encoder_position,
+                };
+                Ok(None)
+            }
+            AlignmentState::AlignUW { uv_angle } => {
+                info!("UW alignment");
+                *self = AlignmentState::SettleUW {
+                    start_time: Instant::now(),
+                    uv_angle: *uv_angle,
+                };
+                Ok(Some([0, 400, 400]))
+            }
+            AlignmentState::SettleUW {
                 start_time,
+                uv_angle,
             } => {
-                if start_time.elapsed().as_millis() > 700 {
-                    *self = AlignmentState::MeasureAngleOffset {
-                        sensor_direction: *sensor_direction,
+                if start_time.elapsed().as_millis() > 300 {
+                    *self = AlignmentState::MeasureUW {
+                        uv_angle: *uv_angle,
                     };
                 }
                 Ok(None)
             }
-            AlignmentState::MeasureAngleOffset { sensor_direction } => {
-                let alignment_data = MotorAlignment {
-                    sensor_direction: *sensor_direction,
-                    electric_zero_angle: normalize_angle(
-                        sensor_direction.electrical_angle(encoder_position, I16F16::ZERO),
-                    ),
+            AlignmentState::MeasureUW { uv_angle } => {
+                *self = AlignmentState::Calc {
+                    uv_angle: *uv_angle,
+                    uw_angle: encoder_position,
                 };
-                info!(
-                    "Alignment finished. Electrical zero angle is: {}",
-                    alignment_data.electric_zero_angle
-                );
-
-                // Set the state first as operation can continue even if saving to flash fails
-                *self = AlignmentState::IsAligned(alignment_data.clone());
-
-                // Save alignment data to flash so it can be restored on next boot
-                alignment_data.save_to_flash(flash).await?;
-
                 Ok(Some([0; 3]))
+            }
+            AlignmentState::Calc { uv_angle, uw_angle } => {
+                let avg = (*uv_angle + *uw_angle) / 2;
+                info!("uv: {uv_angle}, uw: {uw_angle}, avg: {avg}");
+                *self = AlignmentState::IsAligned(MotorAlignment {
+                    sensor_direction: SensorDirection::CW,
+                    electric_zero_angle: avg,
+                });
+                Ok(None)
             }
             AlignmentState::IsAligned { .. } => Ok(None),
             AlignmentState::NeedsAlignment => Ok(None),
@@ -359,7 +301,7 @@ pub async fn update_foc(
     let spi_bus = spi_bus.with_buffers(dma_rx_buf, dma_tx_buf).into_async();
     let spi_bus: Mutex<NoopRawMutex, _> = Mutex::new(spi_bus);
     let spi_device = SpiDevice::new(&spi_bus, mag_csn);
-    let mut encoder = mt6701::MT6701Spi::new(spi_device);
+    let mut encoder = MT6701Spi::new(spi_device);
     info!("encoder init done!");
 
     let clock_cfg = PeripheralClockConfig::with_frequency(Rate::from_mhz(32)).unwrap();
@@ -423,8 +365,9 @@ pub async fn update_foc(
         .build()
         .unwrap()
         .make_absolute(I16F16::ZERO);
-    let mut player = HapticPlayer::new(I16F16::ZERO, &test_curve).with_scale(1.0);
+    let mut player = HapticPlayer::new(I16F16::ZERO, &test_curve).with_scale(2.0);
 
+    let mut set_angle = I16F16::ZERO;
     loop {
         if let Ok(key) = KEY_PRESS_EVENTS.try_receive() {
             if let AlignmentState::IsAligned(ref mut alignment) = alignment_state {
@@ -445,8 +388,8 @@ pub async fn update_foc(
                 }
             }
         }
-        if let Ok(pos) = encoder.get_position().await {
-            encoder_pos = pos;
+        if let Ok(meas) = encoder.update().await {
+            encoder_pos = meas.position;
             ENCODER_POSITION.store(encoder_pos.to_num(), core::sync::atomic::Ordering::Relaxed);
         }
         let encoder_pos = I16F16::from_num(encoder_pos);
@@ -474,16 +417,32 @@ pub async fn update_foc(
         }
 
         if let Some(angle) = alignment_state.get_aligned_angle(encoder_pos) {
-            let pwm = get_phase_voltage(player.play(encoder_pos), I16F16::ZERO, angle);
-            if pwm[0] == pwm[1] && pwm[2] == pwm[1] {
-                pwm_u.set_timestamp_a(0);
-                pwm_v.set_timestamp_a(0);
-                pwm_w.set_timestamp_a(0);
-            } else {
-                pwm_u.set_timestamp_a(pwm[0]);
-                pwm_v.set_timestamp_a(pwm[1]);
-                pwm_w.set_timestamp_a(pwm[2]);
+            // info!("pos: {encoder_pos}");
+            let mut ang = encoder_pos;
+            while ang >= I16F16::TAU {
+                ang -= I16F16::TAU;
             }
+
+            println!(">angle:{}:{}|xy", set_angle / 6, ang);
+            set_angle += I16F16::from_num(0.04);
+            if set_angle >= 6 * I16F16::TAU {
+                set_angle -= 6 * I16F16::TAU;
+            }
+            let pwm = get_phase_voltage(I16F16::ONE, I16F16::ZERO, set_angle);
+            pwm_u.set_timestamp_a(pwm[0]);
+            pwm_v.set_timestamp_a(pwm[1]);
+            pwm_w.set_timestamp_a(pwm[2]);
+
+            // let pwm = get_phase_voltage(player.play(encoder_pos), I16F16::ZERO, angle);
+            // if pwm[0] == pwm[1] && pwm[2] == pwm[1] {
+            //     pwm_u.set_timestamp_a(0);
+            //     pwm_v.set_timestamp_a(0);
+            //     pwm_w.set_timestamp_a(0);
+            // } else {
+            //     pwm_u.set_timestamp_a(pwm[0]);
+            //     pwm_v.set_timestamp_a(pwm[1]);
+            //     pwm_w.set_timestamp_a(pwm[2]);
+            // }
             ticker.next().await;
         }
     }

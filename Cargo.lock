@@ -5118,6 +5118,7 @@ dependencies = [
  "embedded-cli",
  "embedded-graphics",
  "embedded-graphics-core",
+ "embedded-hal-async",
  "embedded-io-async 0.7.0",
  "embedded-storage",
  "esp-alloc",

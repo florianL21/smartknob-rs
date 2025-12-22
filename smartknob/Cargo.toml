@@ -72,6 +72,7 @@ slint = { version = "1.14.1", default-features = false, features = [
 ] }
 embedded-graphics-core = "0.4.0"
 haptic_lib = { path = "../haptic_lib" }
+embedded-hal-async = "1.0.0"
 
 
 [profile.dev]
