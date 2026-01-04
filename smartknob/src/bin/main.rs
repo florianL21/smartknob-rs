@@ -42,7 +42,7 @@ use smartknob_rs::{
     display::{spawn_display_tasks, DisplayHandles},
     flash::{FlashHandler, FlashType, RestoredState},
     knob_tilt::{read_ldc_task, KnobTiltEvent},
-    motor_control::{update_foc, Pins6PWM},
+    motor_control::{motor_driver::mcpwm::Pins6PWM, update_foc},
     shutdown::shutdown_handler,
     signals::{ENCODER_POSITION, LOG_TOGGLES},
 };
@@ -256,14 +256,14 @@ async fn main(spawner: Spawner) {
                 .with_dma(peripherals.DMA_CH0);
 
                 let mag_cs = Output::new(pin_mag_csn, Level::Low, OutputConfig::default());
-                let pwm_pins = Pins6PWM {
-                    uh: pin_tmc_uh.into(),
-                    ul: pin_tmc_ul.into(),
-                    vh: pin_tmc_vh.into(),
-                    vl: pin_tmc_vl.into(),
-                    wh: pin_tmc_wh.into(),
-                    wl: pin_tmc_wl.into(),
-                };
+                let pwm_pins = Pins6PWM::new(
+                    pin_tmc_uh.into(),
+                    pin_tmc_ul.into(),
+                    pin_tmc_vh.into(),
+                    pin_tmc_vl.into(),
+                    pin_tmc_wh.into(),
+                    pin_tmc_wl.into(),
+                );
 
                 spawner.must_spawn(update_foc(
                     spi_bus,

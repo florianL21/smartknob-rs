@@ -55,54 +55,55 @@ impl EncoderLinearityMeasurement {
         &mut self,
         encoder: &mut E,
     ) -> Result<Option<I16F16>, E::Error> {
-        match self {
-            EncoderLinearityMeasurement::Undetermined => {
-                *self = EncoderLinearityMeasurement::WaitForZeroSettle;
-                Ok(Some(I16F16::ZERO))
-            }
-            EncoderLinearityMeasurement::WaitForZeroSettle => {
-                Timer::after_millis(300).await;
-                *self = EncoderLinearityMeasurement::ZeroSearch {
-                    current_angle: I16F16::ZERO,
-                    last_measurement: encoder.update().await?,
-                    search_direction: SearchDirection::Undetermined,
-                };
-                Ok(Some(I16F16::ZERO))
-            }
-            EncoderLinearityMeasurement::ZeroSearch {
-                current_angle,
-                last_measurement,
-                search_direction,
-            } => {
-                let new_measurement = encoder.update().await?;
-                if new_measurement.angle < ZERO_TOLERANCE {
-                    *self = EncoderLinearityMeasurement::KnownOffset(*current_angle);
-                }
-                match search_direction {
-                    SearchDirection::Undetermined => {
-                        let new_angle = current_angle + ROUGH_STEP_SIZE;
-                        *self = EncoderLinearityMeasurement::ZeroSearch {
-                            current_angle: new_angle,
-                            last_measurement: new_measurement,
-                            search_direction: SearchDirection::TryFW,
-                        };
-                        return Ok(Some(new_angle));
-                    }
-                    SearchDirection::TryFW => {
-                        let dir = if new_measurement > *last_angle {
-                            SearchDirection::FW
-                        } else {
-                            SearchDirection::BW
-                        };
-                        *self = EncoderLinearityMeasurement::ZeroSearch {
-                            current_angle: new_measurement,
-                            last_angle: new_measurement,
-                            search_direction: SearchDirection::BW,
-                        };
-                    }
-                }
-                Ok(None)
-            }
-        }
+        // match self {
+        //     EncoderLinearityMeasurement::Undetermined => {
+        //         *self = EncoderLinearityMeasurement::WaitForZeroSettle;
+        //         Ok(Some(I16F16::ZERO))
+        //     }
+        //     EncoderLinearityMeasurement::WaitForZeroSettle => {
+        //         Timer::after_millis(300).await;
+        //         *self = EncoderLinearityMeasurement::ZeroSearch {
+        //             current_angle: I16F16::ZERO,
+        //             last_measurement: encoder.update().await?,
+        //             search_direction: SearchDirection::Undetermined,
+        //         };
+        //         Ok(Some(I16F16::ZERO))
+        //     }
+        //     EncoderLinearityMeasurement::ZeroSearch {
+        //         current_angle,
+        //         last_measurement,
+        //         search_direction,
+        //     } => {
+        //         let new_measurement = encoder.update().await?;
+        //         if new_measurement.angle < ZERO_TOLERANCE {
+        //             *self = EncoderLinearityMeasurement::KnownOffset(*current_angle);
+        //         }
+        //         match search_direction {
+        //             SearchDirection::Undetermined => {
+        //                 let new_angle = current_angle + ROUGH_STEP_SIZE;
+        //                 *self = EncoderLinearityMeasurement::ZeroSearch {
+        //                     current_angle: new_angle,
+        //                     last_measurement: new_measurement,
+        //                     search_direction: SearchDirection::TryFW,
+        //                 };
+        //                 return Ok(Some(new_angle));
+        //             }
+        //             SearchDirection::TryFW => {
+        //                 let dir = if new_measurement > *last_angle {
+        //                     SearchDirection::FW
+        //                 } else {
+        //                     SearchDirection::BW
+        //                 };
+        //                 *self = EncoderLinearityMeasurement::ZeroSearch {
+        //                     current_angle: new_measurement,
+        //                     last_angle: new_measurement,
+        //                     search_direction: SearchDirection::BW,
+        //                 };
+        //             }
+        //         }
+        //         Ok(None)
+        //     }
+        // }
+        Ok(None)
     }
 }

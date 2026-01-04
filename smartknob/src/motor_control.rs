@@ -1,4 +1,6 @@
-mod encoder;
+pub mod encoder;
+mod haptic_system;
+pub mod motor_driver;
 
 use atomic_float::AtomicF32;
 use embassy_sync::{
@@ -6,18 +8,13 @@ use embassy_sync::{
     mutex::Mutex,
     signal::Signal,
 };
-use embassy_time::{Duration, Instant, Ticker, Timer};
+use embassy_time::{Duration, Instant, Ticker};
 use encoder::{AbsolutePositionEncoder, MT6701Spi};
 use esp_backtrace as _;
 use esp_hal::{
     dma::{DmaRxBuf, DmaTxBuf},
     dma_buffers,
     gpio::{AnyPin, Output},
-    mcpwm::{
-        operator::{DeadTimeCfg, PwmPinConfig},
-        timer::PwmWorkingMode,
-        McPwm, PeripheralClockConfig,
-    },
     spi,
     time::Rate,
 };
@@ -36,6 +33,10 @@ use thiserror::Error;
 use crate::{
     cli::KEY_PRESS_EVENTS,
     flash::{FlashError, FlashKeys, FlashType},
+    motor_control::motor_driver::{
+        mcpwm::{Pins6PWM, MCPWM6},
+        MotorDriver,
+    },
 };
 
 pub type SpiBus1 = Mutex<NoopRawMutex, esp_hal::spi::master::SpiDmaBus<'static, esp_hal::Async>>;
@@ -53,15 +54,6 @@ const MOTOR_POLE_PAIRS: I16F16 = I16F16::lit("7");
 
 const MIN_ANGLE_DETECT_MOVEMENT: I16F16 = I16F16::TAU.unwrapped_div(I16F16::lit("101.0"));
 const ALIGNMENT_VOLTAGE: I16F16 = I16F16::lit("1.0");
-
-pub struct Pins6PWM {
-    pub uh: AnyPin<'static>,
-    pub ul: AnyPin<'static>,
-    pub vh: AnyPin<'static>,
-    pub vl: AnyPin<'static>,
-    pub wh: AnyPin<'static>,
-    pub wl: AnyPin<'static>,
-}
 
 #[derive(Debug, PartialEq, Copy, Clone, Deserialize, Serialize, MaxSize)]
 pub enum SensorDirection {
@@ -278,7 +270,7 @@ pub async fn update_foc(
     spi_bus: spi::master::SpiDma<'static, esp_hal::Blocking>,
     mag_csn: Output<'static>,
     mcpwm0: esp_hal::peripherals::MCPWM0<'static>,
-    pwm_pins: Pins6PWM,
+    pwm_pins: Pins6PWM<'static, AnyPin<'static>>,
     flash: &'static FlashType<'static>,
     restored_alignment: Option<MotorAlignment>,
 ) {
@@ -304,55 +296,13 @@ pub async fn update_foc(
     let mut encoder = MT6701Spi::new(spi_device);
     info!("encoder init done!");
 
-    let clock_cfg = PeripheralClockConfig::with_frequency(Rate::from_mhz(32)).unwrap();
-    let mut mcpwm = McPwm::new(mcpwm0, clock_cfg);
-
-    mcpwm.operator0.set_timer(&mcpwm.timer0);
-    mcpwm.operator1.set_timer(&mcpwm.timer0);
-    mcpwm.operator2.set_timer(&mcpwm.timer0);
-
-    let mut pwm_u = mcpwm.operator0.with_linked_pins(
-        pwm_pins.uh,
-        PwmPinConfig::UP_ACTIVE_HIGH,
-        pwm_pins.ul,
-        PwmPinConfig::UP_ACTIVE_HIGH,
-        DeadTimeCfg::new_ahc(),
+    let mut motor_driver = MCPWM6::new(
+        mcpwm0,
+        Rate::from_mhz(32),
+        pwm_pins,
+        PWM_RESOLUTION,
+        PWM_DEAD_TIME,
     );
-    let mut pwm_v = mcpwm.operator1.with_linked_pins(
-        pwm_pins.vh,
-        PwmPinConfig::UP_ACTIVE_HIGH,
-        pwm_pins.vl,
-        PwmPinConfig::UP_ACTIVE_HIGH,
-        DeadTimeCfg::new_ahc(),
-    );
-    let mut pwm_w = mcpwm.operator2.with_linked_pins(
-        pwm_pins.wh,
-        PwmPinConfig::UP_ACTIVE_HIGH,
-        pwm_pins.wl,
-        PwmPinConfig::UP_ACTIVE_HIGH,
-        DeadTimeCfg::new_ahc(),
-    );
-    pwm_u.set_falling_edge_deadtime(PWM_DEAD_TIME);
-    pwm_u.set_rising_edge_deadtime(PWM_DEAD_TIME);
-    pwm_v.set_falling_edge_deadtime(PWM_DEAD_TIME);
-    pwm_v.set_rising_edge_deadtime(PWM_DEAD_TIME);
-    pwm_w.set_falling_edge_deadtime(PWM_DEAD_TIME);
-    pwm_w.set_rising_edge_deadtime(PWM_DEAD_TIME);
-
-    // Turn off all outputs
-    pwm_u.set_timestamp_a(0);
-    pwm_u.set_timestamp_b(0);
-    pwm_v.set_timestamp_a(0);
-    pwm_v.set_timestamp_b(0);
-    pwm_w.set_timestamp_a(0);
-    pwm_w.set_timestamp_b(0);
-
-    // period here is in relation to all other periods further down.
-    // Dead time and set_timestamp methods respectively
-    let timer_clock_cfg = clock_cfg
-        .timer_clock_with_frequency(PWM_RESOLUTION, PwmWorkingMode::Increase, Rate::from_khz(25))
-        .unwrap();
-    mcpwm.timer0.start(timer_clock_cfg);
 
     let mut encoder_pos: I16F16 = I16F16::ZERO;
     let mut ticker = Ticker::every(Duration::from_millis(5));
@@ -401,9 +351,7 @@ pub async fn update_foc(
         match alignment_state.do_alignment(encoder_pos, flash).await {
             Ok(pwm_data) => {
                 if let Some(pwm) = pwm_data {
-                    pwm_u.set_timestamp_a(pwm[0]);
-                    pwm_v.set_timestamp_a(pwm[1]);
-                    pwm_w.set_timestamp_a(pwm[2]);
+                    motor_driver.set_pwm(&pwm);
                 }
             }
             Err(AlignmentError::FlashError(e)) => {
@@ -429,9 +377,7 @@ pub async fn update_foc(
                 set_angle -= 6 * I16F16::TAU;
             }
             let pwm = get_phase_voltage(I16F16::ONE, I16F16::ZERO, set_angle);
-            pwm_u.set_timestamp_a(pwm[0]);
-            pwm_v.set_timestamp_a(pwm[1]);
-            pwm_w.set_timestamp_a(pwm[2]);
+            motor_driver.set_pwm(&pwm);
 
             // let pwm = get_phase_voltage(player.play(encoder_pos), I16F16::ZERO, angle);
             // if pwm[0] == pwm[1] && pwm[2] == pwm[1] {
