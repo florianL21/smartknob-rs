@@ -1,109 +1,43 @@
 mod mt6701;
 
-use embassy_time::Timer;
 pub use mt6701::MT6701Spi;
+use postcard::experimental::max_size::MaxSize;
+use serde::{Deserialize, Serialize};
 
+use core::error::Error;
 use core::fmt::Debug;
 use core::future;
 use fixed::types::I16F16;
 
-const ZERO_TOLERANCE: I16F16 = I16F16::lit("0.005");
-const ROUGH_STEP_SIZE: I16F16 = I16F16::lit("0.04");
-
+#[derive(Debug)]
 pub enum EncoderMagneticFieldStatus {
     Normal,
     TooStrong,
     TooWeak,
 }
 
+#[derive(Debug)]
 pub struct EncoderMeasurement {
     pub angle: I16F16,
     pub position: I16F16,
     pub magnetic_field: EncoderMagneticFieldStatus,
 }
 
+#[derive(Debug, PartialEq, Copy, Clone, Deserialize, Serialize, MaxSize)]
+pub enum EncoderDirection {
+    CW,
+    CCW,
+}
+
 pub trait AbsolutePositionEncoder {
-    type Error: Debug;
+    type Error: Error + Debug;
 
     fn update(&mut self) -> impl future::Future<Output = Result<EncoderMeasurement, Self::Error>>;
-}
 
-enum SearchDirection {
-    Undetermined,
-    TryFW,
-    FW,
-    BW,
-}
+    /// Specify the direction of the encoder readings
+    fn set_direction(&mut self, direction: EncoderDirection);
 
-pub enum EncoderLinearityMeasurement {
-    Undetermined,
-    WaitForZeroSettle,
-    ZeroSearch {
-        current_angle: I16F16,
-        last_measurement: EncoderMeasurement,
-        search_direction: SearchDirection,
-    },
-    KnownOffset(I16F16),
-}
-
-impl EncoderLinearityMeasurement {
-    pub fn new() -> Self {
-        EncoderLinearityMeasurement::Undetermined
-    }
-
-    pub async fn do_measurement<E: AbsolutePositionEncoder>(
-        &mut self,
-        encoder: &mut E,
-    ) -> Result<Option<I16F16>, E::Error> {
-        // match self {
-        //     EncoderLinearityMeasurement::Undetermined => {
-        //         *self = EncoderLinearityMeasurement::WaitForZeroSettle;
-        //         Ok(Some(I16F16::ZERO))
-        //     }
-        //     EncoderLinearityMeasurement::WaitForZeroSettle => {
-        //         Timer::after_millis(300).await;
-        //         *self = EncoderLinearityMeasurement::ZeroSearch {
-        //             current_angle: I16F16::ZERO,
-        //             last_measurement: encoder.update().await?,
-        //             search_direction: SearchDirection::Undetermined,
-        //         };
-        //         Ok(Some(I16F16::ZERO))
-        //     }
-        //     EncoderLinearityMeasurement::ZeroSearch {
-        //         current_angle,
-        //         last_measurement,
-        //         search_direction,
-        //     } => {
-        //         let new_measurement = encoder.update().await?;
-        //         if new_measurement.angle < ZERO_TOLERANCE {
-        //             *self = EncoderLinearityMeasurement::KnownOffset(*current_angle);
-        //         }
-        //         match search_direction {
-        //             SearchDirection::Undetermined => {
-        //                 let new_angle = current_angle + ROUGH_STEP_SIZE;
-        //                 *self = EncoderLinearityMeasurement::ZeroSearch {
-        //                     current_angle: new_angle,
-        //                     last_measurement: new_measurement,
-        //                     search_direction: SearchDirection::TryFW,
-        //                 };
-        //                 return Ok(Some(new_angle));
-        //             }
-        //             SearchDirection::TryFW => {
-        //                 let dir = if new_measurement > *last_angle {
-        //                     SearchDirection::FW
-        //                 } else {
-        //                     SearchDirection::BW
-        //                 };
-        //                 *self = EncoderLinearityMeasurement::ZeroSearch {
-        //                     current_angle: new_measurement,
-        //                     last_angle: new_measurement,
-        //                     search_direction: SearchDirection::BW,
-        //                 };
-        //             }
-        //         }
-        //         Ok(None)
-        //     }
-        // }
-        Ok(None)
-    }
+    /// Return the currently set direction of the encoder readings
+    /// Returns None if the direction has not been set yet
+    fn get_direction(&mut self) -> Option<EncoderDirection>;
 }

@@ -2,13 +2,12 @@ use core::marker::PhantomData;
 
 use super::MotorDriver;
 use esp_hal::{
-    gpio::{interconnect::PeripheralOutput, AnyPin},
+    gpio::interconnect::PeripheralOutput,
     mcpwm::{
         operator::{DeadTimeCfg, LinkedPins, PwmPinConfig},
         timer::PwmWorkingMode,
         McPwm, PeripheralClockConfig, PwmPeripheral,
     },
-    spi,
     time::Rate,
 };
 

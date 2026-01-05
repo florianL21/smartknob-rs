@@ -9,7 +9,7 @@ use embassy_sync::{
     signal::Signal,
 };
 use embassy_time::{Duration, Instant, Ticker};
-use encoder::{AbsolutePositionEncoder, MT6701Spi};
+use encoder::MT6701Spi;
 use esp_backtrace as _;
 use esp_hal::{
     dma::{DmaRxBuf, DmaTxBuf},
@@ -18,7 +18,6 @@ use esp_hal::{
     spi,
     time::Rate,
 };
-use esp_println::println;
 use fixed::types::I16F16;
 use foc::pwm::Modulation;
 use foc::{park_clarke, pwm::SpaceVector};
@@ -33,9 +32,9 @@ use thiserror::Error;
 use crate::{
     cli::KEY_PRESS_EVENTS,
     flash::{FlashError, FlashKeys, FlashType},
-    motor_control::motor_driver::{
-        mcpwm::{Pins6PWM, MCPWM6},
-        MotorDriver,
+    motor_control::{
+        haptic_system::HapticSystem,
+        motor_driver::mcpwm::{MCPWM6, Pins6PWM},
     },
 };
 
@@ -44,15 +43,10 @@ pub type SpiBus1 = Mutex<NoopRawMutex, esp_hal::spi::master::SpiDmaBus<'static, 
 pub static ENCODER_POSITION: AtomicF32 = AtomicF32::new(0.0);
 pub static MOTOR_COMMAND_SIGNAL: Signal<CriticalSectionRawMutex, MotorCommand> = Signal::new();
 
-const _3PI_2: I16F16 = I16F16::PI
-    .unwrapped_mul(I16F16::lit("3.0"))
-    .unwrapped_div(I16F16::lit("2.0"));
-
 const ENCODER_SPI_DMA_BUFFER_SIZE: usize = 200;
 const PWM_RESOLUTION: u16 = 999;
 const MOTOR_POLE_PAIRS: I16F16 = I16F16::lit("7");
 
-const MIN_ANGLE_DETECT_MOVEMENT: I16F16 = I16F16::TAU.unwrapped_div(I16F16::lit("101.0"));
 const ALIGNMENT_VOLTAGE: I16F16 = I16F16::lit("1.0");
 
 #[derive(Debug, PartialEq, Copy, Clone, Deserialize, Serialize, MaxSize)]
@@ -293,16 +287,24 @@ pub async fn update_foc(
     let spi_bus = spi_bus.with_buffers(dma_rx_buf, dma_tx_buf).into_async();
     let spi_bus: Mutex<NoopRawMutex, _> = Mutex::new(spi_bus);
     let spi_device = SpiDevice::new(&spi_bus, mag_csn);
-    let mut encoder = MT6701Spi::new(spi_device);
+    let encoder = MT6701Spi::new(spi_device);
     info!("encoder init done!");
 
-    let mut motor_driver = MCPWM6::new(
+    let motor_driver = MCPWM6::new(
         mcpwm0,
         Rate::from_mhz(32),
         pwm_pins,
         PWM_RESOLUTION,
         PWM_DEAD_TIME,
     );
+
+    let mut haptics = HapticSystem::new(
+        encoder,
+        motor_driver,
+        ALIGNMENT_VOLTAGE,
+        MOTOR_POLE_PAIRS.to_num(),
+    )
+    .await;
 
     let mut encoder_pos: I16F16 = I16F16::ZERO;
     let mut ticker = Ticker::every(Duration::from_millis(5));
@@ -317,7 +319,6 @@ pub async fn update_foc(
         .make_absolute(I16F16::ZERO);
     let mut player = HapticPlayer::new(I16F16::ZERO, &test_curve).with_scale(2.0);
 
-    let mut set_angle = I16F16::ZERO;
     loop {
         if let Ok(key) = KEY_PRESS_EVENTS.try_receive() {
             if let AlignmentState::IsAligned(ref mut alignment) = alignment_state {
@@ -338,58 +339,11 @@ pub async fn update_foc(
                 }
             }
         }
-        if let Ok(meas) = encoder.update().await {
-            encoder_pos = meas.position;
-            ENCODER_POSITION.store(encoder_pos.to_num(), core::sync::atomic::Ordering::Relaxed);
-        }
-        let encoder_pos = I16F16::from_num(encoder_pos);
         if MOTOR_COMMAND_SIGNAL.signaled() {
-            alignment_state.start_alignment();
             MOTOR_COMMAND_SIGNAL.reset();
+            let result = haptics.align().await;
+            info!("Alignment result: {result:?}");
         }
-        // In case the alignment was not yet done, this will do it in a non blocking way
-        match alignment_state.do_alignment(encoder_pos, flash).await {
-            Ok(pwm_data) => {
-                if let Some(pwm) = pwm_data {
-                    motor_driver.set_pwm(&pwm);
-                }
-            }
-            Err(AlignmentError::FlashError(e)) => {
-                error!(
-                    "Alignment data could not be saved to flash ({e}) and will thus not persist! Normal operation is able continue."
-                );
-            }
-            Err(e) => {
-                error!("Alignment error: {e}. Motor will remain disabled.");
-            }
-        }
-
-        if let Some(angle) = alignment_state.get_aligned_angle(encoder_pos) {
-            // info!("pos: {encoder_pos}");
-            let mut ang = encoder_pos;
-            while ang >= I16F16::TAU {
-                ang -= I16F16::TAU;
-            }
-
-            println!(">angle:{}:{}|xy", set_angle / 6, ang);
-            set_angle += I16F16::from_num(0.04);
-            if set_angle >= 6 * I16F16::TAU {
-                set_angle -= 6 * I16F16::TAU;
-            }
-            let pwm = get_phase_voltage(I16F16::ONE, I16F16::ZERO, set_angle);
-            motor_driver.set_pwm(&pwm);
-
-            // let pwm = get_phase_voltage(player.play(encoder_pos), I16F16::ZERO, angle);
-            // if pwm[0] == pwm[1] && pwm[2] == pwm[1] {
-            //     pwm_u.set_timestamp_a(0);
-            //     pwm_v.set_timestamp_a(0);
-            //     pwm_w.set_timestamp_a(0);
-            // } else {
-            //     pwm_u.set_timestamp_a(pwm[0]);
-            //     pwm_v.set_timestamp_a(pwm[1]);
-            //     pwm_w.set_timestamp_a(pwm[2]);
-            // }
-            ticker.next().await;
-        }
+        ticker.next().await;
     }
 }
