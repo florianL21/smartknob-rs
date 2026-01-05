@@ -1558,6 +1558,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "66b7e2430c6dff6a955451e2cfc438f09cea1965a9d6f87f7e3b90decc014099"
 
 [[package]]
+name = "enterpolation"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a22807a89be4e84d1bb3bd023149103da0e3d16f8e322fb1990a61285a484a10"
+dependencies = [
+ "num-traits",
+ "serde",
+ "topology-traits",
+]
+
+[[package]]
 name = "enumflags2"
 version = "0.7.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5121,6 +5132,7 @@ dependencies = [
  "embedded-hal-async",
  "embedded-io-async 0.7.0",
  "embedded-storage",
+ "enterpolation",
  "esp-alloc",
  "esp-backtrace",
  "esp-bootloader-esp-idf",
@@ -5133,6 +5145,7 @@ dependencies = [
  "fixed",
  "foc",
  "haptic_lib",
+ "heapless 0.9.2",
  "ldc1x1x",
  "libm",
  "log",
@@ -5562,6 +5575,15 @@ name = "toml_writer"
 version = "1.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "df8b2b54733674ad286d16267dcfc7a71ed5c776e4ac7aa3c3e2561f7c637bf2"
+
+[[package]]
+name = "topology-traits"
+version = "0.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c0c8dab428531e30115d3bfd6e3092b55256a4a7b4f87cb3abe37a000b1f4032"
+dependencies = [
+ "num-traits",
+]
 
 [[package]]
 name = "tracing"

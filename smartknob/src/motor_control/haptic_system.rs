@@ -1,14 +1,16 @@
 use embassy_time::Timer;
-use fixed::traits::Fixed;
+use enterpolation::Signal;
+use enterpolation::linear::Linear;
 use fixed::types::I16F16;
 use foc::park_clarke;
 use foc::pwm::{Modulation, SpaceVector};
+use heapless::Vec;
 use log::info;
 use thiserror::Error;
 
 use super::encoder::AbsolutePositionEncoder;
 use super::motor_driver::MotorDriver;
-use crate::motor_control::encoder::{self, EncoderDirection};
+use crate::motor_control::encoder::EncoderDirection;
 
 // TODO: This needs to be configurable
 const PWM_RESOLUTION: u16 = 999;
@@ -126,7 +128,7 @@ impl<E: AbsolutePositionEncoder, D: MotorDriver> HapticSystem<E, D> {
             self.drive_phases(current_electrical_angle);
             current_electrical_angle += SEARCH_STEP_SIZE;
         }
-        let absolute_zero_electrical_angle = current_electrical_angle;
+        let mut absolute_zero_electrical_angle = current_electrical_angle;
         info!("Found 0 at electrical angle {absolute_zero_electrical_angle}!");
 
         #[derive(Debug)]
@@ -149,6 +151,12 @@ impl<E: AbsolutePositionEncoder, D: MotorDriver> HapticSystem<E, D> {
         };
 
         let mut measurement = self.encoder.update().await?.angle;
+
+        const NUM_POINTS: usize = 20;
+        let mut expected: Vec<f32, NUM_POINTS> = Vec::new();
+        let mut real: Vec<f32, NUM_POINTS> = Vec::new();
+        let mut last_measurement = I16F16::ZERO;
+        let measure_step = I16F16::TAU / I16F16::from_num(NUM_POINTS);
         while measurement <= I16F16::TAU - ZERO_ANGLE_TOLERANCE {
             Timer::after_millis(2).await;
             let expected_angle =
@@ -172,12 +180,69 @@ impl<E: AbsolutePositionEncoder, D: MotorDriver> HapticSystem<E, D> {
                     closest_to_expected.angle = expected_angle;
                 }
             }
+            if expected_angle - last_measurement > measure_step {
+                last_measurement = expected_angle;
+                let _ = expected.push(expected_angle.to_num());
+                let _ = real.push(measurement.to_num());
+            }
             self.drive_phases(current_electrical_angle);
             current_electrical_angle += SEARCH_STEP_SIZE;
             measurement = self.encoder.update().await?.angle;
         }
+        absolute_zero_electrical_angle = current_electrical_angle;
         info!(
             "Min deviation: {min_deviation:#?}\nMax deviation: {max_deviation:#?}\nMidpoint zero crossing: {closest_to_expected:#?}"
+        );
+        let interp = Linear::builder()
+            .elements(expected.as_slice())
+            .knots(real.as_slice())
+            .build()
+            .unwrap();
+
+        let mut min_deviation = DeviationAtAngle {
+            angle: I16F16::ZERO,
+            deviation: I16F16::ZERO,
+        };
+        let mut max_deviation = DeviationAtAngle {
+            angle: I16F16::ZERO,
+            deviation: I16F16::ZERO,
+        };
+        let mut closest_to_expected = DeviationAtAngle {
+            angle: I16F16::ZERO,
+            deviation: I16F16::ONE,
+        };
+
+        let mut measurement = self.encoder.update().await?.angle;
+        while measurement >= ZERO_ANGLE_TOLERANCE {
+            Timer::after_millis(2).await;
+            let expected_angle = I16F16::TAU
+                - (absolute_zero_electrical_angle - current_electrical_angle) / self.pole_pairs;
+            let corrected = I16F16::from_num(interp.sample([measurement.to_num()]).next().unwrap());
+            let diff = corrected - expected_angle;
+            if diff.is_negative() {
+                if diff.abs() > min_deviation.deviation {
+                    min_deviation.deviation = diff.abs();
+                    min_deviation.angle = expected_angle;
+                }
+            } else {
+                if diff > max_deviation.deviation {
+                    max_deviation.deviation = diff;
+                    max_deviation.angle = expected_angle;
+                }
+            }
+            // Cut off the start and the end of the curve as we want to catch the deviation at the curves mid point
+            if expected_angle > I16F16::ONE && expected_angle < I16F16::TAU - I16F16::ONE {
+                if diff.abs() < closest_to_expected.deviation {
+                    closest_to_expected.deviation = diff.abs();
+                    closest_to_expected.angle = expected_angle;
+                }
+            }
+            self.drive_phases(current_electrical_angle);
+            current_electrical_angle -= SEARCH_STEP_SIZE;
+            measurement = self.encoder.update().await?.angle;
+        }
+        info!(
+            "With correction: \nMin deviation: {min_deviation:#?}\nMax deviation: {max_deviation:#?}\nMidpoint zero crossing: {closest_to_expected:#?}"
         );
         Ok(())
     }

@@ -2,3 +2,17 @@
 resolver = "2"
 members = ["smartknob", "ldc1x1x", "haptic_lib"]
 exclude = ["haptic_demo"]
+
+[profile.dev]
+# Rust debug is too slow.
+# For debug builds always builds with some optimization
+opt-level = "s"
+
+[profile.release]
+codegen-units = 1        # LLVM can perform better optimizations using a single thread
+debug = 2
+debug-assertions = false
+incremental = false
+lto = 'fat'
+opt-level = 's'
+overflow-checks = false
