@@ -8,7 +8,7 @@ use embassy_sync::{
     mutex::Mutex,
     signal::Signal,
 };
-use embassy_time::{Duration, Instant, Ticker};
+use embassy_time::{Duration, Ticker};
 use encoder::MT6701Spi;
 use esp_backtrace as _;
 use esp_hal::{
@@ -19,8 +19,6 @@ use esp_hal::{
     time::Rate,
 };
 use fixed::types::I16F16;
-use foc::pwm::Modulation;
-use foc::{park_clarke, pwm::SpaceVector};
 use haptic_lib::{CurveBuilder, Easing, EasingType, HapticPlayer};
 use postcard::experimental::max_size::MaxSize;
 use serde::{Deserialize, Serialize};
@@ -55,28 +53,6 @@ pub enum SensorDirection {
     CCW,
 }
 
-fn normalize_angle(angle: I16F16) -> I16F16 {
-    let ang = angle % I16F16::TAU;
-    if ang >= I16F16::ZERO {
-        ang
-    } else {
-        ang + I16F16::TAU
-    }
-}
-
-impl SensorDirection {
-    fn electrical_angle(self, mechanical_angle: I16F16, zero_electrical_angle: I16F16) -> I16F16 {
-        match self {
-            SensorDirection::CW => {
-                normalize_angle(MOTOR_POLE_PAIRS * mechanical_angle - zero_electrical_angle)
-            }
-            SensorDirection::CCW => {
-                normalize_angle(-MOTOR_POLE_PAIRS * mechanical_angle - zero_electrical_angle)
-            }
-        }
-    }
-}
-
 #[derive(Error, Debug)]
 enum AlignmentError {
     #[error("Failed to detect any motor movement")]
@@ -87,32 +63,6 @@ enum AlignmentError {
     PostcardSerializationError,
     #[error("Flash operation failed: {0:#?}")]
     FlashError(#[from] FlashError),
-}
-
-#[derive(PartialEq, Debug)]
-enum AlignmentState {
-    NeedsAlignment,
-    AlignUV,
-    SettleUV {
-        start_time: Instant,
-    },
-    MeasureUV,
-    AlignUW {
-        uv_angle: I16F16,
-    },
-    SettleUW {
-        start_time: Instant,
-        uv_angle: I16F16,
-    },
-    MeasureUW {
-        uv_angle: I16F16,
-    },
-    Calc {
-        uv_angle: I16F16,
-        uw_angle: I16F16,
-    },
-    IsAligned(MotorAlignment),
-    Failed,
 }
 
 #[derive(Debug, PartialEq, Deserialize, Serialize, Clone)]
@@ -126,11 +76,6 @@ impl postcard::experimental::max_size::MaxSize for MotorAlignment {
 }
 
 impl MotorAlignment {
-    fn electrical_angle(&self, mechanical_angle: I16F16) -> I16F16 {
-        self.sensor_direction
-            .electrical_angle(mechanical_angle, self.electric_zero_angle)
-    }
-
     async fn save_to_flash(
         &self,
         flash: &'static FlashType<'static>,
@@ -148,115 +93,8 @@ impl MotorAlignment {
     }
 }
 
-impl AlignmentState {
-    /// Create a new AlignmentState without any previously done alignment
-    fn new() -> Self {
-        AlignmentState::NeedsAlignment
-    }
-
-    /// Restore an aligned state from previously saved alignment data
-    fn restore(alignment_data: MotorAlignment) -> Self {
-        AlignmentState::IsAligned(alignment_data)
-    }
-
-    /// Initiate the alignment procedure
-    fn start_alignment(&mut self) {
-        *self = AlignmentState::AlignUV;
-    }
-
-    /// Runs the alignment procedure.
-    /// Never blocks. Alignment is done in iterations, This function never loops internally but instead
-    /// keeps track of the alignment process via it's own internal state.
-    /// It is crucial to pass the function the most up to date encoder angle values
-    async fn do_alignment(
-        &mut self,
-        encoder_position: I16F16,
-        flash: &'static FlashType<'static>,
-    ) -> Result<Option<[u16; 3]>, AlignmentError> {
-        match self {
-            AlignmentState::AlignUV => {
-                info!("UV alignment");
-                *self = AlignmentState::SettleUV {
-                    start_time: Instant::now(),
-                };
-                Ok(Some([400, 400, 0]))
-            }
-            AlignmentState::SettleUV { start_time } => {
-                if start_time.elapsed().as_millis() > 300 {
-                    *self = AlignmentState::MeasureUV;
-                }
-                Ok(None)
-            }
-            AlignmentState::MeasureUV => {
-                *self = AlignmentState::AlignUW {
-                    uv_angle: encoder_position,
-                };
-                Ok(None)
-            }
-            AlignmentState::AlignUW { uv_angle } => {
-                info!("UW alignment");
-                *self = AlignmentState::SettleUW {
-                    start_time: Instant::now(),
-                    uv_angle: *uv_angle,
-                };
-                Ok(Some([0, 400, 400]))
-            }
-            AlignmentState::SettleUW {
-                start_time,
-                uv_angle,
-            } => {
-                if start_time.elapsed().as_millis() > 300 {
-                    *self = AlignmentState::MeasureUW {
-                        uv_angle: *uv_angle,
-                    };
-                }
-                Ok(None)
-            }
-            AlignmentState::MeasureUW { uv_angle } => {
-                *self = AlignmentState::Calc {
-                    uv_angle: *uv_angle,
-                    uw_angle: encoder_position,
-                };
-                Ok(Some([0; 3]))
-            }
-            AlignmentState::Calc { uv_angle, uw_angle } => {
-                let avg = (*uv_angle + *uw_angle) / 2;
-                info!("uv: {uv_angle}, uw: {uw_angle}, avg: {avg}");
-                *self = AlignmentState::IsAligned(MotorAlignment {
-                    sensor_direction: SensorDirection::CW,
-                    electric_zero_angle: avg,
-                });
-                Ok(None)
-            }
-            AlignmentState::IsAligned { .. } => Ok(None),
-            AlignmentState::NeedsAlignment => Ok(None),
-            AlignmentState::Failed => Ok(Some([0; 3])),
-        }
-    }
-
-    fn get_aligned_angle(&self, encoder_angle: I16F16) -> Option<I16F16> {
-        if let AlignmentState::IsAligned(alignment_data) = self {
-            Some(alignment_data.electrical_angle(encoder_angle))
-        } else {
-            None
-        }
-    }
-}
-
 pub enum MotorCommand {
     StartAlignment,
-}
-
-fn get_phase_voltage(uq: I16F16, ud: I16F16, angle: I16F16) -> [u16; 3] {
-    let (sin_angle, cos_angle) = cordic::sin_cos(angle);
-    let orthogonal_voltage = park_clarke::inverse_park(
-        cos_angle,
-        sin_angle,
-        park_clarke::RotatingReferenceFrame { d: ud, q: uq },
-    );
-
-    // Modulate the result to PWM values
-    SpaceVector::as_compare_value::<PWM_RESOLUTION>(orthogonal_voltage)
 }
 
 #[embassy_executor::task]
@@ -273,9 +111,9 @@ pub async fn update_foc(
 
     // restore potential previous alignment data
     let mut alignment_state = if let Some(restored_alignment) = restored_alignment {
-        AlignmentState::restore(restored_alignment)
+        // AlignmentState::restore(restored_alignment)
     } else {
-        AlignmentState::new()
+        // AlignmentState::new()
     };
 
     // setup encoder SPI communication
@@ -306,7 +144,6 @@ pub async fn update_foc(
     )
     .await;
 
-    let mut encoder_pos: I16F16 = I16F16::ZERO;
     let mut ticker = Ticker::every(Duration::from_millis(5));
 
     let test_curve = CurveBuilder::<6>::new()
@@ -321,29 +158,36 @@ pub async fn update_foc(
 
     loop {
         if let Ok(key) = KEY_PRESS_EVENTS.try_receive() {
-            if let AlignmentState::IsAligned(ref mut alignment) = alignment_state {
-                match key {
-                    b'+' => {
-                        alignment.electric_zero_angle += I16F16::from_num(0.01);
-                        info!("{alignment:?}");
-                    }
-                    b'-' => {
-                        alignment.electric_zero_angle -= I16F16::from_num(0.01);
-                        info!("{alignment:?}");
-                    }
-                    b'w' => {
-                        let res = alignment.save_to_flash(flash).await;
-                        info!("Save to flash result: {res:?}");
-                    }
-                    _ => { /* ignore other keys */ }
-                }
-            }
+            // if let AlignmentState::IsAligned(ref mut alignment) = alignment_state {
+            //     match key {
+            //         b'+' => {
+            //             alignment.electric_zero_angle += I16F16::from_num(0.01);
+            //             info!("{alignment:?}");
+            //         }
+            //         b'-' => {
+            //             alignment.electric_zero_angle -= I16F16::from_num(0.01);
+            //             info!("{alignment:?}");
+            //         }
+            //         b'w' => {
+            //             let res = alignment.save_to_flash(flash).await;
+            //             info!("Save to flash result: {res:?}");
+            //         }
+            //         _ => { /* ignore other keys */ }
+            //     }
+            // }
         }
         if MOTOR_COMMAND_SIGNAL.signaled() {
             MOTOR_COMMAND_SIGNAL.reset();
             let result = haptics.align().await;
             info!("Alignment result: {result:?}");
         }
+        if let Ok(encoder_meas) = haptics.run(|meas| player.play(meas.position)).await {
+            ENCODER_POSITION.store(
+                encoder_meas.position.to_num(),
+                core::sync::atomic::Ordering::Relaxed,
+            );
+        }
+
         ticker.next().await;
     }
 }
