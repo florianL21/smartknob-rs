@@ -180,6 +180,7 @@ pub async fn update_foc(
             MOTOR_COMMAND_SIGNAL.reset();
             let result = haptics.align().await;
             info!("Alignment result: {result:?}");
+            haptics.disengage();
         }
         if let Ok(encoder_meas) = haptics.run(|meas| player.play(meas.position)).await {
             ENCODER_POSITION.store(
