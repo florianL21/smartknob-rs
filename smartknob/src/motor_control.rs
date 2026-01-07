@@ -26,7 +26,6 @@ use embassy_embedded_hal::shared_bus::asynch::spi::SpiDevice;
 use log::{error, info, warn};
 
 use crate::{
-    cli::KEY_PRESS_EVENTS,
     flash::{FlashHandler, FlashKeys},
     motor_control::{
         haptic_system::{CalibrationData, HapticSystem},

@@ -1,4 +1,4 @@
-use embassy_time::{Duration, Timer};
+use embassy_time::{Duration, Instant, Timer};
 use enterpolation::Signal;
 use enterpolation::linear::{Linear, LinearError};
 use fixed::types::I16F16;
@@ -24,6 +24,9 @@ const SEARCH_STEP_SIZE: I16F16 = I16F16::lit("0.01");
 const CALIBRATION_NUM_POINTS: usize = 20;
 const MAX_ALLOWED_ENCODER_DEVIATION: I16F16 = I16F16::lit("0.1");
 const ALIGN_DELAY: Duration = Duration::from_millis(1);
+
+const TORQUE_INACTIVITY_THRESHOLD: I16F16 = I16F16::lit("0.03");
+const INACTIVITY_DURATION: Duration = Duration::from_secs(1);
 
 type EncoderCalibrationCurve = Linear<
     enterpolation::Sorted<[f32; CALIBRATION_NUM_POINTS]>,
@@ -122,6 +125,7 @@ where
     alignment_voltage: I16F16,
     pole_pairs: I16F16,
     calibration: Option<CalibrationData>,
+    last_activity: Instant,
 }
 
 fn get_phase_voltage(uq: I16F16, ud: I16F16, angle: I16F16) -> [u16; 3] {
@@ -158,6 +162,7 @@ impl<E: AbsolutePositionEncoder, D: MotorDriver> HapticSystem<E, D> {
             alignment_voltage,
             pole_pairs: I16F16::from_num(pole_pairs),
             calibration: None,
+            last_activity: Instant::now(),
         }
     }
 
@@ -469,11 +474,20 @@ impl<E: AbsolutePositionEncoder, D: MotorDriver> HapticSystem<E, D> {
                 .calibration_curve
                 .compensate::<E::Error>(measurement.angle)?;
             let electrical_angle = cal_data.electrical_angle(compensated_angle);
-            self.motor_driver.set_pwm(&get_phase_voltage(
-                torque(&measurement),
-                I16F16::ZERO,
-                electrical_angle,
-            ));
+            let torque = torque(&measurement);
+            if torque.abs() > TORQUE_INACTIVITY_THRESHOLD {
+                self.last_activity = Instant::now();
+            }
+            if self.last_activity.elapsed() > INACTIVITY_DURATION {
+                // Turn off the PWM output signals if no torque is being applied since the specified period
+                self.motor_driver.set_pwm(&[0; 3]);
+            } else {
+                self.motor_driver.set_pwm(&get_phase_voltage(
+                    torque,
+                    I16F16::ZERO,
+                    electrical_angle,
+                ));
+            }
         }
         Ok(measurement)
     }
