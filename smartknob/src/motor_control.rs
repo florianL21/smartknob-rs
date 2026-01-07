@@ -49,6 +49,7 @@ pub enum MotorCommand {
     StartAlignment,
     TuneAlignment(I16F16),
     VerifyEncoder,
+    TuneStore,
 }
 
 #[embassy_executor::task]
@@ -115,25 +116,6 @@ pub async fn update_foc(
     let mut player = HapticPlayer::new(I16F16::ZERO, &test_curve).with_scale(2.0);
 
     loop {
-        if let Ok(key) = KEY_PRESS_EVENTS.try_receive() {
-            // if let AlignmentState::IsAligned(ref mut alignment) = alignment_state {
-            //     match key {
-            //         b'+' => {
-            //             alignment.electric_zero_angle += I16F16::from_num(0.01);
-            //             info!("{alignment:?}");
-            //         }
-            //         b'-' => {
-            //             alignment.electric_zero_angle -= I16F16::from_num(0.01);
-            //             info!("{alignment:?}");
-            //         }
-            //         b'w' => {
-            //             let res = alignment.save_to_flash(flash).await;
-            //             info!("Save to flash result: {res:?}");
-            //         }
-            //         _ => { /* ignore other keys */ }
-            //     }
-            // }
-        }
         if let Some(sig) = MOTOR_COMMAND_SIGNAL.try_take() {
             match sig {
                 MotorCommand::StartAlignment => {
@@ -165,6 +147,23 @@ pub async fn update_foc(
                     Ok(_) => info!("Encoder validation successful!"),
                     Err(e) => warn!("encoder validation failed: {e}"),
                 },
+                MotorCommand::TuneStore => {
+                    if let Some(cal) = haptics.get_cal_data() {
+                        if let Err(e) = flash
+                            .store::<_, { CalibrationData::POSTCARD_MAX_SIZE }>(
+                                &FlashKeys::MotorAlignment,
+                                cal,
+                            )
+                            .await
+                        {
+                            error!("Failed to store calibration to flash: {e}");
+                        } else {
+                            info!("Stored successfully!")
+                        }
+                    } else {
+                        warn!("System was not yet calibrated. No value was stored!");
+                    }
+                }
             }
         }
         if let Ok(encoder_meas) = haptics.run(|meas| player.play(meas.position)).await {

@@ -5,6 +5,7 @@ use embedded_cli::{Command, CommandGroup, cli::CliBuilder};
 use embedded_io_async::{Read, Write};
 use esp_backtrace as _;
 use esp_hal::{Async, usb_serial_jtag::UsbSerialJtag};
+use fixed::types::I16F16;
 use log::info;
 use postcard::experimental::max_size::MaxSize;
 use thiserror::Error;
@@ -175,6 +176,20 @@ impl Flash {
 enum Motor {
     /// Align the sensor and the motor to the electrical zero position
     Align,
+    /// Measure the encoder for non-linearity and give a verdict if the error is too big for proper operation
+    EncoderValidate,
+    /// Increase the electrical zero offset value of the FOC system
+    TuneUp {
+        /// Value to change the electrical angle offset by
+        value: f32,
+    },
+    /// Reduce the electrical zero offset value of the FOC system
+    TuneDown {
+        /// Value to change the electrical angle offset by
+        value: f32,
+    },
+    /// Save the modified current electrical angle offset to flash
+    TuneStore,
 }
 
 impl Motor {
@@ -191,6 +206,22 @@ impl Motor {
             Motor::Align => {
                 uwrite!(cli.writer(), "Starting motor alignment")?;
                 MOTOR_COMMAND_SIGNAL.signal(MotorCommand::StartAlignment);
+            }
+            Motor::EncoderValidate => {
+                uwrite!(
+                    cli.writer(),
+                    "Validating encoder linearity. Do not touch the motor!"
+                )?;
+                MOTOR_COMMAND_SIGNAL.signal(MotorCommand::VerifyEncoder);
+            }
+            Motor::TuneUp { value } => {
+                MOTOR_COMMAND_SIGNAL.signal(MotorCommand::TuneAlignment(I16F16::from_num(*value)));
+            }
+            Motor::TuneDown { value } => {
+                MOTOR_COMMAND_SIGNAL.signal(MotorCommand::TuneAlignment(I16F16::from_num(-*value)));
+            }
+            Motor::TuneStore => {
+                MOTOR_COMMAND_SIGNAL.signal(MotorCommand::TuneStore);
             }
         }
         Ok(())

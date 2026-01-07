@@ -161,6 +161,11 @@ impl<E: AbsolutePositionEncoder, D: MotorDriver> HapticSystem<E, D> {
         }
     }
 
+    /// get a reference to the current calibration data of the haptic system
+    pub fn get_cal_data(&self) -> &Option<CalibrationData> {
+        &self.calibration
+    }
+
     /// Turn off the PWM outputs to the motor phases
     pub fn disengage(&mut self) {
         self.motor_driver.set_pwm(&[0; 3]);
