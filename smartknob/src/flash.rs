@@ -1,10 +1,8 @@
 extern crate alloc;
 
-use crate::config::LogChannelToggles;
-use crate::motor_control::MotorAlignment;
 use alloc::format;
 use ekv::flash::{self, PageID};
-use ekv::{config, Database, ReadError};
+use ekv::{Database, ReadError, config};
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embedded_storage::nor_flash::{NorFlash, ReadNorFlash};
 use esp_backtrace as _;
@@ -12,7 +10,9 @@ use esp_bootloader_esp_idf::partitions::{self, FlashRegion};
 use esp_hal::peripherals::FLASH;
 use esp_storage::FlashStorage;
 use log::{info, warn};
-use postcard::experimental::max_size::MaxSize;
+use postcard::Deserializer;
+use postcard::de_flavors::Slice;
+use serde::{Deserialize, Serialize};
 use static_cell::make_static;
 use thiserror::Error;
 use ufmt::uDebug;
@@ -136,23 +136,18 @@ pub struct FlashHandler {
     flash: FlashType<'static>,
 }
 
-#[derive(Debug, Default)]
-pub struct RestoredState {
-    pub log_channels: LogChannelToggles,
-    pub motor_alignment: Option<MotorAlignment>,
-}
-
 impl FlashHandler {
     pub async fn new(flash: FLASH<'static>) -> Self {
         let flash = make_static!(FlashStorage::new(flash).multicore_auto_park());
         let pt_mem = make_static!([0u8; partitions::PARTITION_TABLE_MAX_LEN]);
         let pt = partitions::read_partition_table(flash, pt_mem).unwrap();
-        let fat = make_static!(pt
-            .find_partition(partitions::PartitionType::Data(
+        let fat = make_static!(
+            pt.find_partition(partitions::PartitionType::Data(
                 partitions::DataPartitionSubType::Fat,
             ))
             .expect("Failed to search for partitions")
-            .expect("Could not find a data:fat partition"));
+            .expect("Could not find a data:fat partition")
+        );
         let offset = fat.offset();
         info!("Storing data into partition with offset: {offset}");
         let fat_partition = fat.as_embedded_storage(flash);
@@ -173,40 +168,42 @@ impl FlashHandler {
         Self { flash }
     }
 
-    /// Restore the system state from flash. Intended to be called during startup
-    pub async fn restore(&self) -> Result<RestoredState, FlashError> {
+    pub async fn load<'a, T: Deserialize<'a>>(
+        &self,
+        key: FlashKeys,
+        buffer: &'a mut [u8],
+    ) -> Result<Option<T>, FlashError> {
         let rt = self.flash.read_transaction().await;
+        match rt.read(&key.key(), buffer).await {
+            Err(ReadError::KeyNotFound) => return Ok(None),
+            Err(e) => return Err(FlashError::from(e)),
+            Ok(_) => {}
+        }
+        let slice = Slice::new(buffer);
+        let mut deserializer = Deserializer::from_flavor(slice);
+        let data = T::deserialize(&mut deserializer)?;
+        Ok(Some(data))
+    }
 
-        // Get the largest POSTCARD_MAX_SIZE to allocate a buffer
-        const MAX_BUF_SIZE: usize = [
-            LogChannelToggles::POSTCARD_MAX_SIZE,
-            MotorAlignment::POSTCARD_MAX_SIZE,
-        ][(LogChannelToggles::POSTCARD_MAX_SIZE < MotorAlignment::POSTCARD_MAX_SIZE) as usize];
+    pub async fn store<T: Serialize, const M: usize>(
+        &self,
+        key: &FlashKeys,
+        value: &T,
+    ) -> Result<(), FlashError> {
+        let mut wt = self.flash.write_transaction().await;
+        let mut buffer = [0u8; M];
+        postcard::to_slice(value, &mut buffer)?;
 
-        // Restore log toggle configuration
-        let mut buffer = [0u8; MAX_BUF_SIZE];
-        let size = rt.read(&FlashKeys::LogChannels.key(), &mut buffer).await?;
-        let log_toggles: LogChannelToggles = postcard::from_bytes(&buffer[..size])?;
+        wt.write(&key.key(), &buffer)
+            .await
+            .map_err(FlashError::from)?;
+        wt.commit().await.map_err(FlashError::from)?;
+        Ok(())
+    }
 
-        // Restore motor alignment state
-        let motor_alignment = match rt.read(&FlashKeys::MotorAlignment.key(), &mut buffer).await {
-            Ok(size) => {
-                let motor_alignment: MotorAlignment = postcard::from_bytes(&buffer[..size])?;
-                Some(motor_alignment)
-            }
-            Err(ReadError::KeyNotFound) => {
-                info!("No motor alignment state found in flash");
-                None
-            }
-            Err(e) => {
-                return Err(FlashError::from(e));
-            }
-        };
-
-        Ok(RestoredState {
-            log_channels: log_toggles,
-            motor_alignment: motor_alignment,
-        })
+    pub async fn format(&self) -> Result<(), FlashError> {
+        self.flash.format().await?;
+        Ok(())
     }
 
     /// After all init operations are finished on the flash this method can be used to get the underlying struct back

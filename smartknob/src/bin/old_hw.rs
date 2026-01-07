@@ -17,11 +17,11 @@ use esp_hal::{
     time::Rate,
     usb_serial_jtag::UsbSerialJtag,
 };
-use log::{info, warn};
+use log::info;
 
 use smartknob_rs::{
     cli::menu_handler,
-    flash::{FlashHandler, FlashType, RestoredState},
+    flash::FlashHandler,
     motor_control::{motor_driver::mcpwm::Pins6PWM, update_foc},
 };
 use static_cell::StaticCell;
@@ -52,20 +52,9 @@ async fn main(spawner: Spawner) {
     info!("Embassy initialized!");
 
     let f = FlashHandler::new(peripherals.FLASH).await;
-    let restored_state = match f.restore().await {
-        Ok(state) => {
-            info!("Restored previous state from flash: {:#?}", state);
-            state
-        }
-        Err(e) => {
-            warn!("Failed to restore state from flash: {}", e);
-            warn!("Assuming first startup. No calibration data was loaded");
-            RestoredState::default()
-        }
-    };
 
-    static FLASH: StaticCell<FlashType<'static>> = StaticCell::new();
-    let flash = FLASH.init(f.eject());
+    static FLASH: StaticCell<FlashHandler> = StaticCell::new();
+    let flash = FLASH.init(f);
 
     // -DPIN_UH=46
     //   -DPIN_UL=2
@@ -128,13 +117,10 @@ async fn main(spawner: Spawner) {
         peripherals.MCPWM0,
         pwm_pins,
         flash,
-        restored_state.motor_alignment,
     ));
 
     let serial = UsbSerialJtag::new(peripherals.USB_DEVICE).into_async();
-    spawner
-        .spawn(menu_handler(serial, flash, restored_state.log_channels))
-        .ok();
+    spawner.spawn(menu_handler(serial, flash)).ok();
 
     info!("All tasks spawned");
     let stats = esp_alloc::HEAP.stats();

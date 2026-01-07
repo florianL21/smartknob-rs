@@ -1,10 +1,10 @@
 use alloc::format;
 use core::{convert::Infallible, fmt::Debug, str::Utf8Error};
 use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, channel::Channel};
-use embedded_cli::{cli::CliBuilder, Command, CommandGroup};
+use embedded_cli::{Command, CommandGroup, cli::CliBuilder};
 use embedded_io_async::{Read, Write};
 use esp_backtrace as _;
-use esp_hal::{usb_serial_jtag::UsbSerialJtag, Async};
+use esp_hal::{Async, usb_serial_jtag::UsbSerialJtag};
 use log::info;
 use postcard::experimental::max_size::MaxSize;
 use thiserror::Error;
@@ -13,7 +13,7 @@ use ufmt::{uDebug, uwrite};
 use crate::{
     config::{ConfigError, LogChannelToggles, LogToggleSender, LogToggles},
     display::DISPLAY_BRIGHTNESS_SIGNAL,
-    flash::{FlashError, FlashKeys, FlashType},
+    flash::{FlashError, FlashHandler, FlashKeys},
     motor_control::MotorCommand,
     signals::{LOG_TOGGLES, MOTOR_COMMAND_SIGNAL, REQUEST_POWER_DOWN},
 };
@@ -47,14 +47,14 @@ struct Context {
     sender: LogToggleSender,
     logging_config: LogToggles,
     interface_open: bool,
-    flash: &'static FlashType<'static>,
+    flash: &'static FlashHandler,
 }
 
 #[derive(CommandGroup)]
 enum RootGroup<'a> {
     Base(Base),
     Logging(Logging<'a>),
-    Storage(Flash<'a>),
+    Storage(Flash),
     Motor(Motor),
     Display(Display),
 }
@@ -87,19 +87,14 @@ enum Logging<'a> {
 
 async fn set_log(
     toggles: &mut LogChannelToggles,
-    flash: &FlashType<'static>,
+    flash: &FlashHandler,
     channel: &str,
     state: bool,
 ) -> Result<(), HandlerError> {
     toggles.set_from_str(channel, state)?;
-    let mut wt = flash.write_transaction().await;
-    let mut buffer = [0u8; LogChannelToggles::POSTCARD_MAX_SIZE];
-    postcard::to_slice(toggles, &mut buffer)
-        .map_err(|_| HandlerError::PostcardLogToggleSerializationError)?;
-    wt.write(&FlashKeys::LogChannels.key(), &buffer)
-        .await
-        .map_err(FlashError::from)?;
-    wt.commit().await.map_err(FlashError::from)?;
+    flash
+        .store::<_, { LogChannelToggles::POSTCARD_MAX_SIZE }>(&FlashKeys::LogChannels, toggles)
+        .await?;
     Ok(())
 }
 
@@ -150,21 +145,12 @@ impl Logging<'_> {
 
 #[derive(Command)]
 #[command(help_title = "Manage values stored in flash")]
-enum Flash<'a> {
-    /// Store a value to flash
-    FlashStore {
-        /// What value to store
-        value: &'a str,
-    },
-
-    /// Load a value from flash
-    FlashLoad,
-
+enum Flash {
     /// Format the flash
     FlashFormat,
 }
 
-impl Flash<'_> {
+impl Flash {
     async fn handle(
         self: &Self,
         cli: &mut embedded_cli::cli::CliHandle<
@@ -175,23 +161,6 @@ impl Flash<'_> {
         context: &mut Context,
     ) -> Result<(), HandlerError> {
         match self {
-            Flash::FlashLoad => {
-                let wt = context.flash.read_transaction().await;
-                let mut data = [0u8; 255];
-                wt.read(&FlashKeys::Test.key(), &mut data)
-                    .await
-                    .map_err(FlashError::from)?;
-                let s = str::from_utf8(&data)?;
-                uwrite!(cli.writer(), "Stored value is: {}", s)?;
-            }
-            Flash::FlashStore { value } => {
-                let mut wt = context.flash.write_transaction().await;
-                wt.write(&FlashKeys::Test.key(), value.as_bytes())
-                    .await
-                    .map_err(FlashError::from)?;
-                wt.commit().await.map_err(FlashError::from)?;
-                uwrite!(cli.writer(), "Saved value to flash: {}", value)?;
-            }
             Flash::FlashFormat => {
                 context.flash.format().await.map_err(FlashError::from)?;
                 uwrite!(cli.writer(), "Formatted flash")?;
@@ -260,11 +229,14 @@ impl Display {
 }
 
 #[embassy_executor::task]
-pub async fn menu_handler(
-    serial: UsbSerialJtag<'static, Async>,
-    flash: &'static FlashType<'static>,
-    initial_log_toggles: LogChannelToggles,
-) {
+pub async fn menu_handler(serial: UsbSerialJtag<'static, Async>, flash: &'static FlashHandler) {
+    let mut buffer = [0u8; LogChannelToggles::POSTCARD_MAX_SIZE];
+    let initial_log_toggles =
+        if let Ok(Some(t)) = flash.load(FlashKeys::LogChannels, &mut buffer).await {
+            t
+        } else {
+            LogChannelToggles::default()
+        };
     let mut context = Context {
         sender: LOG_TOGGLES.sender(),
         logging_config: LogToggles {

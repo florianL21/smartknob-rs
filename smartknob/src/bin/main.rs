@@ -19,29 +19,29 @@ use esp_hal::{
     i2c::master::{Config as I2cConfig, I2c},
     rmt::Rmt,
     spi::{
-        master::{Config as SpiConfig, Spi},
         Mode,
+        master::{Config as SpiConfig, Spi},
     },
     time::Rate,
     usb_serial_jtag::UsbSerialJtag,
 };
-use esp_hal_smartled::{smart_led_buffer, SmartLedsAdapter};
+use esp_hal_smartled::{SmartLedsAdapter, smart_led_buffer};
 use esp_rtos::embassy::Executor;
-use log::{info, warn};
+use log::info;
 
 use smart_leds::{
-    brightness,
+    SmartLedsWrite, brightness,
     colors::{BLACK, BLUE, RED},
-    gamma, SmartLedsWrite,
+    gamma,
 };
 use smartknob_rs::display::BacklightHandles;
 use smartknob_rs::signals::{KNOB_EVENTS_CHANNEL, KNOB_TILT_ANGLE};
 use smartknob_rs::{
     cli::menu_handler,
-    config::{may_log, LogChannel},
-    display::{spawn_display_tasks, DisplayHandles},
-    flash::{FlashHandler, FlashType, RestoredState},
-    knob_tilt::{read_ldc_task, KnobTiltEvent},
+    config::{LogChannel, may_log},
+    display::{DisplayHandles, spawn_display_tasks},
+    flash::FlashHandler,
+    knob_tilt::{KnobTiltEvent, read_ldc_task},
     motor_control::{motor_driver::mcpwm::Pins6PWM, update_foc},
     shutdown::shutdown_handler,
     signals::{ENCODER_POSITION, LOG_TOGGLES},
@@ -177,20 +177,9 @@ async fn main(spawner: Spawner) {
     info!("Embassy initialized!");
 
     let f = FlashHandler::new(peripherals.FLASH).await;
-    let restored_state = match f.restore().await {
-        Ok(state) => {
-            info!("Restored previous state from flash: {:#?}", state);
-            state
-        }
-        Err(e) => {
-            warn!("Failed to restore state from flash: {}", e);
-            warn!("Assuming first startup. No calibration data was loaded");
-            RestoredState::default()
-        }
-    };
 
-    static FLASH: StaticCell<FlashType<'static>> = StaticCell::new();
-    let flash = FLASH.init(f.eject());
+    static FLASH: StaticCell<FlashHandler> = StaticCell::new();
+    let flash = FLASH.init(f);
 
     // Pins for LDC1614
     let pins_ldc_int_pin = peripherals.GPIO40;
@@ -220,7 +209,7 @@ async fn main(spawner: Spawner) {
     // let pin_lcd_miso = peripherals.GPIO;
     let pin_lcd_mosi = peripherals.GPIO14;
     let pin_lcd_dc = peripherals.GPIO16; //pin 22
-                                         // BEWARE!!! Schematic has mismatched pins!
+    // BEWARE!!! Schematic has mismatched pins!
     let pin_lcd_cs = peripherals.GPIO15; //pin 21 // BL pin on the base PCB; CS on the display PCB
     let pin_lcd_bl = peripherals.GPIO9; // RST pin on the base PCB; BL on the display PCB
     let pin_lcd_reset = peripherals.GPIO8; // CS pin on the base PCB; RST on the display PCB
@@ -271,13 +260,10 @@ async fn main(spawner: Spawner) {
                     peripherals.MCPWM0,
                     pwm_pins,
                     flash,
-                    restored_state.motor_alignment,
                 ));
 
                 let serial = UsbSerialJtag::new(peripherals.USB_DEVICE).into_async();
-                spawner
-                    .spawn(menu_handler(serial, flash, restored_state.log_channels))
-                    .ok();
+                spawner.spawn(menu_handler(serial, flash)).ok();
             });
         },
     );

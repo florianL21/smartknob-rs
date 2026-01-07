@@ -21,17 +21,15 @@ use esp_hal::{
 use fixed::types::I16F16;
 use haptic_lib::{CurveBuilder, Easing, EasingType, HapticPlayer};
 use postcard::experimental::max_size::MaxSize;
-use serde::{Deserialize, Serialize};
 
 use embassy_embedded_hal::shared_bus::asynch::spi::SpiDevice;
-use log::{error, info};
-use thiserror::Error;
+use log::{error, info, warn};
 
 use crate::{
     cli::KEY_PRESS_EVENTS,
-    flash::{FlashError, FlashKeys, FlashType},
+    flash::{FlashHandler, FlashKeys},
     motor_control::{
-        haptic_system::HapticSystem,
+        haptic_system::{CalibrationData, HapticSystem},
         motor_driver::mcpwm::{MCPWM6, Pins6PWM},
     },
 };
@@ -47,54 +45,10 @@ const MOTOR_POLE_PAIRS: I16F16 = I16F16::lit("7");
 
 const ALIGNMENT_VOLTAGE: I16F16 = I16F16::lit("1.0");
 
-#[derive(Debug, PartialEq, Copy, Clone, Deserialize, Serialize, MaxSize)]
-pub enum SensorDirection {
-    CW,
-    CCW,
-}
-
-#[derive(Error, Debug)]
-enum AlignmentError {
-    #[error("Failed to detect any motor movement")]
-    NoMovementDetected,
-    #[error("Motor pole pairs did not match expected. Expected {MOTOR_POLE_PAIRS} measured {0}")]
-    PolePairMismatch(u8),
-    #[error("Could not serialize MotorAlignment to postcard format")]
-    PostcardSerializationError,
-    #[error("Flash operation failed: {0:#?}")]
-    FlashError(#[from] FlashError),
-}
-
-#[derive(Debug, PartialEq, Deserialize, Serialize, Clone)]
-pub struct MotorAlignment {
-    sensor_direction: SensorDirection,
-    electric_zero_angle: I16F16,
-}
-
-impl postcard::experimental::max_size::MaxSize for MotorAlignment {
-    const POSTCARD_MAX_SIZE: usize = SensorDirection::POSTCARD_MAX_SIZE + 4; // I16F16 has 16 integer bits and 16 fractional bits = 4 bytes
-}
-
-impl MotorAlignment {
-    async fn save_to_flash(
-        &self,
-        flash: &'static FlashType<'static>,
-    ) -> Result<(), AlignmentError> {
-        let mut wt = flash.write_transaction().await;
-        let mut buffer = [0u8; MotorAlignment::POSTCARD_MAX_SIZE];
-        postcard::to_slice(&self, &mut buffer)
-            .map_err(|_| AlignmentError::PostcardSerializationError)?;
-
-        wt.write(&FlashKeys::MotorAlignment.key(), &buffer)
-            .await
-            .map_err(FlashError::from)?;
-        wt.commit().await.map_err(FlashError::from)?;
-        Ok(())
-    }
-}
-
 pub enum MotorCommand {
     StartAlignment,
+    TuneAlignment(I16F16),
+    VerifyEncoder,
 }
 
 #[embassy_executor::task]
@@ -103,18 +57,10 @@ pub async fn update_foc(
     mag_csn: Output<'static>,
     mcpwm0: esp_hal::peripherals::MCPWM0<'static>,
     pwm_pins: Pins6PWM<'static, AnyPin<'static>>,
-    flash: &'static FlashType<'static>,
-    restored_alignment: Option<MotorAlignment>,
+    flash: &'static FlashHandler,
 ) {
     // about 2% dead time
     const PWM_DEAD_TIME: u16 = 20;
-
-    // restore potential previous alignment data
-    let mut alignment_state = if let Some(restored_alignment) = restored_alignment {
-        // AlignmentState::restore(restored_alignment)
-    } else {
-        // AlignmentState::new()
-    };
 
     // setup encoder SPI communication
     let (rx_buffer, rx_descriptors, tx_buffer, tx_descriptors) =
@@ -143,6 +89,18 @@ pub async fn update_foc(
         MOTOR_POLE_PAIRS.to_num(),
     )
     .await;
+
+    // restore potential previous alignment data
+    let mut buffer = [0u8; CalibrationData::POSTCARD_MAX_SIZE];
+
+    match flash.load(FlashKeys::MotorAlignment, &mut buffer).await {
+        Ok(Some(cal)) => {
+            info!("Restored motor alignment data from flash");
+            haptics.restore_calibration(cal)
+        }
+        Err(e) => error!("Failed to read cal data from flash: {e}"),
+        Ok(_) => {}
+    }
 
     let mut ticker = Ticker::every(Duration::from_millis(5));
 
@@ -176,11 +134,38 @@ pub async fn update_foc(
             //     }
             // }
         }
-        if MOTOR_COMMAND_SIGNAL.signaled() {
-            MOTOR_COMMAND_SIGNAL.reset();
-            let result = haptics.align().await;
-            info!("Alignment result: {result:?}");
-            haptics.disengage();
+        if let Some(sig) = MOTOR_COMMAND_SIGNAL.try_take() {
+            match sig {
+                MotorCommand::StartAlignment => {
+                    let result = haptics.align().await;
+                    if let Ok(cal_data) = result {
+                        if let Err(e) = flash
+                            .store::<_, { CalibrationData::POSTCARD_MAX_SIZE }>(
+                                &FlashKeys::MotorAlignment,
+                                cal_data,
+                            )
+                            .await
+                        {
+                            error!("Failed to save calibration data to flash: {e}");
+                        }
+                    }
+                    info!("Alignment result: {result:?}");
+                    haptics.disengage();
+                }
+                MotorCommand::TuneAlignment(tune) => {
+                    if let Some(a) = haptics.tune_alignment(tune) {
+                        info!("New alignment value is: {a}");
+                    } else {
+                        warn!(
+                            "No alignment adjustment was made. Please complete motor alignment first"
+                        )
+                    }
+                }
+                MotorCommand::VerifyEncoder => match haptics.validate_encoder().await {
+                    Ok(_) => info!("Encoder validation successful!"),
+                    Err(e) => warn!("encoder validation failed: {e}"),
+                },
+            }
         }
         if let Ok(encoder_meas) = haptics.run(|meas| player.play(meas.position)).await {
             ENCODER_POSITION.store(

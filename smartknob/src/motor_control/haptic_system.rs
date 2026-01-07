@@ -1,4 +1,4 @@
-use embassy_time::Timer;
+use embassy_time::{Duration, Timer};
 use enterpolation::Signal;
 use enterpolation::linear::{Linear, LinearError};
 use fixed::types::I16F16;
@@ -11,7 +11,7 @@ use thiserror::Error;
 
 use super::encoder::AbsolutePositionEncoder;
 use super::motor_driver::MotorDriver;
-use crate::motor_control::encoder::{EncoderDirection, EncoderMeasurement};
+use crate::motor_control::encoder::{EncoderDirection, EncoderError, EncoderMeasurement};
 
 // TODO: This needs to be configurable
 const PWM_RESOLUTION: u16 = 999;
@@ -19,10 +19,11 @@ const PWM_RESOLUTION: u16 = 999;
 // TODO: This needs to adapt to the configured pole pairs
 const MIN_ANGLE_DETECT_MOVEMENT: I16F16 = I16F16::lit("0.1");
 
-const ZERO_ANGLE_TOLERANCE: I16F16 = I16F16::lit("0.05");
-const SEARCH_STEP_SIZE: I16F16 = I16F16::lit("0.02");
+const ZERO_ANGLE_TOLERANCE: I16F16 = I16F16::lit("0.03");
+const SEARCH_STEP_SIZE: I16F16 = I16F16::lit("0.01");
 const CALIBRATION_NUM_POINTS: usize = 20;
 const MAX_ALLOWED_ENCODER_DEVIATION: I16F16 = I16F16::lit("0.1");
+const ALIGN_DELAY: Duration = Duration::from_millis(1);
 
 type EncoderCalibrationCurve = Linear<
     enterpolation::Sorted<[f32; CALIBRATION_NUM_POINTS]>,
@@ -31,7 +32,7 @@ type EncoderCalibrationCurve = Linear<
 >;
 
 #[derive(Error, Debug)]
-pub enum HapticSystemError<E: core::error::Error> {
+pub enum HapticSystemError<E: EncoderError> {
     #[error("Failed to detect any motor movement")]
     NoMovementDetected,
     #[error("Motor pole pairs did not match expected. Expected {0} measured {1}")]
@@ -46,6 +47,8 @@ pub enum HapticSystemError<E: core::error::Error> {
         "Non linearity correction was not goo enough. expected: <{MAX_ALLOWED_ENCODER_DEVIATION}; found {0}"
     )]
     NonLinearityCorrectionTooImprecise(I16F16),
+    #[error("System was not yet calibrated. This action requires an existing calibration")]
+    NotYetCalibrated,
 }
 
 fn normalize_angle(angle: I16F16) -> I16F16 {
@@ -69,7 +72,7 @@ fn electrical_angle(
 pub struct NonLinearityCorrection(EncoderCalibrationCurve);
 
 impl NonLinearityCorrection {
-    fn compensate<E: core::error::Error>(
+    fn compensate<E: EncoderError>(
         &self,
         measured_angle: I16F16,
     ) -> Result<I16F16, HapticSystemError<E>> {
@@ -83,7 +86,7 @@ impl NonLinearityCorrection {
 }
 
 impl MaxSize for NonLinearityCorrection {
-    const POSTCARD_MAX_SIZE: usize = f32::POSTCARD_MAX_SIZE * CALIBRATION_NUM_POINTS * 2;
+    const POSTCARD_MAX_SIZE: usize = f32::POSTCARD_MAX_SIZE * CALIBRATION_NUM_POINTS * 2 + 2;
 }
 
 #[derive(Debug, PartialEq, Copy, Clone, Deserialize, Serialize)]
@@ -140,6 +143,7 @@ struct DeviationAtAngle {
 }
 
 impl<E: AbsolutePositionEncoder, D: MotorDriver> HapticSystem<E, D> {
+    /// Create a new haptic system with its linked motor driver and encoder
     pub async fn new(
         mut encoder: E,
         motor_driver: D,
@@ -157,21 +161,26 @@ impl<E: AbsolutePositionEncoder, D: MotorDriver> HapticSystem<E, D> {
         }
     }
 
+    /// Turn off the PWM outputs to the motor phases
     pub fn disengage(&mut self) {
         self.motor_driver.set_pwm(&[0; 3]);
     }
 
+    /// Load a previous calibration
     pub fn restore_calibration(&mut self, cal_data: CalibrationData) {
         self.encoder.set_direction(cal_data.sensor_direction);
         self.calibration = Some(cal_data);
     }
 
-    pub fn get_calibration(&self) -> Option<&CalibrationData> {
-        self.calibration.as_ref()
-    }
-
-    pub fn is_calibrated(&self) -> bool {
-        self.calibration.is_some()
+    /// Adjust the motor electrical offset by a certain value
+    /// This function is a no-op if no calibration data is set
+    pub fn tune_alignment(&mut self, tune: I16F16) -> Option<I16F16> {
+        if let Some(ref mut cal) = self.calibration {
+            cal.electrical_angle_offset += tune;
+            Some(cal.electrical_angle_offset)
+        } else {
+            None
+        }
     }
 
     fn drive_phases_alignment(&mut self, set_angle: I16F16) {
@@ -193,14 +202,14 @@ impl<E: AbsolutePositionEncoder, D: MotorDriver> HapticSystem<E, D> {
         self.drive_phases_alignment(set_angle);
 
         for _ in 0..NUM_STEPS {
-            Timer::after_millis(2).await;
+            Timer::after(ALIGN_DELAY).await;
             set_angle += step_angle;
             self.drive_phases_alignment(set_angle);
         }
         let mid_angle = self.encoder.update().await?;
 
         for _ in 0..NUM_STEPS {
-            Timer::after_millis(2).await;
+            Timer::after(ALIGN_DELAY).await;
             set_angle -= step_angle;
             self.drive_phases_alignment(set_angle);
         }
@@ -232,7 +241,7 @@ impl<E: AbsolutePositionEncoder, D: MotorDriver> HapticSystem<E, D> {
         };
         let mut meas = self.encoder.update().await?.angle;
         while meas >= ZERO_ANGLE_TOLERANCE {
-            Timer::after_millis(2).await;
+            Timer::after(ALIGN_DELAY).await;
             // info!("iter: {current_electrical_angle}; {meas}");
             self.drive_phases_alignment(current_electrical_angle);
             current_electrical_angle += search_step;
@@ -271,7 +280,7 @@ impl<E: AbsolutePositionEncoder, D: MotorDriver> HapticSystem<E, D> {
 
         let mut measurement = self.encoder.update().await?.angle;
         while measurement <= I16F16::TAU - ZERO_ANGLE_TOLERANCE {
-            Timer::after_millis(2).await;
+            Timer::after(ALIGN_DELAY).await;
             expected_angle = (current_electrical_angle - offset) / self.pole_pairs;
             let diff = measurement - expected_angle;
             if diff.is_negative() {
@@ -319,6 +328,17 @@ impl<E: AbsolutePositionEncoder, D: MotorDriver> HapticSystem<E, D> {
         Ok(interp)
     }
 
+    pub async fn validate_encoder(&mut self) -> Result<(), HapticSystemError<E::Error>> {
+        if let Some(cal) = self.calibration {
+            self.validate_non_linearity_correction(cal.calibration_curve.0)
+                .await?;
+            Ok(())
+        } else {
+            Err(HapticSystemError::NotYetCalibrated)
+        }
+    }
+
+    /// Measure the encoder non-linearity with the given correction curve and return a result of how well the correction works
     async fn validate_non_linearity_correction(
         &mut self,
         correction_curve: EncoderCalibrationCurve,
@@ -335,14 +355,10 @@ impl<E: AbsolutePositionEncoder, D: MotorDriver> HapticSystem<E, D> {
             angle: I16F16::ZERO,
             deviation: I16F16::ZERO,
         };
-        let mut closest_to_expected = DeviationAtAngle {
-            angle: I16F16::ZERO,
-            deviation: I16F16::ONE,
-        };
         let mut current_electrical_angle = offset;
         let mut measurement = self.encoder.update().await?.angle;
         while measurement <= I16F16::TAU - ZERO_ANGLE_TOLERANCE {
-            Timer::after_millis(2).await;
+            Timer::after(ALIGN_DELAY).await;
             let expected_angle = (current_electrical_angle - offset) / self.pole_pairs;
             let corrected = correction_curve.compensate(measurement)?;
             let diff = corrected - expected_angle;
@@ -357,19 +373,12 @@ impl<E: AbsolutePositionEncoder, D: MotorDriver> HapticSystem<E, D> {
                     max_deviation.angle = expected_angle;
                 }
             }
-            // Cut off the start and the end of the curve as we want to catch the deviation at the curves mid point
-            if expected_angle > I16F16::ONE && expected_angle < I16F16::TAU - I16F16::ONE {
-                if diff.abs() < closest_to_expected.deviation {
-                    closest_to_expected.deviation = diff.abs();
-                    closest_to_expected.angle = expected_angle;
-                }
-            }
             self.drive_phases_alignment(current_electrical_angle);
             current_electrical_angle += SEARCH_STEP_SIZE;
             measurement = self.encoder.update().await?.angle;
         }
         info!(
-            "With correction: \nMin deviation: {min_deviation:#?}\nMax deviation: {max_deviation:#?}\nMidpoint zero crossing: {closest_to_expected:#?}"
+            "With correction: \nMin deviation: {min_deviation:#?}\nMax deviation: {max_deviation:#?}"
         );
 
         if min_deviation.deviation > MAX_ALLOWED_ENCODER_DEVIATION {
@@ -397,7 +406,7 @@ impl<E: AbsolutePositionEncoder, D: MotorDriver> HapticSystem<E, D> {
             self.drive_phases_alignment(angle);
             Timer::after_millis(2).await;
         }
-        let _mid_angle = cal_curve.compensate(self.encoder.update().await?.angle)?;
+        let _mid_point = self.encoder.update().await?;
         for i in 500..0 {
             let angle = _3PI_2 + I16F16::TAU * I16F16::from_num(i) / I16F16::from_num(500.0);
             self.drive_phases_alignment(angle);
@@ -405,10 +414,11 @@ impl<E: AbsolutePositionEncoder, D: MotorDriver> HapticSystem<E, D> {
         }
         self.drive_phases_alignment(_3PI_2);
         Timer::after_millis(700).await;
-        let end_angle = cal_curve.compensate(self.encoder.update().await?.angle)?;
+        let end_point = self.encoder.update().await?;
 
         // Pole pair sanity check
-        // let moved = (_mid_angle - end_angle).abs();
+        // let moved = (mid_point.position - end_point.position).abs();
+        // info!("moved: {moved}");
         // if (moved * self.pole_pairs - I16F16::TAU).abs() > I16F16::from_num(0.8) {
         //     let estimated_pole_pairs = (I16F16::TAU / moved).to_num();
         //     return Err(HapticSystemError::PolePairMismatch(
@@ -416,12 +426,14 @@ impl<E: AbsolutePositionEncoder, D: MotorDriver> HapticSystem<E, D> {
         //         estimated_pole_pairs,
         //     ));
         // }
+
+        let end_angle = cal_curve.compensate(end_point.angle)?;
         let electrical_zero_angle = electrical_angle(self.pole_pairs, end_angle, I16F16::ZERO);
         info!("Electrical zero angle offset: {electrical_zero_angle}");
         Ok(electrical_zero_angle)
     }
 
-    pub async fn align(&mut self) -> Result<(), HapticSystemError<E::Error>> {
+    pub async fn align(&mut self) -> Result<&CalibrationData, HapticSystemError<E::Error>> {
         let sensor_dir = self.set_sensor_direction().await?;
         let cal_curve = self.measure_non_linearity().await?;
         let cal_curve = self.validate_non_linearity_correction(cal_curve).await?;
@@ -434,10 +446,12 @@ impl<E: AbsolutePositionEncoder, D: MotorDriver> HapticSystem<E, D> {
             electrical_angle_offset,
         });
 
-        info!("Calibration complete: {:#?}", self.calibration);
-
         self.disengage();
-        Ok(())
+
+        Ok(self
+            .calibration
+            .as_ref()
+            .ok_or_else(|| HapticSystemError::NotYetCalibrated)?)
     }
 
     pub async fn run(

@@ -9,6 +9,8 @@ use core::fmt::Debug;
 use core::future;
 use fixed::types::I16F16;
 
+pub trait EncoderError: Error + Debug {}
+
 #[derive(Debug)]
 pub enum EncoderMagneticFieldStatus {
     Normal,
@@ -30,7 +32,7 @@ pub enum EncoderDirection {
 }
 
 pub trait AbsolutePositionEncoder {
-    type Error: Error + Debug;
+    type Error: EncoderError;
 
     fn update(&mut self) -> impl future::Future<Output = Result<EncoderMeasurement, Self::Error>>;
 

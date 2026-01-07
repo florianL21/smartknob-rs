@@ -5,7 +5,7 @@ use thiserror::Error;
 
 use super::AbsolutePositionEncoder;
 use crate::motor_control::encoder::{
-    EncoderDirection, EncoderMagneticFieldStatus, EncoderMeasurement,
+    EncoderDirection, EncoderError, EncoderMagneticFieldStatus, EncoderMeasurement,
 };
 
 const OVERFLOW_LOW_BAND: u16 = 1600;
@@ -20,6 +20,8 @@ pub enum MT6701Error {
     #[error("CSN pin error")]
     CsnError,
 }
+
+impl EncoderError for MT6701Error {}
 
 #[derive(Debug)]
 pub struct MT6701Spi<SPI> {
