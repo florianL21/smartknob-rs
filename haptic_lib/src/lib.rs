@@ -8,8 +8,8 @@ mod player;
 use fixed::types::I16F16;
 
 pub use easings::{Easing, EasingType};
-pub use patterns::HapticPattern;
-pub use player::HapticPlayer;
+pub use patterns::{Command, HapticPattern};
+pub use player::{HapticPlayer, Playback};
 
 pub use curve::{AbsoluteCurve, CurveBuilder, CurveError, HapticCurve};
 

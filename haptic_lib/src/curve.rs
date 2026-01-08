@@ -1,5 +1,5 @@
 pub use crate::easings::Easing;
-use crate::{Angle, HapticPattern, Value};
+use crate::{Angle, HapticPattern, Value, patterns::Command};
 use core::slice::Iter;
 
 use fixed::types::I16F16;
@@ -243,7 +243,7 @@ impl<const N: usize> CurveBuilder<N> {
         self,
         width: f32,
         value: f32,
-        pattern: &[f32],
+        pattern: &[Command],
         repeat: u16,
         multiply: u16,
     ) -> Self {
@@ -251,7 +251,7 @@ impl<const N: usize> CurveBuilder<N> {
             width: I16F16::from_num(width),
             value: I16F16::from_num(value),
             pattern_on_entry: Some(HapticPattern::new(
-                Vec::from_iter(pattern.iter().map(|v| Value::from_num(*v))),
+                Vec::from_iter(pattern.into_iter().cloned()),
                 repeat,
                 multiply,
             )),

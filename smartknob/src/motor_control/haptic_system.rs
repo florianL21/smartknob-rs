@@ -464,17 +464,25 @@ impl<E: AbsolutePositionEncoder, D: MotorDriver> HapticSystem<E, D> {
             .ok_or_else(|| HapticSystemError::NotYetCalibrated)?)
     }
 
-    pub async fn run(
+    /// Get an up to date encoder measurement.
+    /// This should be fed into
+    pub async fn update_encoder(
         &mut self,
-        mut torque: impl FnMut(&EncoderMeasurement) -> I16F16,
     ) -> Result<EncoderMeasurement, HapticSystemError<E::Error>> {
-        let measurement = self.encoder.update().await?;
+        Ok(self.encoder.update().await?)
+    }
+
+    /// Sets the motor torque. Should be fed with the most up to date value of the encoder
+    pub fn set_motor(
+        &mut self,
+        measurement: EncoderMeasurement,
+        torque: I16F16,
+    ) -> Result<(), HapticSystemError<E::Error>> {
         if let Some(cal_data) = &self.calibration {
             let compensated_angle = cal_data
                 .calibration_curve
                 .compensate::<E::Error>(measurement.angle)?;
             let electrical_angle = cal_data.electrical_angle(compensated_angle);
-            let torque = torque(&measurement);
             if torque.abs() > TORQUE_INACTIVITY_THRESHOLD {
                 self.last_activity = Instant::now();
             }
@@ -488,7 +496,9 @@ impl<E: AbsolutePositionEncoder, D: MotorDriver> HapticSystem<E, D> {
                     electrical_angle,
                 ));
             }
+            Ok(())
+        } else {
+            Err(HapticSystemError::NotYetCalibrated)
         }
-        Ok(measurement)
     }
 }

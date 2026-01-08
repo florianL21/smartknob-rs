@@ -8,7 +8,7 @@ use embassy_sync::{
     mutex::Mutex,
     signal::Signal,
 };
-use embassy_time::{Duration, Ticker};
+use embassy_time::{Duration, Ticker, Timer};
 use encoder::MT6701Spi;
 use esp_backtrace as _;
 use esp_hal::{
@@ -19,7 +19,7 @@ use esp_hal::{
     time::Rate,
 };
 use fixed::types::I16F16;
-use haptic_lib::{CurveBuilder, Easing, EasingType, HapticPlayer};
+use haptic_lib::{Command, CurveBuilder, Easing, EasingType, HapticPlayer, Playback};
 use postcard::experimental::max_size::MaxSize;
 
 use embassy_embedded_hal::shared_bus::asynch::spi::SpiDevice;
@@ -165,11 +165,39 @@ pub async fn update_foc(
                 }
             }
         }
-        if let Ok(encoder_meas) = haptics.run(|meas| player.play(meas.position)).await {
+        if let Ok(encoder_meas) = haptics.update_encoder().await {
             ENCODER_POSITION.store(
                 encoder_meas.position.to_num(),
                 core::sync::atomic::Ordering::Relaxed,
             );
+            let playback = player.play(encoder_meas.position);
+            match playback {
+                Playback::Value(v) => {
+                    if let Err(e) = haptics.set_motor(encoder_meas, v) {
+                        error!("Failed to set motor torque: {e}");
+                    }
+                }
+                Playback::Sequence(p) => {
+                    let commands = p.play();
+                    for command in commands {
+                        match command {
+                            Command::Delay(d) => {
+                                Timer::after(embassy_time::Duration::from_micros(
+                                    d.as_micros() as u64
+                                ))
+                                .await
+                            }
+                            Command::Torque(t) => {
+                                if let Ok(enc) = haptics.update_encoder().await {
+                                    if let Err(e) = haptics.set_motor(enc, *t) {
+                                        error!("Failed to set motor torque: {e}");
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
 
         ticker.next().await;
