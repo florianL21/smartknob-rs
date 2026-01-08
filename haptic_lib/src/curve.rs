@@ -16,8 +16,8 @@ pub enum CurveError {
         "Not enough capacity for holding all curve components. Increase the curve capacity by {0} elements"
     )]
     NotEnoughCapacity(usize),
-    #[error("Value must be in range of -1.0 to 1.0, but `value` was out of range {0:?}")]
-    ValueOutOfRange(CurveComponent),
+    #[error("Value must be in range of -1.0 to 1.0, but `value` was out of range at index {0:?}")]
+    ValueOutOfRange(usize),
 }
 
 /// This is a single component of a haptic curve.
@@ -218,7 +218,7 @@ impl<const N: usize> CurveBuilder<N> {
             return self;
         }
         if !component.values_valid() {
-            self.range_error = Some(CurveError::ValueOutOfRange(component));
+            self.range_error = Some(CurveError::ValueOutOfRange(self.components.iter().count()));
             return self;
         }
         if self.components.push(component).is_err() {
@@ -251,7 +251,7 @@ impl<const N: usize> CurveBuilder<N> {
             width: I16F16::from_num(width),
             value: I16F16::from_num(value),
             pattern_on_entry: Some(HapticPattern::new(
-                Vec::from_iter(pattern.into_iter().cloned()),
+                Vec::from_iter(pattern.iter().cloned()),
                 repeat,
                 multiply,
             )),

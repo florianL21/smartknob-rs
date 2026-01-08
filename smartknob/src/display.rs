@@ -10,10 +10,10 @@ use esp_hal::peripherals::GPIO4;
 use esp_hal::{dma_buffers, spi};
 use esp_hal::{gpio::Output, time::Rate};
 use log::{error, info, warn};
-use slint::platform::software_renderer::{MinimalSoftwareWindow, Rgb565Pixel};
+use slint::LogicalPosition;
 use slint::platform::Platform;
 use slint::platform::WindowEvent;
-use slint::LogicalPosition;
+use slint::platform::software_renderer::{MinimalSoftwareWindow, Rgb565Pixel};
 
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 
@@ -25,13 +25,13 @@ use esp_hal::ledc::{self, LSGlobalClkSource, Ledc, LowSpeed};
 // use esp_hal::psram::{FlashFreq, PsramConfig, SpiRamFreq, SpiTimingConfigCoreClock};
 use embassy_embedded_hal::shared_bus::asynch::spi::SpiDevice;
 use mipidsi::asynchronous::{
-    interface::SpiInterface,
-    models::{Model, GC9A01},
-    options::{ColorInversion, ColorOrder},
     Builder,
+    interface::SpiInterface,
+    models::{GC9A01, Model},
+    options::{ColorInversion, ColorOrder},
 };
 
-use crate::config::{may_log, LogChannel, LOG_TOGGLES};
+use crate::config::{LOG_TOGGLES, LogChannel, may_log};
 use crate::knob_tilt::KnobTiltEvent;
 use crate::signals::{ENCODER_POSITION, KNOB_EVENTS_CHANNEL, KNOB_TILT_ANGLE, KNOB_TILT_MAGNITUDE};
 
@@ -280,10 +280,10 @@ pub async fn render_task(
                     }),
                     _ => None,
                 };
-                if let Some(event) = event {
-                    if let Err(e) = window.try_dispatch_event(event) {
-                        error!("Slint platform error: {e}");
-                    }
+                if let Some(event) = event
+                    && let Err(e) = window.try_dispatch_event(event)
+                {
+                    error!("Slint platform error: {e}");
                 }
             }
             Some(WaitResult::Lagged(n)) => {
@@ -378,17 +378,17 @@ async fn brightness_task(handles: BacklightHandles) {
         .enable_pin_with_cal::<_, AdcCalBasic<_>>(handles.brightness_sensor_pin, Attenuation::_0dB);
     let mut adc1 = Adc::new(handles.adc_instance, adc1_config);
     loop {
-        if !channel0.is_duty_fade_running() {
-            if let Some(new_brighness) = DISPLAY_BRIGHTNESS_SIGNAL.try_take() {
-                if let Err(e) = channel0.start_duty_fade(
-                    current_brightness,
-                    new_brighness,
-                    BRIGHTNESS_FADE_DURATION_MS,
-                ) {
-                    warn!("Display backlight fade failed: {e:?}");
-                } else {
-                    current_brightness = new_brighness;
-                }
+        if !channel0.is_duty_fade_running()
+            && let Some(new_brighness) = DISPLAY_BRIGHTNESS_SIGNAL.try_take()
+        {
+            if let Err(e) = channel0.start_duty_fade(
+                current_brightness,
+                new_brighness,
+                BRIGHTNESS_FADE_DURATION_MS,
+            ) {
+                warn!("Display backlight fade failed: {e:?}");
+            } else {
+                current_brightness = new_brighness;
             }
         }
 

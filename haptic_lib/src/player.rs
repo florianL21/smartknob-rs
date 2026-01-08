@@ -76,7 +76,7 @@ impl<'a, const N: usize> HapticPlayer<'a, N> {
                 let playback = if let Some(pattern) = component.component.pattern()
                     && self.prev_angle < component.start_angle
                 {
-                    Playback::Sequence(ScaledPattern::new(&pattern, self.scale))
+                    Playback::Sequence(ScaledPattern::new(pattern, self.scale))
                 } else {
                     // We found our current component
                     let value = component.component.value(angle - component.start_angle);

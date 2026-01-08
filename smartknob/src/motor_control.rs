@@ -119,17 +119,17 @@ pub async fn update_foc(
             match sig {
                 MotorCommand::StartAlignment => {
                     let result = haptics.align().await;
-                    if let Ok(cal_data) = result {
-                        if let Err(e) = flash
+                    if let Ok(cal_data) = result
+                        && let Err(e) = flash
                             .store::<_, { CalibrationData::POSTCARD_MAX_SIZE }>(
                                 &FlashKeys::MotorAlignment,
                                 cal_data,
                             )
                             .await
-                        {
-                            error!("Failed to save calibration data to flash: {e}");
-                        }
+                    {
+                        error!("Failed to save calibration data to flash: {e}");
                     }
+
                     info!("Alignment result: {result:?}");
                     haptics.disengage();
                 }
@@ -188,10 +188,10 @@ pub async fn update_foc(
                                 .await
                             }
                             Command::Torque(t) => {
-                                if let Ok(enc) = haptics.update_encoder().await {
-                                    if let Err(e) = haptics.set_motor(enc, t) {
-                                        error!("Failed to set motor torque: {e}");
-                                    }
+                                if let Ok(enc) = haptics.update_encoder().await
+                                    && let Err(e) = haptics.set_motor(enc, t)
+                                {
+                                    error!("Failed to set motor torque: {e}");
                                 }
                             }
                         }

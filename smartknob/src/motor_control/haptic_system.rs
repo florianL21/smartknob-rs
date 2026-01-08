@@ -298,18 +298,17 @@ impl<E: AbsolutePositionEncoder, D: MotorDriver> HapticSystem<E, D> {
                     min_deviation.deviation = diff.abs();
                     min_deviation.angle = expected_angle;
                 }
-            } else {
-                if diff > max_deviation.deviation {
-                    max_deviation.deviation = diff;
-                    max_deviation.angle = expected_angle;
-                }
+            } else if diff > max_deviation.deviation {
+                max_deviation.deviation = diff;
+                max_deviation.angle = expected_angle;
             }
             // Cut off the start and the end of the curve as we want to catch the deviation at the curves mid point
-            if expected_angle > I16F16::ONE && expected_angle < I16F16::TAU - I16F16::ONE {
-                if diff.abs() < closest_to_expected.deviation {
-                    closest_to_expected.deviation = diff.abs();
-                    closest_to_expected.angle = expected_angle;
-                }
+            if expected_angle > I16F16::ONE
+                && expected_angle < I16F16::TAU - I16F16::ONE
+                && diff.abs() < closest_to_expected.deviation
+            {
+                closest_to_expected.deviation = diff.abs();
+                closest_to_expected.angle = expected_angle;
             }
             if expected_angle - last_measurement > measure_step {
                 last_measurement = expected_angle;
@@ -377,11 +376,9 @@ impl<E: AbsolutePositionEncoder, D: MotorDriver> HapticSystem<E, D> {
                     min_deviation.deviation = diff.abs();
                     min_deviation.angle = expected_angle;
                 }
-            } else {
-                if diff > max_deviation.deviation {
-                    max_deviation.deviation = diff;
-                    max_deviation.angle = expected_angle;
-                }
+            } else if diff > max_deviation.deviation {
+                max_deviation.deviation = diff;
+                max_deviation.angle = expected_angle;
             }
             self.drive_phases_alignment(current_electrical_angle);
             current_electrical_angle += SEARCH_STEP_SIZE;
@@ -416,8 +413,8 @@ impl<E: AbsolutePositionEncoder, D: MotorDriver> HapticSystem<E, D> {
             self.drive_phases_alignment(angle);
             Timer::after_millis(2).await;
         }
-        let _mid_point = self.encoder.update().await?;
-        for i in 500..0 {
+        let mid_point = self.encoder.update().await?;
+        for i in (0..500).rev() {
             let angle = _3PI_2 + I16F16::TAU * I16F16::from_num(i) / I16F16::from_num(500.0);
             self.drive_phases_alignment(angle);
             Timer::after_millis(2).await;
@@ -427,15 +424,15 @@ impl<E: AbsolutePositionEncoder, D: MotorDriver> HapticSystem<E, D> {
         let end_point = self.encoder.update().await?;
 
         // Pole pair sanity check
-        // let moved = (mid_point.position - end_point.position).abs();
-        // info!("moved: {moved}");
-        // if (moved * self.pole_pairs - I16F16::TAU).abs() > I16F16::from_num(0.8) {
-        //     let estimated_pole_pairs = (I16F16::TAU / moved).to_num();
-        //     return Err(HapticSystemError::PolePairMismatch(
-        //         self.pole_pairs.to_num(),
-        //         estimated_pole_pairs,
-        //     ));
-        // }
+        let moved = (mid_point.position - end_point.position).abs();
+        info!("moved: {moved}");
+        if (moved * self.pole_pairs - I16F16::TAU).abs() > I16F16::from_num(0.8) {
+            let estimated_pole_pairs = (I16F16::TAU / moved).to_num();
+            return Err(HapticSystemError::PolePairMismatch(
+                self.pole_pairs.to_num(),
+                estimated_pole_pairs,
+            ));
+        }
 
         let end_angle = cal_curve.compensate(end_point.angle)?;
         let electrical_zero_angle = electrical_angle(self.pole_pairs, end_angle, I16F16::ZERO);
@@ -458,10 +455,9 @@ impl<E: AbsolutePositionEncoder, D: MotorDriver> HapticSystem<E, D> {
 
         self.disengage();
 
-        Ok(self
-            .calibration
+        self.calibration
             .as_ref()
-            .ok_or_else(|| HapticSystemError::NotYetCalibrated)?)
+            .ok_or_else(|| HapticSystemError::NotYetCalibrated)
     }
 
     /// Get an up to date encoder measurement.

@@ -81,7 +81,7 @@ fn map<
     out_min: T,
     out_max: T,
 ) -> T {
-    return (x - in_min) * (out_max - out_min) / (in_max - in_min) + out_min;
+    (x - in_min) * (out_max - out_min) / (in_max - in_min) + out_min
 }
 
 #[embassy_executor::task]

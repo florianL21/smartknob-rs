@@ -1,5 +1,3 @@
-use core::usize;
-
 use atomic_float::AtomicF32;
 use average::Mean;
 use embassy_embedded_hal::shared_bus::asynch::i2c::I2cDevice;
@@ -191,13 +189,13 @@ async fn take_mean_measurement(
     const NUM_AVERAGES: usize = 10;
     let mut measurements: [[u32; 3]; NUM_AVERAGES] = [[0; 3]; 10];
     // calculate average over 10 measurements
-    for i in 0..NUM_AVERAGES {
+    for measurement in measurements.iter_mut().take(NUM_AVERAGES) {
         let mut channels: [u32; 3] = [0; 3];
         for (j, ch) in CHANNELS.iter().enumerate() {
             let reading = ldc.read_data_24bit(*ch).await.unwrap();
             channels[j] = reading;
         }
-        measurements[i] = channels;
+        *measurement = channels;
         // int_pin.wait_for_rising_edge().await;
         Timer::after(Duration::from_millis(20)).await;
     }

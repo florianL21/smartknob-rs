@@ -69,15 +69,17 @@ enum Base {
     Shutdown,
 }
 
+// This is okay because these names will be converted to CLI commands, and they need the additional context
+#[allow(clippy::enum_variant_names)]
 #[derive(Command)]
 #[command(help_title = "Manage Logging output")]
 enum Logging<'a> {
-    /// Enable
+    /// Enable printing of a certain log cannel
     LogEnable {
         /// Which logging channel to enable
         channel: &'a str,
     },
-    ///
+    /// Disable printing of a certain log channel
     LogDisable {
         /// Which logging channel to disable
         channel: &'a str,
@@ -101,7 +103,7 @@ async fn set_log(
 
 impl Logging<'_> {
     async fn handle(
-        self: &Self,
+        &self,
         cli: &mut embedded_cli::cli::CliHandle<
             '_,
             esp_hal::usb_serial_jtag::UsbSerialJtagTx<'static, Async>,
@@ -120,7 +122,7 @@ impl Logging<'_> {
             Logging::LogEnable { channel } => {
                 set_log(
                     &mut context.logging_config.config,
-                    &context.flash,
+                    context.flash,
                     channel,
                     true,
                 )
@@ -131,7 +133,7 @@ impl Logging<'_> {
             Logging::LogDisable { channel } => {
                 set_log(
                     &mut context.logging_config.config,
-                    &context.flash,
+                    context.flash,
                     channel,
                     false,
                 )
@@ -153,7 +155,7 @@ enum Flash {
 
 impl Flash {
     async fn handle(
-        self: &Self,
+        &self,
         cli: &mut embedded_cli::cli::CliHandle<
             '_,
             esp_hal::usb_serial_jtag::UsbSerialJtagTx<'static, Async>,
@@ -163,7 +165,7 @@ impl Flash {
     ) -> Result<(), HandlerError> {
         match self {
             Flash::FlashFormat => {
-                context.flash.format().await.map_err(FlashError::from)?;
+                context.flash.format().await?;
                 uwrite!(cli.writer(), "Formatted flash")?;
             }
         }
@@ -194,7 +196,7 @@ enum Motor {
 
 impl Motor {
     async fn handle(
-        self: &Self,
+        &self,
         cli: &mut embedded_cli::cli::CliHandle<
             '_,
             esp_hal::usb_serial_jtag::UsbSerialJtagTx<'static, Async>,
@@ -240,7 +242,7 @@ enum Display {
 
 impl Display {
     async fn handle(
-        self: &Self,
+        &self,
         cli: &mut embedded_cli::cli::CliHandle<
             '_,
             esp_hal::usb_serial_jtag::UsbSerialJtagTx<'static, Async>,
@@ -308,7 +310,7 @@ pub async fn menu_handler(serial: UsbSerialJtag<'static, Async>, flash: &'static
         let _ = rx.read(&mut buf).await;
 
         // if the interface is not open open it and skip processing the CLI
-        if context.interface_open == false {
+        if !context.interface_open {
             if buf[0] != 13 {
                 KEY_PRESS_EVENTS.send(buf[0]).await;
                 continue;

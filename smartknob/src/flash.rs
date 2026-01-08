@@ -59,25 +59,25 @@ pub enum FlashError {
 
 impl From<ekv::ReadError<FlashErrorType>> for FlashError {
     fn from(value: ekv::ReadError<FlashErrorType>) -> Self {
-        FlashError::FlashReadError(value.into())
+        FlashError::FlashReadError(value)
     }
 }
 
 impl From<ekv::WriteError<FlashErrorType>> for FlashError {
     fn from(value: ekv::WriteError<FlashErrorType>) -> Self {
-        FlashError::FlashWriteError(value.into())
+        FlashError::FlashWriteError(value)
     }
 }
 
 impl From<ekv::FormatError<FlashErrorType>> for FlashError {
     fn from(value: ekv::FormatError<FlashErrorType>) -> Self {
-        FlashError::FlashFormatError(value.into())
+        FlashError::FlashFormatError(value)
     }
 }
 
 impl From<ekv::CommitError<FlashErrorType>> for FlashError {
     fn from(value: ekv::CommitError<FlashErrorType>) -> Self {
-        FlashError::FlashCommitError(value.into())
+        FlashError::FlashCommitError(value)
     }
 }
 
