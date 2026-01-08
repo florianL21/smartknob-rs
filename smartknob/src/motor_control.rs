@@ -189,7 +189,7 @@ pub async fn update_foc(
                             }
                             Command::Torque(t) => {
                                 if let Ok(enc) = haptics.update_encoder().await {
-                                    if let Err(e) = haptics.set_motor(enc, *t) {
+                                    if let Err(e) = haptics.set_motor(enc, t) {
                                         error!("Failed to set motor torque: {e}");
                                     }
                                 }

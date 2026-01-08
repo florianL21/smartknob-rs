@@ -92,7 +92,7 @@ impl HapticPattern {
         }
     }
 
-    pub fn play(&self) -> impl Iterator<Item = &Command> {
+    pub fn play(&self, scale: I16F16) -> impl Iterator<Item = Command> {
         let num = (self.repeat * self.multiply) as usize;
         let mult = self.multiply as usize;
         self.commands
@@ -100,5 +100,6 @@ impl HapticPattern {
             .cycle()
             .flat_map(move |item| iter::repeat_n(item, mult))
             .take(num)
+            .map(move |c| c.scale(scale))
     }
 }

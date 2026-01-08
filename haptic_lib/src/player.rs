@@ -1,4 +1,6 @@
-use crate::{Angle, HapticPattern, Value, curve::AbsoluteCurve};
+use fixed::types::I16F16;
+
+use crate::{Angle, Command, HapticPattern, Value, curve::AbsoluteCurve};
 
 /// This struct holds the state for playing back a haptic curve and it is the main interface for playing back haptic curves
 pub struct HapticPlayer<'a, const N: usize> {
@@ -9,9 +11,26 @@ pub struct HapticPlayer<'a, const N: usize> {
     prev_angle: Value,
 }
 
+pub struct ScaledPattern<'a> {
+    pattern: &'a HapticPattern,
+    scale: I16F16,
+}
+
+impl ScaledPattern<'_> {
+    pub fn play(&self) -> impl Iterator<Item = Command> {
+        self.pattern.play(self.scale)
+    }
+}
+
+impl<'a> ScaledPattern<'a> {
+    fn new(pattern: &'a HapticPattern, scale: I16F16) -> Self {
+        Self { pattern, scale }
+    }
+}
+
 pub enum Playback<'a> {
     Value(Value),
-    Sequence(&'a HapticPattern),
+    Sequence(ScaledPattern<'a>),
 }
 
 impl<'a, const N: usize> HapticPlayer<'a, N> {
@@ -57,7 +76,7 @@ impl<'a, const N: usize> HapticPlayer<'a, N> {
                 let playback = if let Some(pattern) = component.component.pattern()
                     && self.prev_angle < component.start_angle
                 {
-                    Playback::Sequence(pattern)
+                    Playback::Sequence(ScaledPattern::new(&pattern, self.scale))
                 } else {
                     // We found our current component
                     let value = component.component.value(angle - component.start_angle);

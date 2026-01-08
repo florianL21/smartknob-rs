@@ -25,6 +25,7 @@ pub struct Fsensor(pub f32);
 impl Fsensor {
     /// Calculate sensor frequency based on inductance in μH and capacitance in pF.
     pub const fn from_inductance_capacitance(inductance: f32, capacitance: f32) -> Self {
+        #[allow(clippy::approx_constant)] // This is a wrong positive detection
         Self(1.0 / (2.0 * 3.14 * sqrt(inductance * 1e-6_f32 * capacitance * 1e-12_f32)) * 1e-6_f32)
     }
 
