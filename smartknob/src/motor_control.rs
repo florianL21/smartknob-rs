@@ -19,6 +19,7 @@ use esp_hal::{
     time::Rate,
 };
 use fixed::types::I16F16;
+use foc::pwm::SpaceVector;
 use haptic_lib::{Command, CurveBuilder, Easing, EasingType, HapticPlayer, Playback};
 use postcard::experimental::max_size::MaxSize;
 
@@ -39,7 +40,7 @@ pub static ENCODER_POSITION: AtomicF32 = AtomicF32::new(0.0);
 pub static MOTOR_COMMAND_SIGNAL: Signal<CriticalSectionRawMutex, MotorCommand> = Signal::new();
 
 const ENCODER_SPI_DMA_BUFFER_SIZE: usize = 200;
-const PWM_RESOLUTION: u16 = 2000;
+const PWM_RESOLUTION: u16 = 1800;
 const MOTOR_POLE_PAIRS: I16F16 = I16F16::lit("7");
 
 const ALIGNMENT_VOLTAGE: I16F16 = I16F16::lit("1.0");
@@ -80,17 +81,16 @@ pub async fn update_foc(
     let encoder = MT6701Spi::new(spi_device);
     info!("encoder init done!");
 
-    let motor_driver = MCPWM6::new(
+    let motor_driver: MCPWM6<_, PWM_RESOLUTION> = MCPWM6::new(
         mcpwm0,
         Rate::from_mhz(40),
         Rate::from_khz(20),
         pwm_pins,
-        PWM_RESOLUTION,
         PWM_DEAD_TIME,
     )
     .unwrap();
 
-    let mut haptics = HapticSystem::new(
+    let mut haptics: HapticSystem<_, _, SpaceVector, _> = HapticSystem::new(
         encoder,
         motor_driver,
         ALIGNMENT_VOLTAGE,

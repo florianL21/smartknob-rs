@@ -11,7 +11,7 @@ use esp_hal::{
     time::Rate,
 };
 
-pub struct MCPWM6<'a, PWM: PwmPeripheral> {
+pub struct MCPWM6<'a, PWM: PwmPeripheral, const PWM_RESOLUTION: u16> {
     // mcpwm: McPwm<'a, PWM>,
     pwm_u: LinkedPins<'a, PWM, 0>,
     pwm_v: LinkedPins<'a, PWM, 1>,
@@ -27,6 +27,7 @@ pub struct Pins6PWM<'a, Pin: PeripheralOutput<'a>> {
     wl: Pin,
     phantom: PhantomData<&'a Pin>,
 }
+
 impl<'a, Pin: PeripheralOutput<'a>> Pins6PWM<'a, Pin> {
     pub fn new(uh: Pin, ul: Pin, vh: Pin, vl: Pin, wh: Pin, wl: Pin) -> Self {
         Self {
@@ -41,14 +42,13 @@ impl<'a, Pin: PeripheralOutput<'a>> Pins6PWM<'a, Pin> {
     }
 }
 
-impl<'a, PWM: PwmPeripheral + 'a> MCPWM6<'a, PWM> {
+impl<'a, PWM: PwmPeripheral + 'a, const PWM_RESOLUTION: u16> MCPWM6<'a, PWM, PWM_RESOLUTION> {
     /// `pwm_dead_time` is relative to the PWM value of the `pwm_resolution`
     pub fn new<P: PeripheralOutput<'a>>(
         peripheral: PWM,
         clock_frequency: Rate,
         target_frequency: Rate,
         pwm_pins: Pins6PWM<'a, P>,
-        pwm_resolution: u16,
         pwm_dead_time: u16,
     ) -> Result<Self, FrequencyError> {
         let clock_cfg = PeripheralClockConfig::with_frequency(clock_frequency)?;
@@ -97,7 +97,7 @@ impl<'a, PWM: PwmPeripheral + 'a> MCPWM6<'a, PWM> {
         // period here is in relation to all other periods.
         // Dead time and set_timestamp methods respectively
         let timer_clock_cfg = clock_cfg.timer_clock_with_frequency(
-            pwm_resolution,
+            PWM_RESOLUTION,
             PwmWorkingMode::Increase,
             target_frequency,
         )?;
@@ -110,7 +110,9 @@ impl<'a, PWM: PwmPeripheral + 'a> MCPWM6<'a, PWM> {
     }
 }
 
-impl<'a, PWM: PwmPeripheral + 'a> MotorDriver for MCPWM6<'a, PWM> {
+impl<'a, PWM: PwmPeripheral + 'a, const PWM_RESOLUTION: u16> MotorDriver<PWM_RESOLUTION>
+    for MCPWM6<'a, PWM, PWM_RESOLUTION>
+{
     fn set_pwm(&mut self, pwm: &[u16; 3]) {
         self.pwm_u.set_timestamp_a(pwm[0]);
         self.pwm_v.set_timestamp_a(pwm[1]);

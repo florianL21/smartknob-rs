@@ -4,7 +4,7 @@ use enterpolation::Signal;
 use enterpolation::linear::{Linear, LinearError};
 use fixed::types::I16F16;
 use foc::park_clarke;
-use foc::pwm::{Modulation, SpaceVector};
+use foc::pwm::Modulation;
 use log::info;
 use num_traits::Pow;
 use postcard::experimental::max_size::MaxSize;
@@ -14,9 +14,6 @@ use thiserror::Error;
 use super::encoder::AbsolutePositionEncoder;
 use super::motor_driver::MotorDriver;
 use crate::motor_control::encoder::{EncoderDirection, EncoderError, EncoderMeasurement};
-
-// TODO: This needs to be configurable
-const PWM_RESOLUTION: u16 = 999;
 
 // TODO: This needs to adapt to the configured pole pairs
 const MIN_ANGLE_DETECT_MOVEMENT: I16F16 = I16F16::lit("0.1");
@@ -117,10 +114,11 @@ impl CalibrationData {
     }
 }
 
-pub struct HapticSystem<E, D>
+pub struct HapticSystem<E, D, M, const PWM_RESOLUTION: u16>
 where
     E: AbsolutePositionEncoder,
-    D: MotorDriver,
+    D: MotorDriver<PWM_RESOLUTION>,
+    M: Modulation,
 {
     encoder: E,
     motor_driver: D,
@@ -128,18 +126,7 @@ where
     pole_pairs: I16F16,
     calibration: Option<CalibrationData>,
     last_activity: Instant,
-}
-
-fn get_phase_voltage(uq: I16F16, ud: I16F16, angle: I16F16) -> [u16; 3] {
-    let (sin_angle, cos_angle) = cordic::sin_cos(angle);
-    let orthogonal_voltage = park_clarke::inverse_park(
-        cos_angle,
-        sin_angle,
-        park_clarke::RotatingReferenceFrame { d: ud, q: uq },
-    );
-
-    // Modulate the result to PWM values
-    SpaceVector::as_compare_value::<PWM_RESOLUTION>(orthogonal_voltage)
+    phantom: core::marker::PhantomData<M>,
 }
 
 #[derive(Debug)]
@@ -148,7 +135,13 @@ struct DeviationAtAngle {
     deviation: I16F16,
 }
 
-impl<E: AbsolutePositionEncoder, D: MotorDriver> HapticSystem<E, D> {
+impl<
+    E: AbsolutePositionEncoder,
+    D: MotorDriver<PWM_RESOLUTION>,
+    M: Modulation,
+    const PWM_RESOLUTION: u16,
+> HapticSystem<E, D, M, PWM_RESOLUTION>
+{
     /// Create a new haptic system with its linked motor driver and encoder
     pub async fn new(
         mut encoder: E,
@@ -165,6 +158,7 @@ impl<E: AbsolutePositionEncoder, D: MotorDriver> HapticSystem<E, D> {
             pole_pairs: I16F16::from_num(pole_pairs),
             calibration: None,
             last_activity: Instant::now(),
+            phantom: core::marker::PhantomData,
         }
     }
 
@@ -195,8 +189,20 @@ impl<E: AbsolutePositionEncoder, D: MotorDriver> HapticSystem<E, D> {
         }
     }
 
+    fn get_phase_voltage(&self, uq: I16F16, ud: I16F16, angle: I16F16) -> [u16; 3] {
+        let (sin_angle, cos_angle) = cordic::sin_cos(angle);
+        let orthogonal_voltage = park_clarke::inverse_park(
+            cos_angle,
+            sin_angle,
+            park_clarke::RotatingReferenceFrame { d: ud, q: uq },
+        );
+
+        // Modulate the result to PWM values
+        M::as_compare_value::<PWM_RESOLUTION>(orthogonal_voltage)
+    }
+
     fn drive_phases_alignment(&mut self, set_angle: I16F16) {
-        self.motor_driver.set_pwm(&get_phase_voltage(
+        self.motor_driver.set_pwm(&self.get_phase_voltage(
             self.alignment_voltage,
             I16F16::ZERO,
             set_angle,
@@ -488,7 +494,7 @@ impl<E: AbsolutePositionEncoder, D: MotorDriver> HapticSystem<E, D> {
                 // Turn off the PWM output signals if no torque is being applied since the specified period
                 self.motor_driver.set_pwm(&[0; 3]);
             } else {
-                self.motor_driver.set_pwm(&get_phase_voltage(
+                self.motor_driver.set_pwm(&self.get_phase_voltage(
                     torque,
                     I16F16::ZERO,
                     electrical_angle,
@@ -515,7 +521,7 @@ impl<E: AbsolutePositionEncoder, D: MotorDriver> HapticSystem<E, D> {
         while start + duration > Instant::now() {
             let diff = I16F16::from_num(start.elapsed().as_micros());
             let angle = sin(I16F16::PI * diff / half_period_micros) * amplitude;
-            self.motor_driver.set_pwm(&get_phase_voltage(
+            self.motor_driver.set_pwm(&self.get_phase_voltage(
                 self.alignment_voltage,
                 I16F16::ZERO,
                 angle,
