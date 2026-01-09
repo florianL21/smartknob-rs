@@ -103,3 +103,43 @@ impl HapticPattern {
             .map(move |c| c.scale(scale))
     }
 }
+
+impl SequenceComponent {
+    /// Create a new haptic pattern
+    /// - `commands` is a list torque values over which this pattern should iterate.
+    ///   There is no timing information. The speed of the playback is determined by the caller.
+    /// - `repeat` defines how many times the pattern should be repeated.
+    /// - `multiply` defines how many times each command should be repeated before moving to the next command.
+    ///   This is effectively a time compensation factor.
+    pub fn pattern(commands: CommandVec, repeat: u16, multiply: u16, spill: f32) -> Self {
+        Self::Pattern {
+            spill: I16F16::from_num(spill),
+            commands,
+            repeat,
+            multiply,
+        }
+    }
+
+    pub fn play(&self, scale: I16F16) -> Option<impl Iterator<Item = Command>> {
+        match self {
+            Self::Pattern {
+                commands,
+                repeat,
+                multiply,
+                ..
+            } => {
+                let num = (repeat * multiply) as usize;
+                let mult = *multiply as usize;
+                Some(
+                    commands
+                        .iter()
+                        .cycle()
+                        .flat_map(move |item| iter::repeat_n(item, mult))
+                        .take(num)
+                        .map(move |c| c.scale(scale)),
+                )
+            }
+            Self::Nothing { .. } => None,
+        }
+    }
+}

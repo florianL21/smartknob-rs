@@ -24,8 +24,8 @@ const CALIBRATION_NUM_POINTS: usize = 20;
 const MAX_ALLOWED_ENCODER_DEVIATION: I16F16 = I16F16::lit("0.1");
 const ALIGN_DELAY: Duration = Duration::from_millis(1);
 
-const TORQUE_INACTIVITY_THRESHOLD: I16F16 = I16F16::lit("0.03");
-const INACTIVITY_DURATION: Duration = Duration::from_secs(1);
+const DEFUALT_TORQUE_INACTIVITY_THRESHOLD: I16F16 = I16F16::lit("0.03");
+const DEFAULT_INACTIVITY_DURATION: Duration = Duration::from_secs(1);
 
 type EncoderCalibrationCurve = Linear<
     enterpolation::Sorted<[f32; CALIBRATION_NUM_POINTS]>,
@@ -126,6 +126,8 @@ where
     pole_pairs: I16F16,
     calibration: Option<CalibrationData>,
     last_activity: Instant,
+    inactivity_threshold: I16F16,
+    inactivity_duration: Duration,
     phantom: core::marker::PhantomData<M>,
 }
 
@@ -146,7 +148,7 @@ impl<
     pub async fn new(
         mut encoder: E,
         motor_driver: D,
-        alignment_voltage: I16F16,
+        alignment_voltage: f32,
         pole_pairs: u8,
     ) -> Self {
         // Sample the encoder once to ge its initial position and have it set its internal state
@@ -154,12 +156,25 @@ impl<
         Self {
             encoder,
             motor_driver,
-            alignment_voltage,
+            alignment_voltage: I16F16::from_num(alignment_voltage),
             pole_pairs: I16F16::from_num(pole_pairs),
             calibration: None,
             last_activity: Instant::now(),
+            inactivity_duration: DEFAULT_INACTIVITY_DURATION,
+            inactivity_threshold: DEFUALT_TORQUE_INACTIVITY_THRESHOLD,
             phantom: core::marker::PhantomData,
         }
+    }
+
+    /// Change the inactivity threshold
+    /// If the motor output is below the given torque for longer than the given duration the motor driver will be switched off
+    pub fn set_inactivity_detection(
+        &mut self,
+        torque_threshold: f32,
+        inactivity_duration: Duration,
+    ) {
+        self.inactivity_threshold = I16F16::from_num(torque_threshold);
+        self.inactivity_duration = inactivity_duration;
     }
 
     /// get a reference to the current calibration data of the haptic system
@@ -260,17 +275,14 @@ impl<
         let mut meas = self.encoder.update().await?.angle;
         while meas >= ZERO_ANGLE_TOLERANCE {
             Timer::after(ALIGN_DELAY).await;
-            // info!("iter: {current_electrical_angle}; {meas}");
             self.drive_phases_alignment(current_electrical_angle);
             current_electrical_angle += search_step;
             meas = self.encoder.update().await?.angle;
         }
-        // info!("found zero: {current_electrical_angle}");
-        // Timer::after_secs(2).await;
         Ok(current_electrical_angle)
     }
 
-    async fn measure_non_linearity(
+    async fn compensate_none_linearity(
         &mut self,
     ) -> Result<EncoderCalibrationCurve, HapticSystemError<E::Error>> {
         let offset = self.go_to_encoder_zero().await?;
@@ -450,7 +462,7 @@ impl<
 
     pub async fn align(&mut self) -> Result<&CalibrationData, HapticSystemError<E::Error>> {
         let sensor_dir = self.set_sensor_direction().await?;
-        let cal_curve = self.measure_non_linearity().await?;
+        let cal_curve = self.compensate_none_linearity().await?;
         let cal_curve = self.validate_non_linearity_correction(cal_curve).await?;
         let electrical_angle_offset = self.find_electrical_angle_offset(&cal_curve).await?;
 
@@ -487,10 +499,10 @@ impl<
                 .calibration_curve
                 .compensate::<E::Error>(measurement.angle)?;
             let electrical_angle = cal_data.electrical_angle(compensated_angle);
-            if torque.abs() > TORQUE_INACTIVITY_THRESHOLD {
+            if torque.abs() > self.inactivity_threshold {
                 self.last_activity = Instant::now();
             }
-            if self.last_activity.elapsed() > INACTIVITY_DURATION {
+            if self.last_activity.elapsed() > self.inactivity_duration {
                 // Turn off the PWM output signals if no torque is being applied since the specified period
                 self.motor_driver.set_pwm(&[0; 3]);
             } else {
@@ -506,6 +518,7 @@ impl<
         }
     }
 
+    // TODO: Tune this properly
     pub fn play_tone(
         &mut self,
         freq: I16F16,
@@ -513,7 +526,7 @@ impl<
         volume: I16F16,
         note_offset: u32,
     ) {
-        let freq_offset = I16F16::from_num(1.059463094359_f32.pow(note_offset as f32));
+        let freq_offset = I16F16::from_num(1.059463_f32.pow(note_offset as f32));
         let amplitude = I16F16::from_num(0.5) * I16F16::PI * volume / I16F16::from_num(100);
         let half_period_micros =
             I16F16::from_num(1000000.0) / (I16F16::from_num(2.0) * (freq * freq_offset));

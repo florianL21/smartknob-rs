@@ -93,7 +93,7 @@ async fn main(spawner: Spawner) {
     let spi_bus = Spi::new(
         peripherals.SPI2,
         SpiConfig::default()
-            .with_frequency(Rate::from_khz(100))
+            .with_frequency(Rate::from_mhz(5))
             .with_mode(Mode::_0),
     )
     .unwrap()

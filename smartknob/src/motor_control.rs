@@ -8,7 +8,7 @@ use embassy_sync::{
     mutex::Mutex,
     signal::Signal,
 };
-use embassy_time::{Duration, Ticker, Timer};
+use embassy_time::{Duration, Timer};
 use encoder::MT6701Spi;
 use esp_backtrace as _;
 use esp_hal::{
@@ -41,9 +41,9 @@ pub static MOTOR_COMMAND_SIGNAL: Signal<CriticalSectionRawMutex, MotorCommand> =
 
 const ENCODER_SPI_DMA_BUFFER_SIZE: usize = 200;
 const PWM_RESOLUTION: u16 = 1800;
-const MOTOR_POLE_PAIRS: I16F16 = I16F16::lit("7");
+const MOTOR_POLE_PAIRS: u8 = 7;
 
-const ALIGNMENT_VOLTAGE: I16F16 = I16F16::lit("1.0");
+const ALIGNMENT_VOLTAGE: f32 = 1.0;
 
 pub enum MotorCommand {
     StartAlignment,
@@ -90,13 +90,8 @@ pub async fn update_foc(
     )
     .unwrap();
 
-    let mut haptics: HapticSystem<_, _, SpaceVector, _> = HapticSystem::new(
-        encoder,
-        motor_driver,
-        ALIGNMENT_VOLTAGE,
-        MOTOR_POLE_PAIRS.to_num(),
-    )
-    .await;
+    let mut haptics: HapticSystem<_, _, SpaceVector, _> =
+        HapticSystem::new(encoder, motor_driver, ALIGNMENT_VOLTAGE, MOTOR_POLE_PAIRS).await;
 
     // restore potential previous alignment data
     let mut buffer = [0u8; CalibrationData::POSTCARD_MAX_SIZE];
@@ -110,8 +105,6 @@ pub async fn update_foc(
         Ok(_) => {}
     }
 
-    let mut ticker = Ticker::every(Duration::from_millis(5));
-
     let test_curve = CurveBuilder::<6>::new()
         .add_eased(0.3, 1.0, 0.0, Easing::Cubic(EasingType::Out))
         .add_eased(0.5, 0.0, -1.0, Easing::Cubic(EasingType::In))
@@ -121,7 +114,7 @@ pub async fn update_foc(
         .unwrap()
         .make_absolute(I16F16::ZERO);
     let mut player = HapticPlayer::new(I16F16::ZERO, &test_curve).with_scale(2.0);
-
+    // This task intentionally does not sleep. It should run exclusively on one core
     loop {
         if let Some(sig) = MOTOR_COMMAND_SIGNAL.try_take() {
             match sig {
@@ -215,7 +208,5 @@ pub async fn update_foc(
                 }
             }
         }
-
-        ticker.next().await;
     }
 }
