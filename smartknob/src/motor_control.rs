@@ -39,7 +39,7 @@ pub static ENCODER_POSITION: AtomicF32 = AtomicF32::new(0.0);
 pub static MOTOR_COMMAND_SIGNAL: Signal<CriticalSectionRawMutex, MotorCommand> = Signal::new();
 
 const ENCODER_SPI_DMA_BUFFER_SIZE: usize = 200;
-const PWM_RESOLUTION: u16 = 999;
+const PWM_RESOLUTION: u16 = 2000;
 const MOTOR_POLE_PAIRS: I16F16 = I16F16::lit("7");
 
 const ALIGNMENT_VOLTAGE: I16F16 = I16F16::lit("1.0");
@@ -49,6 +49,12 @@ pub enum MotorCommand {
     TuneAlignment(I16F16),
     VerifyEncoder,
     TuneStore,
+    Beep {
+        freq: I16F16,
+        duration: Duration,
+        volume: I16F16,
+        note_offset: u32,
+    },
 }
 
 #[embassy_executor::task]
@@ -76,11 +82,13 @@ pub async fn update_foc(
 
     let motor_driver = MCPWM6::new(
         mcpwm0,
-        Rate::from_mhz(32),
+        Rate::from_mhz(40),
+        Rate::from_khz(20),
         pwm_pins,
         PWM_RESOLUTION,
         PWM_DEAD_TIME,
-    );
+    )
+    .unwrap();
 
     let mut haptics = HapticSystem::new(
         encoder,
@@ -162,6 +170,14 @@ pub async fn update_foc(
                     } else {
                         warn!("System was not yet calibrated. No value was stored!");
                     }
+                }
+                MotorCommand::Beep {
+                    freq,
+                    duration,
+                    volume,
+                    note_offset,
+                } => {
+                    haptics.play_tone(freq, duration, volume, note_offset);
                 }
             }
         }

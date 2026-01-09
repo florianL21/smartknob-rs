@@ -1,3 +1,4 @@
+use cordic::sin;
 use embassy_time::{Duration, Instant, Timer};
 use enterpolation::Signal;
 use enterpolation::linear::{Linear, LinearError};
@@ -5,6 +6,7 @@ use fixed::types::I16F16;
 use foc::park_clarke;
 use foc::pwm::{Modulation, SpaceVector};
 use log::info;
+use num_traits::Pow;
 use postcard::experimental::max_size::MaxSize;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -495,6 +497,29 @@ impl<E: AbsolutePositionEncoder, D: MotorDriver> HapticSystem<E, D> {
             Ok(())
         } else {
             Err(HapticSystemError::NotYetCalibrated)
+        }
+    }
+
+    pub fn play_tone(
+        &mut self,
+        freq: I16F16,
+        duration: Duration,
+        volume: I16F16,
+        note_offset: u32,
+    ) {
+        let freq_offset = I16F16::from_num(1.059463094359_f32.pow(note_offset as f32));
+        let amplitude = I16F16::from_num(0.5) * I16F16::PI * volume / I16F16::from_num(100);
+        let half_period_micros =
+            I16F16::from_num(1000000.0) / (I16F16::from_num(2.0) * (freq * freq_offset));
+        let start = Instant::now();
+        while start + duration > Instant::now() {
+            let diff = I16F16::from_num(start.elapsed().as_micros());
+            let angle = sin(I16F16::PI * diff / half_period_micros) * amplitude;
+            self.motor_driver.set_pwm(&get_phase_voltage(
+                self.alignment_voltage,
+                I16F16::ZERO,
+                angle,
+            ));
         }
     }
 }

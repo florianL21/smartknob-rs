@@ -4,9 +4,9 @@ use super::MotorDriver;
 use esp_hal::{
     gpio::interconnect::PeripheralOutput,
     mcpwm::{
+        FrequencyError, McPwm, PeripheralClockConfig, PwmPeripheral,
         operator::{DeadTimeCfg, LinkedPins, PwmPinConfig},
         timer::PwmWorkingMode,
-        McPwm, PeripheralClockConfig, PwmPeripheral,
     },
     time::Rate,
 };
@@ -45,12 +45,13 @@ impl<'a, PWM: PwmPeripheral + 'a> MCPWM6<'a, PWM> {
     /// `pwm_dead_time` is relative to the PWM value of the `pwm_resolution`
     pub fn new<P: PeripheralOutput<'a>>(
         peripheral: PWM,
-        frequency: Rate,
+        clock_frequency: Rate,
+        target_frequency: Rate,
         pwm_pins: Pins6PWM<'a, P>,
         pwm_resolution: u16,
         pwm_dead_time: u16,
-    ) -> Self {
-        let clock_cfg = PeripheralClockConfig::with_frequency(frequency).unwrap();
+    ) -> Result<Self, FrequencyError> {
+        let clock_cfg = PeripheralClockConfig::with_frequency(clock_frequency)?;
         let mut mcpwm = McPwm::new(peripheral, clock_cfg);
 
         mcpwm.operator0.set_timer(&mcpwm.timer0);
@@ -95,19 +96,17 @@ impl<'a, PWM: PwmPeripheral + 'a> MCPWM6<'a, PWM> {
 
         // period here is in relation to all other periods.
         // Dead time and set_timestamp methods respectively
-        let timer_clock_cfg = clock_cfg
-            .timer_clock_with_frequency(
-                pwm_resolution,
-                PwmWorkingMode::Increase,
-                Rate::from_khz(25),
-            )
-            .unwrap();
+        let timer_clock_cfg = clock_cfg.timer_clock_with_frequency(
+            pwm_resolution,
+            PwmWorkingMode::Increase,
+            target_frequency,
+        )?;
         mcpwm.timer0.start(timer_clock_cfg);
-        MCPWM6 {
+        Ok(MCPWM6 {
             pwm_u,
             pwm_v,
             pwm_w,
-        }
+        })
     }
 }
 

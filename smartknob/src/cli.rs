@@ -1,6 +1,7 @@
 use alloc::format;
 use core::{convert::Infallible, fmt::Debug, str::Utf8Error};
 use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, channel::Channel};
+use embassy_time::Duration;
 use embedded_cli::{Command, CommandGroup, cli::CliBuilder};
 use embedded_io_async::{Read, Write};
 use esp_backtrace as _;
@@ -192,6 +193,17 @@ enum Motor {
     },
     /// Save the modified current electrical angle offset to flash
     TuneStore,
+    /// Make a beep sound
+    Beep {
+        /// Frequency of the beep
+        freq: f32,
+        /// duration in ms
+        duration: u64,
+        /// volume in % between 0 and 100
+        volume: f32,
+        /// Note offsetfreq
+        note_offset: u32,
+    },
 }
 
 impl Motor {
@@ -224,6 +236,19 @@ impl Motor {
             }
             Motor::TuneStore => {
                 MOTOR_COMMAND_SIGNAL.signal(MotorCommand::TuneStore);
+            }
+            Motor::Beep {
+                freq,
+                duration,
+                volume,
+                note_offset,
+            } => {
+                MOTOR_COMMAND_SIGNAL.signal(MotorCommand::Beep {
+                    freq: I16F16::from_num(*freq),
+                    duration: Duration::from_millis(*duration),
+                    volume: I16F16::from_num(*volume),
+                    note_offset: *note_offset,
+                });
             }
         }
         Ok(())

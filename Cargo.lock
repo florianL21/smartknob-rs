@@ -5152,6 +5152,7 @@ dependencies = [
  "mipidsi",
  "mt6701",
  "nalgebra",
+ "num-traits",
  "postcard",
  "serde",
  "slint",
