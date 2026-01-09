@@ -1,6 +1,5 @@
 use alloc::format;
 use core::{convert::Infallible, fmt::Debug, str::Utf8Error};
-use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, channel::Channel};
 use embassy_time::Duration;
 use embedded_cli::{Command, CommandGroup, cli::CliBuilder};
 use embedded_io_async::{Read, Write};
@@ -17,10 +16,8 @@ use crate::{
     display::DISPLAY_BRIGHTNESS_SIGNAL,
     flash::{FlashError, FlashHandler, FlashKeys},
     motor_control::MotorCommand,
-    signals::{LOG_TOGGLES, MOTOR_COMMAND_SIGNAL, REQUEST_POWER_DOWN},
+    signals::{MOTOR_COMMAND_SIGNAL, REQUEST_POWER_DOWN},
 };
-
-pub static KEY_PRESS_EVENTS: Channel<CriticalSectionRawMutex, u8, 10> = Channel::new();
 
 #[derive(Error, Debug)]
 pub enum HandlerError {
@@ -287,7 +284,11 @@ impl Display {
 }
 
 #[embassy_executor::task]
-pub async fn menu_handler(serial: UsbSerialJtag<'static, Async>, flash: &'static FlashHandler) {
+pub async fn menu_handler(
+    serial: UsbSerialJtag<'static, Async>,
+    flash: &'static FlashHandler,
+    log_toggle_sender: LogToggleSender,
+) {
     let mut buffer = [0u8; LogChannelToggles::POSTCARD_MAX_SIZE];
     let initial_log_toggles =
         if let Ok(Some(t)) = flash.load(FlashKeys::LogChannels, &mut buffer).await {
@@ -296,7 +297,7 @@ pub async fn menu_handler(serial: UsbSerialJtag<'static, Async>, flash: &'static
             LogChannelToggles::default()
         };
     let mut context = Context {
-        sender: LOG_TOGGLES.sender(),
+        sender: log_toggle_sender,
         logging_config: LogToggles {
             active: true,
             config: initial_log_toggles,
@@ -337,7 +338,6 @@ pub async fn menu_handler(serial: UsbSerialJtag<'static, Async>, flash: &'static
         // if the interface is not open open it and skip processing the CLI
         if !context.interface_open {
             if buf[0] != 13 {
-                KEY_PRESS_EVENTS.send(buf[0]).await;
                 continue;
             }
             context.interface_open = true;

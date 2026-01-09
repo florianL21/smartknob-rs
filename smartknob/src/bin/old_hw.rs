@@ -4,8 +4,11 @@
 extern crate alloc;
 
 use embassy_executor::Spawner;
+use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use esp_backtrace as _;
+use esp_hal::interrupt::software::SoftwareInterruptControl;
 use esp_hal::psram::{FlashFreq, PsramConfig, SpiRamFreq};
+use esp_hal::system::Stack;
 use esp_hal::timer::timg::TimerGroup;
 use esp_hal::{
     clock::CpuClock,
@@ -17,8 +20,11 @@ use esp_hal::{
     time::Rate,
     usb_serial_jtag::UsbSerialJtag,
 };
+use esp_rtos::embassy::Executor;
 use log::info;
 
+use smartknob_rs::config::LogToggleWatcher;
+use smartknob_rs::flash::flash_task;
 use smartknob_rs::{
     cli::menu_handler,
     flash::FlashHandler,
@@ -55,6 +61,10 @@ async fn main(spawner: Spawner) {
 
     static FLASH: StaticCell<FlashHandler> = StaticCell::new();
     let flash = FLASH.init(f);
+    spawner.must_spawn(flash_task(flash));
+
+    static LOG_TOGGLES: StaticCell<LogToggleWatcher<NoopRawMutex, 6>> = StaticCell::new();
+    let log_toggles = LOG_TOGGLES.init(LogToggleWatcher::new());
 
     // -DPIN_UH=46
     //   -DPIN_UL=2
@@ -90,37 +100,49 @@ async fn main(spawner: Spawner) {
     let pin_mag_csn = peripherals.GPIO11;
     // let _pin_mag_push = peripherals.GPIO3;
 
-    let spi_bus = Spi::new(
-        peripherals.SPI2,
-        SpiConfig::default()
-            .with_frequency(Rate::from_mhz(5))
-            .with_mode(Mode::_0),
-    )
-    .unwrap()
-    .with_sck(pin_mag_clk)
-    .with_miso(pin_mag_do)
-    .with_dma(peripherals.DMA_CH0);
+    let sw_int = SoftwareInterruptControl::new(peripherals.SW_INTERRUPT);
+    static APP_CORE_STACK: StaticCell<Stack<32768>> = StaticCell::new();
+    let app_core_stack = APP_CORE_STACK.init(Stack::new());
 
-    let mag_cs = Output::new(pin_mag_csn, Level::Low, OutputConfig::default());
-    let pwm_pins = Pins6PWM::new(
-        pin_tmc_uh.into(),
-        pin_tmc_ul.into(),
-        pin_tmc_vh.into(),
-        pin_tmc_vl.into(),
-        pin_tmc_wh.into(),
-        pin_tmc_wl.into(),
+    esp_rtos::start_second_core(
+        peripherals.CPU_CTRL,
+        sw_int.software_interrupt0,
+        sw_int.software_interrupt1,
+        app_core_stack,
+        move || {
+            static EXECUTOR: StaticCell<Executor> = StaticCell::new();
+            let executor = EXECUTOR.init(Executor::new());
+            executor.run(|spawner| {
+                let spi_bus = Spi::new(
+                    peripherals.SPI2,
+                    SpiConfig::default()
+                        .with_frequency(Rate::from_mhz(5))
+                        .with_mode(Mode::_0),
+                )
+                .unwrap()
+                .with_sck(pin_mag_clk)
+                .with_miso(pin_mag_do)
+                .with_dma(peripherals.DMA_CH0);
+
+                let mag_cs = Output::new(pin_mag_csn, Level::Low, OutputConfig::default());
+                let pwm_pins = Pins6PWM::new(
+                    pin_tmc_uh.into(),
+                    pin_tmc_ul.into(),
+                    pin_tmc_vh.into(),
+                    pin_tmc_vl.into(),
+                    pin_tmc_wh.into(),
+                    pin_tmc_wl.into(),
+                );
+
+                spawner.must_spawn(update_foc(spi_bus, mag_cs, peripherals.MCPWM0, pwm_pins));
+            });
+        },
     );
 
-    spawner.must_spawn(update_foc(
-        spi_bus,
-        mag_cs,
-        peripherals.MCPWM0,
-        pwm_pins,
-        flash,
-    ));
-
     let serial = UsbSerialJtag::new(peripherals.USB_DEVICE).into_async();
-    spawner.spawn(menu_handler(serial, flash)).ok();
+    spawner
+        .spawn(menu_handler(serial, flash, log_toggles.dyn_sender()))
+        .ok();
 
     info!("All tasks spawned");
     let stats = esp_alloc::HEAP.stats();

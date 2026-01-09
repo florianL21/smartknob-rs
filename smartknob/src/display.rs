@@ -1,6 +1,6 @@
 use alloc::boxed::Box;
 use alloc::rc::Rc;
-use embassy_executor::Spawner;
+use embassy_executor::{SpawnError, Spawner};
 use embassy_sync::pubsub::WaitResult;
 use embassy_sync::signal::Signal;
 use esp_hal::analog::adc::{Adc, AdcCalBasic, AdcConfig, Attenuation};
@@ -15,7 +15,7 @@ use slint::platform::Platform;
 use slint::platform::WindowEvent;
 use slint::platform::software_renderer::{MinimalSoftwareWindow, Rgb565Pixel};
 
-use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
+use embassy_sync::blocking_mutex::raw::{CriticalSectionRawMutex, RawMutex};
 
 use embassy_sync::{blocking_mutex::raw::NoopRawMutex, mutex::Mutex};
 use embassy_time::{Delay, Duration, Instant, Ticker, Timer};
@@ -30,8 +30,9 @@ use mipidsi::asynchronous::{
     models::{GC9A01, Model},
     options::{ColorInversion, ColorOrder},
 };
+use thiserror::Error;
 
-use crate::config::{LOG_TOGGLES, LogChannel, may_log};
+use crate::config::{LogChannel, LogToggleReceiver, LogToggleWatcher, may_log};
 use crate::knob_tilt::KnobTiltEvent;
 use crate::signals::{ENCODER_POSITION, KNOB_EVENTS_CHANNEL, KNOB_TILT_ANGLE, KNOB_TILT_MAGNITUDE};
 
@@ -72,19 +73,49 @@ pub struct BacklightHandles {
     pub backlight_output: Output<'static>,
 }
 
-pub fn spawn_display_tasks(
+#[derive(Error, Debug)]
+pub enum DisplayTaskError {
+    #[error("Log receiver has no more capacity. Increase the max number of log receivers")]
+    LogReceiverOutOfCapacity,
+    #[error("Failed to spawn at least one required task: {0}")]
+    FailedToSpawnTask(#[from] SpawnError),
+}
+
+pub fn spawn_display_tasks<M: RawMutex, const N: usize>(
     spawner: Spawner,
     display_handles: DisplayHandles,
     backlight_handles: BacklightHandles,
-) {
+    log_toggles: &'static LogToggleWatcher<M, N>,
+) -> Result<(), DisplayTaskError> {
     static TX: FrameBufferExchange = FrameBufferExchange::new();
     static RX: FrameBufferExchange = FrameBufferExchange::new();
     let (fb0, fb1) = init_fbs_heap();
 
-    spawner.must_spawn(display_task(display_handles, &RX, &TX, fb1));
-    spawner.must_spawn(render_task(&TX, &RX, fb0));
-    spawner.must_spawn(ui_task());
-    spawner.must_spawn(brightness_task(backlight_handles));
+    spawner.spawn(display_task(
+        display_handles,
+        &RX,
+        &TX,
+        fb1,
+        log_toggles
+            .dyn_receiver()
+            .ok_or(DisplayTaskError::LogReceiverOutOfCapacity)?,
+    ))?;
+    spawner.spawn(render_task(
+        &TX,
+        &RX,
+        fb0,
+        log_toggles
+            .dyn_receiver()
+            .ok_or(DisplayTaskError::LogReceiverOutOfCapacity)?,
+    ))?;
+    spawner.spawn(ui_task())?;
+    spawner.spawn(brightness_task(
+        backlight_handles,
+        log_toggles
+            .dyn_receiver()
+            .ok_or(DisplayTaskError::LogReceiverOutOfCapacity)?,
+    ))?;
+    Ok(())
 }
 
 struct MyPlatform {
@@ -152,10 +183,8 @@ pub async fn display_task(
     rx: &'static FrameBufferExchange,
     tx: &'static FrameBufferExchange,
     fb: &'static mut FBType,
+    mut log_receiver: LogToggleReceiver,
 ) {
-    let mut log_receiver = LOG_TOGGLES
-        .receiver()
-        .expect("Could not create log receiver. Increase the receiver count");
     let (rx_buffer, rx_descriptors, tx_buffer, tx_descriptors) =
         dma_buffers!(DISPLAY_SPI_DMA_BUFFER_SIZE);
     let dma_rx_buf = DmaRxBuf::new(rx_descriptors, rx_buffer).unwrap();
@@ -214,10 +243,8 @@ pub async fn render_task(
     rx: &'static FrameBufferExchange,
     tx: &'static FrameBufferExchange,
     mut fb: &'static mut FBType,
+    mut log_receiver: LogToggleReceiver,
 ) {
-    let mut log_receiver = LOG_TOGGLES
-        .receiver()
-        .expect("Could not create log receiver. Increase the receiver count");
     let mut knob_tilt = KNOB_EVENTS_CHANNEL.subscriber().expect(
         "Could not get knob event channel subscriber. Please increase number of maximal subs",
     );
@@ -345,11 +372,7 @@ pub async fn ui_task() {
 }
 
 #[embassy_executor::task]
-async fn brightness_task(handles: BacklightHandles) {
-    let mut log_receiver = LOG_TOGGLES
-        .receiver()
-        .expect("Log toggle receiver had not enough capacity");
-
+async fn brightness_task(handles: BacklightHandles, mut log_receiver: LogToggleReceiver) {
     let mut current_brightness = 0;
 
     // backlight control

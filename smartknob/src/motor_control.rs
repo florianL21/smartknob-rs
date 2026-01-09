@@ -1,8 +1,9 @@
 pub mod encoder;
-mod haptic_system;
+pub mod haptic_system;
 pub mod motor_driver;
 
 use atomic_float::AtomicF32;
+use embassy_embedded_hal::shared_bus::asynch::spi::SpiDevice;
 use embassy_sync::{
     blocking_mutex::raw::{CriticalSectionRawMutex, NoopRawMutex},
     mutex::Mutex,
@@ -21,15 +22,13 @@ use esp_hal::{
 use fixed::types::I16F16;
 use foc::pwm::SpaceVector;
 use haptic_lib::{Command, CurveBuilder, Easing, EasingType, HapticPlayer, Playback};
-use postcard::experimental::max_size::MaxSize;
-
-use embassy_embedded_hal::shared_bus::asynch::spi::SpiDevice;
 use log::{error, info, warn};
 
+pub use crate::motor_control::haptic_system::CalibrationData;
 use crate::{
-    flash::{FlashHandler, FlashKeys},
+    flash::{FLASH_LOAD_REQUEST, FLASH_LOAD_RESPONSE, FLASH_STORE_SIGNAL},
     motor_control::{
-        haptic_system::{CalibrationData, HapticSystem},
+        haptic_system::HapticSystem,
         motor_driver::mcpwm::{MCPWM6, Pins6PWM},
     },
 };
@@ -64,7 +63,6 @@ pub async fn update_foc(
     mag_csn: Output<'static>,
     mcpwm0: esp_hal::peripherals::MCPWM0<'static>,
     pwm_pins: Pins6PWM<'static, AnyPin<'static>>,
-    flash: &'static FlashHandler,
 ) {
     // about 2% dead time
     const PWM_DEAD_TIME: u16 = 20;
@@ -94,15 +92,10 @@ pub async fn update_foc(
         HapticSystem::new(encoder, motor_driver, ALIGNMENT_VOLTAGE, MOTOR_POLE_PAIRS).await;
 
     // restore potential previous alignment data
-    let mut buffer = [0u8; CalibrationData::POSTCARD_MAX_SIZE];
-
-    match flash.load(FlashKeys::MotorAlignment, &mut buffer).await {
-        Ok(Some(cal)) => {
-            info!("Restored motor alignment data from flash");
-            haptics.restore_calibration(cal)
-        }
-        Err(e) => error!("Failed to read cal data from flash: {e}"),
-        Ok(_) => {}
+    FLASH_LOAD_REQUEST.signal(());
+    if let Some(cal) = FLASH_LOAD_RESPONSE.wait().await {
+        info!("Restored motor alignment data from flash");
+        haptics.restore_calibration(cal)
     }
 
     let test_curve = CurveBuilder::<6>::new()
@@ -120,15 +113,10 @@ pub async fn update_foc(
             match sig {
                 MotorCommand::StartAlignment => {
                     let result = haptics.align().await;
-                    if let Ok(cal_data) = result
-                        && let Err(e) = flash
-                            .store::<_, { CalibrationData::POSTCARD_MAX_SIZE }>(
-                                &FlashKeys::MotorAlignment,
-                                cal_data,
-                            )
-                            .await
-                    {
-                        error!("Failed to save calibration data to flash: {e}");
+                    if let Ok(cal_data) = result {
+                        FLASH_STORE_SIGNAL.signal(*cal_data);
+                    } else {
+                        error!("There is no calibration data to store");
                     }
 
                     info!("Alignment result: {result:?}");
@@ -149,17 +137,7 @@ pub async fn update_foc(
                 },
                 MotorCommand::TuneStore => {
                     if let Some(cal) = haptics.get_cal_data() {
-                        if let Err(e) = flash
-                            .store::<_, { CalibrationData::POSTCARD_MAX_SIZE }>(
-                                &FlashKeys::MotorAlignment,
-                                cal,
-                            )
-                            .await
-                        {
-                            error!("Failed to store calibration to flash: {e}");
-                        } else {
-                            info!("Stored successfully!")
-                        }
+                        FLASH_STORE_SIGNAL.signal(*cal);
                     } else {
                         warn!("System was not yet calibrated. No value was stored!");
                     }

@@ -34,7 +34,9 @@ use smart_leds::{
     colors::{BLACK, BLUE, RED},
     gamma,
 };
+use smartknob_rs::config::{LogToggleReceiver, LogToggleWatcher};
 use smartknob_rs::display::BacklightHandles;
+use smartknob_rs::flash::flash_task;
 use smartknob_rs::signals::{KNOB_EVENTS_CHANNEL, KNOB_TILT_ANGLE};
 use smartknob_rs::{
     cli::menu_handler,
@@ -44,7 +46,7 @@ use smartknob_rs::{
     knob_tilt::{KnobTiltEvent, read_ldc_task},
     motor_control::{motor_driver::mcpwm::Pins6PWM, update_foc},
     shutdown::shutdown_handler,
-    signals::{ENCODER_POSITION, LOG_TOGGLES},
+    signals::ENCODER_POSITION,
 };
 use static_cell::StaticCell;
 
@@ -53,10 +55,7 @@ esp_bootloader_esp_idf::esp_app_desc!();
 type I2cBus1 = Mutex<NoopRawMutex, esp_hal::i2c::master::I2c<'static, esp_hal::Async>>;
 
 #[embassy_executor::task]
-async fn log_rotations() {
-    let mut log_receiver = LOG_TOGGLES
-        .receiver()
-        .expect("Log toggle receiver had not enough capacity");
+async fn log_rotations(mut log_receiver: LogToggleReceiver) {
     info!("Log encoder init done!");
     loop {
         may_log(&mut log_receiver, LogChannel::Encoder, || {
@@ -88,13 +87,11 @@ fn map<
 async fn led_ring(
     rmt_channel: esp_hal::rmt::ChannelCreator<'static, esp_hal::Blocking, 0>,
     led_pin: AnyPin<'static>,
+    mut log_receiver: LogToggleReceiver,
 ) {
     const NUM_LEDS: usize = 24;
     const _LED_OFFSET: usize = 1;
 
-    let mut log_receiver = LOG_TOGGLES
-        .receiver()
-        .expect("Log toggle receiver had not enough capacity");
     let mut tilt_receiver = KNOB_EVENTS_CHANNEL.subscriber()
     .expect("No subscriber channels were left for the knob events channel. Consider increating tha number of subscribers");
 
@@ -181,6 +178,8 @@ async fn main(spawner: Spawner) {
     static FLASH: StaticCell<FlashHandler> = StaticCell::new();
     let flash = FLASH.init(f);
 
+    spawner.must_spawn(flash_task(flash));
+
     // Pins for LDC1614
     let pins_ldc_int_pin = peripherals.GPIO40;
     let pins_i2c_scl = peripherals.GPIO42;
@@ -218,8 +217,10 @@ async fn main(spawner: Spawner) {
     let brightness_sensor_pin = peripherals.GPIO4;
     let power_off_pin = peripherals.GPIO38;
 
-    // Encoder initialization
+    static LOG_TOGGLES: StaticCell<LogToggleWatcher<NoopRawMutex, 6>> = StaticCell::new();
+    let log_toggles = LOG_TOGGLES.init(LogToggleWatcher::new());
 
+    // Encoder initialization
     let sw_int = SoftwareInterruptControl::new(peripherals.SW_INTERRUPT);
     static APP_CORE_STACK: StaticCell<Stack<32768>> = StaticCell::new();
     let app_core_stack = APP_CORE_STACK.init(Stack::new());
@@ -254,19 +255,15 @@ async fn main(spawner: Spawner) {
                     pin_tmc_wl.into(),
                 );
 
-                spawner.must_spawn(update_foc(
-                    spi_bus,
-                    mag_cs,
-                    peripherals.MCPWM0,
-                    pwm_pins,
-                    flash,
-                ));
-
-                let serial = UsbSerialJtag::new(peripherals.USB_DEVICE).into_async();
-                spawner.spawn(menu_handler(serial, flash)).ok();
+                spawner.must_spawn(update_foc(spi_bus, mag_cs, peripherals.MCPWM0, pwm_pins));
             });
         },
     );
+
+    let serial = UsbSerialJtag::new(peripherals.USB_DEVICE).into_async();
+    spawner
+        .spawn(menu_handler(serial, flash, log_toggles.dyn_sender()))
+        .ok();
 
     // LDC sensor
     let i2c_bus: I2c<'_, esp_hal::Async> = I2c::new(
@@ -285,11 +282,15 @@ async fn main(spawner: Spawner) {
     spawner.must_spawn(read_ldc_task(i2c_bus, ldc_int_pin));
 
     // log encoder values
-    spawner.must_spawn(log_rotations());
+    spawner.must_spawn(log_rotations(log_toggles.dyn_receiver().unwrap()));
 
     // LED ring
     let rmt = Rmt::new(peripherals.RMT, Rate::from_mhz(80)).unwrap();
-    spawner.must_spawn(led_ring(rmt.channel0, pin_led_data.into()));
+    spawner.must_spawn(led_ring(
+        rmt.channel0,
+        pin_led_data.into(),
+        log_toggles.dyn_receiver().unwrap(),
+    ));
 
     // Display
     let spi_bus: spi::master::SpiDma<'_, esp_hal::Blocking> = Spi::new(
@@ -317,7 +318,7 @@ async fn main(spawner: Spawner) {
         ledc: Ledc::new(peripherals.LEDC),
     };
 
-    spawn_display_tasks(spawner, display_handles, backlight_stuff);
+    spawn_display_tasks(spawner, display_handles, backlight_stuff, log_toggles).unwrap();
 
     let power_off_pin = Output::new(power_off_pin, Level::High, OutputConfig::default());
     spawner.must_spawn(shutdown_handler(power_off_pin));

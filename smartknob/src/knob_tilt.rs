@@ -15,6 +15,7 @@ use nalgebra::{Rotation2, Vector2};
 
 type I2cBus1 = Mutex<NoopRawMutex, esp_hal::i2c::master::I2c<'static, esp_hal::Async>>;
 
+//TODO: make configurable from the outside
 pub static KNOB_EVENTS_CHANNEL: PubSubChannel<CriticalSectionRawMutex, KnobTiltEvent, 10, 4, 1> =
     PubSubChannel::new();
 

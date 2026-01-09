@@ -1,25 +1,13 @@
 use alloc::string::{String, ToString};
-use embassy_sync::{
-    blocking_mutex::raw::CriticalSectionRawMutex,
-    watch::{self, Watch},
-};
+use embassy_sync::watch::{self, Watch};
 use postcard::experimental::max_size::MaxSize;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use ufmt::{derive::uDebug, uDisplay, uwriteln};
 
-const NUM_LOG_TOGGLE_WATCHER_RECEIVERS: usize = 5;
-
-pub type LogToggleSender =
-    watch::Sender<'static, CriticalSectionRawMutex, LogToggles, NUM_LOG_TOGGLE_WATCHER_RECEIVERS>;
-pub type LogToggleReceiver =
-    watch::Receiver<'static, CriticalSectionRawMutex, LogToggles, NUM_LOG_TOGGLE_WATCHER_RECEIVERS>;
-
-pub static LOG_TOGGLES: Watch<
-    CriticalSectionRawMutex,
-    LogToggles,
-    NUM_LOG_TOGGLE_WATCHER_RECEIVERS,
-> = Watch::new();
+pub type LogToggleSender = watch::DynSender<'static, LogToggles>;
+pub type LogToggleReceiver = watch::DynReceiver<'static, LogToggles>;
+pub type LogToggleWatcher<M, const N: usize> = Watch<M, LogToggles, N>;
 
 #[derive(Error, Debug)]
 pub enum ConfigError {

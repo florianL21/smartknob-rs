@@ -1,17 +1,21 @@
 extern crate alloc;
 
+use crate::motor_control::CalibrationData;
 use alloc::format;
 use ekv::flash::{self, PageID};
 use ekv::{Database, ReadError, config};
-use embassy_sync::blocking_mutex::raw::NoopRawMutex;
+use embassy_futures::select;
+use embassy_sync::blocking_mutex::raw::{CriticalSectionRawMutex, NoopRawMutex};
+use embassy_sync::signal::Signal;
 use embedded_storage::nor_flash::{NorFlash, ReadNorFlash};
 use esp_backtrace as _;
 use esp_bootloader_esp_idf::partitions::{self, FlashRegion};
 use esp_hal::peripherals::FLASH;
 use esp_storage::FlashStorage;
-use log::{info, warn};
+use log::{error, info, warn};
 use postcard::Deserializer;
 use postcard::de_flavors::Slice;
+use postcard::experimental::max_size::MaxSize;
 use serde::{Deserialize, Serialize};
 use static_cell::make_static;
 use thiserror::Error;
@@ -20,6 +24,12 @@ use ufmt::uDebug;
 pub type FlashType<'a> =
     Database<PersistentStorage<FlashRegion<'a, FlashStorage<'a>>>, NoopRawMutex>;
 pub type FlashErrorType = esp_bootloader_esp_idf::partitions::Error;
+
+pub(crate) static FLASH_STORE_SIGNAL: Signal<CriticalSectionRawMutex, CalibrationData> =
+    Signal::new();
+pub(crate) static FLASH_LOAD_RESPONSE: Signal<CriticalSectionRawMutex, Option<CalibrationData>> =
+    Signal::new();
+pub(crate) static FLASH_LOAD_REQUEST: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 
 // Workaround for alignment requirements.
 #[repr(C, align(4))]
@@ -209,5 +219,35 @@ impl FlashHandler {
     /// After all init operations are finished on the flash this method can be used to get the underlying struct back
     pub fn eject(self) -> FlashType<'static> {
         self.flash
+    }
+}
+
+#[embassy_executor::task]
+pub async fn flash_task(flash: &'static FlashHandler) {
+    loop {
+        match select::select(FLASH_LOAD_REQUEST.wait(), FLASH_STORE_SIGNAL.wait()).await {
+            select::Either::First(_) => {
+                let mut buffer = [0u8; CalibrationData::POSTCARD_MAX_SIZE];
+                match flash.load(FlashKeys::MotorAlignment, &mut buffer).await {
+                    Ok(cal) => {
+                        FLASH_LOAD_RESPONSE.signal(cal);
+                    }
+                    Err(e) => error!("Failed to read cal data from flash: {e}"),
+                }
+            }
+            select::Either::Second(cal) => {
+                if let Err(e) = flash
+                    .store::<_, { CalibrationData::POSTCARD_MAX_SIZE }>(
+                        &FlashKeys::MotorAlignment,
+                        &cal,
+                    )
+                    .await
+                {
+                    error!("Failed to store calibration to flash: {e}");
+                } else {
+                    info!("Stored successfully!")
+                }
+            }
+        }
     }
 }
