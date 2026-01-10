@@ -8,6 +8,7 @@ use esp_hal::{Async, usb_serial_jtag::UsbSerialJtag};
 use fixed::types::I16F16;
 use log::info;
 use postcard::experimental::max_size::MaxSize;
+use smartknob_core::haptic_core::MotorCommand;
 use thiserror::Error;
 use ufmt::{uDebug, uwrite};
 
@@ -15,7 +16,6 @@ use crate::{
     config::{ConfigError, LogChannelToggles, LogToggleSender, LogToggles},
     display::DISPLAY_BRIGHTNESS_SIGNAL,
     flash::{FlashError, FlashHandler, FlashKeys},
-    motor_control::MotorCommand,
     signals::{MOTOR_COMMAND_SIGNAL, REQUEST_POWER_DOWN},
 };
 

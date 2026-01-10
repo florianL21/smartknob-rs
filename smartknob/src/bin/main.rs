@@ -34,6 +34,8 @@ use smart_leds::{
     colors::{BLACK, BLUE, RED},
     gamma,
 };
+use smartknob_core::haptic_core::get_encoder_position;
+use smartknob_esp32::motor_driver::mcpwm::Pins6PWM;
 use smartknob_rs::config::{LogToggleReceiver, LogToggleWatcher};
 use smartknob_rs::display::BacklightHandles;
 use smartknob_rs::flash::flash_task;
@@ -44,9 +46,8 @@ use smartknob_rs::{
     display::{DisplayHandles, spawn_display_tasks},
     flash::FlashHandler,
     knob_tilt::{KnobTiltEvent, read_ldc_task},
-    motor_control::{motor_driver::mcpwm::Pins6PWM, update_foc},
+    motor_control::update_foc,
     shutdown::shutdown_handler,
-    signals::ENCODER_POSITION,
 };
 use static_cell::StaticCell;
 
@@ -59,7 +60,7 @@ async fn log_rotations(mut log_receiver: LogToggleReceiver) {
     info!("Log encoder init done!");
     loop {
         may_log(&mut log_receiver, LogChannel::Encoder, || {
-            let pos = ENCODER_POSITION.load(core::sync::atomic::Ordering::Relaxed);
+            let pos = get_encoder_position();
             info!("Position: {pos}")
         })
         .await;

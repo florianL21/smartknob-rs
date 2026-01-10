@@ -30,11 +30,12 @@ use mipidsi::asynchronous::{
     models::{GC9A01, Model},
     options::{ColorInversion, ColorOrder},
 };
+use smartknob_core::haptic_core::get_encoder_position;
 use thiserror::Error;
 
 use crate::config::{LogChannel, LogToggleReceiver, LogToggleWatcher, may_log};
 use crate::knob_tilt::KnobTiltEvent;
-use crate::signals::{ENCODER_POSITION, KNOB_EVENTS_CHANNEL, KNOB_TILT_ANGLE, KNOB_TILT_MAGNITUDE};
+use crate::signals::{KNOB_EVENTS_CHANNEL, KNOB_TILT_ANGLE, KNOB_TILT_MAGNITUDE};
 
 slint::include_modules!();
 
@@ -266,7 +267,7 @@ pub async fn render_task(
     SLINT_READY_SIGNAL.signal(());
     let mut ticker = Ticker::every(TARGET_FRAME_DURATION);
     let mut last_key = slint::platform::Key::Space;
-    let mut last_encoder_position = ENCODER_POSITION.load(core::sync::atomic::Ordering::Relaxed);
+    let mut last_encoder_position = get_encoder_position();
     let center = LogicalPosition::new(DISPLAY_SIZE.0 as f32 / 2.0, DISPLAY_SIZE.1 as f32 / 2.0);
     loop {
         slint::platform::update_timers_and_animations();
@@ -318,7 +319,7 @@ pub async fn render_task(
             }
             None => {}
         }
-        let current_encoder_position = ENCODER_POSITION.load(core::sync::atomic::Ordering::Relaxed);
+        let current_encoder_position = get_encoder_position();
         // Emulate the encoder position by sending scroll events to slint
         if last_encoder_position != current_encoder_position {
             let delta = current_encoder_position - last_encoder_position;

@@ -25,11 +25,12 @@
 //!   It triggers various actions, some of which may be essential
 //!   for the proper operation of this module.
 pub mod encoder;
-pub mod haptic_hardware;
+mod haptic_hardware;
 pub mod motor_driver;
 
 use encoder::AbsolutePositionEncoder;
-use haptic_hardware::{CalibrationData, HapticSystem, HapticSystemError};
+pub use haptic_hardware::CalibrationData;
+use haptic_hardware::{HapticSystem, HapticSystemError};
 use motor_driver::MotorDriver;
 
 use atomic_float::AtomicF32;
@@ -39,6 +40,8 @@ use fixed::types::I16F16;
 use foc::pwm::Modulation;
 use haptic_lib::{AbsoluteCurve, Command, HapticPlayer, Playback};
 use log::{error, info, warn};
+
+use crate::haptic_core::haptic_hardware::InactivitySettings;
 
 /// This signal can be set to trigger different action of the haptic system
 pub static MOTOR_COMMAND_SIGNAL: Signal<CriticalSectionRawMutex, MotorCommand> = Signal::new();
@@ -99,6 +102,26 @@ pub struct SmartknobHapticCore<
     ticker: Option<Ticker>,
 }
 
+pub struct DetailedSettings {
+    /// Torque setting used for alignment procedures
+    alignment_voltage: f32,
+    /// Defines how the system should scale any set haptic curves.
+    /// This may be useful to scale down haptics on a more powerful system for example.
+    curve_scale: f32,
+    /// Settings for preserving energy
+    inactivity: InactivitySettings,
+}
+
+impl Default for DetailedSettings {
+    fn default() -> Self {
+        Self {
+            alignment_voltage: 1.0,
+            curve_scale: 1.0,
+            inactivity: InactivitySettings::default(),
+        }
+    }
+}
+
 impl<
     'a,
     E: AbsolutePositionEncoder,
@@ -119,12 +142,13 @@ impl<
     pub async fn new(
         encoder: E,
         driver: D,
-        alignment_voltage: f32,
         pole_pairs: u8,
-        curve_scale: f32,
         refresh_rate: Option<Duration>,
+        settings: DetailedSettings,
     ) -> Self {
-        let mut haptics = HapticSystem::new(encoder, driver, alignment_voltage, pole_pairs).await;
+        let mut haptics =
+            HapticSystem::new(encoder, driver, settings.alignment_voltage, pole_pairs).await;
+        haptics.set_inactivity_detection(settings.inactivity);
         // restore potential previous alignment data
         FLASH_LOAD_REQUEST.signal(());
         if let Some(cal) = FLASH_LOAD_RESPONSE.wait().await {
@@ -135,7 +159,7 @@ impl<
         Self {
             haptics,
             player: None,
-            curve_scale,
+            curve_scale: settings.curve_scale,
             ticker: refresh_rate.map(|d| Ticker::every(d)),
         }
     }

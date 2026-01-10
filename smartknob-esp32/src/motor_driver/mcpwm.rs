@@ -1,6 +1,5 @@
 use core::marker::PhantomData;
 
-use super::MotorDriver;
 use esp_hal::{
     gpio::interconnect::PeripheralOutput,
     mcpwm::{
@@ -10,6 +9,7 @@ use esp_hal::{
     },
     time::Rate,
 };
+use smartknob_core::haptic_core::motor_driver::MotorDriver;
 
 pub struct MCPWM6<'a, PWM: PwmPeripheral, const PWM_RESOLUTION: u16> {
     // mcpwm: McPwm<'a, PWM>,

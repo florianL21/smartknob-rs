@@ -3508,16 +3508,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "mt6701"
-version = "0.2.6"
-source = "git+https://github.com/florianL21/mt6701.git?rev=6c01fab#6c01fab54134b3cd643949cea78e5dfd622feedd"
-dependencies = [
- "embedded-hal-async",
- "fixed",
- "libm",
-]
-
-[[package]]
 name = "muda"
 version = "0.17.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5133,6 +5123,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "smartknob-esp32"
+version = "0.1.0"
+dependencies = [
+ "esp-hal",
+ "smartknob-core",
+]
+
+[[package]]
 name = "smartknob-rs"
 version = "0.1.0"
 dependencies = [
@@ -5171,7 +5169,6 @@ dependencies = [
  "libm",
  "log",
  "mipidsi",
- "mt6701",
  "nalgebra",
  "num-traits",
  "postcard",
@@ -5179,6 +5176,8 @@ dependencies = [
  "slint",
  "slint-build",
  "smart-leds",
+ "smartknob-core",
+ "smartknob-esp32",
  "static_cell",
  "thiserror 2.0.17",
  "ufmt",

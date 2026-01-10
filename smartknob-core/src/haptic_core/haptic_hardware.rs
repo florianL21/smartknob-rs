@@ -23,7 +23,7 @@ const CALIBRATION_NUM_POINTS: usize = 20;
 const MAX_ALLOWED_ENCODER_DEVIATION: I16F16 = I16F16::lit("0.1");
 const ALIGN_DELAY: Duration = Duration::from_millis(1);
 
-const DEFUALT_TORQUE_INACTIVITY_THRESHOLD: I16F16 = I16F16::lit("0.03");
+const DEFAULT_TORQUE_INACTIVITY_THRESHOLD: I16F16 = I16F16::lit("0.03");
 const DEFAULT_INACTIVITY_DURATION: Duration = Duration::from_secs(1);
 
 type EncoderCalibrationCurve = Linear<
@@ -113,6 +113,25 @@ impl CalibrationData {
     }
 }
 
+/// Setting for power saving
+pub struct InactivitySettings {
+    /// Torque value threshold where all motor torque values underneath
+    /// this are too low to actually be able to move the motor
+    torque_threshold: I16F16,
+    /// If the torque output by the system is under the given threshold
+    /// for this duration the system will turn off the motor output to conserve power
+    inactivity_duration: Duration,
+}
+
+impl Default for InactivitySettings {
+    fn default() -> Self {
+        Self {
+            torque_threshold: DEFAULT_TORQUE_INACTIVITY_THRESHOLD,
+            inactivity_duration: DEFAULT_INACTIVITY_DURATION,
+        }
+    }
+}
+
 pub struct HapticSystem<E, D, M, const PWM_RESOLUTION: u16>
 where
     E: AbsolutePositionEncoder,
@@ -125,8 +144,7 @@ where
     pole_pairs: I16F16,
     calibration: Option<CalibrationData>,
     last_activity: Instant,
-    inactivity_threshold: I16F16,
-    inactivity_duration: Duration,
+    inactivity: InactivitySettings,
     phantom: core::marker::PhantomData<M>,
 }
 
@@ -159,21 +177,15 @@ impl<
             pole_pairs: I16F16::from_num(pole_pairs),
             calibration: None,
             last_activity: Instant::now(),
-            inactivity_duration: DEFAULT_INACTIVITY_DURATION,
-            inactivity_threshold: DEFUALT_TORQUE_INACTIVITY_THRESHOLD,
+            inactivity: InactivitySettings::default(),
             phantom: core::marker::PhantomData,
         }
     }
 
     /// Change the inactivity threshold
     /// If the motor output is below the given torque for longer than the given duration the motor driver will be switched off
-    pub fn set_inactivity_detection(
-        &mut self,
-        torque_threshold: f32,
-        inactivity_duration: Duration,
-    ) {
-        self.inactivity_threshold = I16F16::from_num(torque_threshold);
-        self.inactivity_duration = inactivity_duration;
+    pub fn set_inactivity_detection(&mut self, settings: InactivitySettings) {
+        self.inactivity = settings;
     }
 
     /// get a reference to the current calibration data of the haptic system
@@ -498,10 +510,10 @@ impl<
                 .calibration_curve
                 .compensate::<E::Error>(measurement.angle)?;
             let electrical_angle = cal_data.electrical_angle(compensated_angle);
-            if torque.abs() > self.inactivity_threshold {
+            if torque.abs() > self.inactivity.torque_threshold {
                 self.last_activity = Instant::now();
             }
-            if self.last_activity.elapsed() > self.inactivity_duration {
+            if self.last_activity.elapsed() > self.inactivity.inactivity_duration {
                 // Turn off the PWM output signals if no torque is being applied since the specified period
                 self.motor_driver.set_pwm(&[0; 3]);
             } else {

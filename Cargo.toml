@@ -1,6 +1,12 @@
 [workspace]
 resolver = "2"
-members = ["smartknob", "ldc1x1x", "haptic_lib", "smartknob-core"]
+members = [
+    "smartknob",
+    "ldc1x1x",
+    "haptic_lib",
+    "smartknob-core",
+    "smartknob-esp32",
+]
 exclude = ["haptic_demo"]
 
 [profile.dev]

@@ -1,0 +1,8 @@
+[package]
+edition = "2024"
+name = "smartknob-esp32"
+version = "0.1.0"
+
+[dependencies]
+esp-hal = { version = "1.0.0", features = ["esp32s3", "log-04", "unstable"] }
+smartknob-core = { path = "../smartknob-core" }

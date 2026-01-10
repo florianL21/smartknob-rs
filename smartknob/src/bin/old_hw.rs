@@ -23,13 +23,10 @@ use esp_hal::{
 use esp_rtos::embassy::Executor;
 use log::info;
 
+use smartknob_esp32::motor_driver::mcpwm::Pins6PWM;
 use smartknob_rs::config::LogToggleWatcher;
 use smartknob_rs::flash::flash_task;
-use smartknob_rs::{
-    cli::menu_handler,
-    flash::FlashHandler,
-    motor_control::{motor_driver::mcpwm::Pins6PWM, update_foc},
-};
+use smartknob_rs::{cli::menu_handler, flash::FlashHandler, motor_control::update_foc};
 use static_cell::StaticCell;
 
 esp_bootloader_esp_idf::esp_app_desc!();

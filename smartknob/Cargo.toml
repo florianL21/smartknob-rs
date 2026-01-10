@@ -41,7 +41,6 @@ foc = "0.3.0"
 log = "0.4.28"
 smart-leds = "0.4.0"
 static_cell = { version = "2.1.1", features = ["nightly"] }
-mt6701 = { git = "https://github.com/florianL21/mt6701.git", rev = "6c01fab" }
 ldc1x1x = { path = "../ldc1x1x" }
 nalgebra = { version = "0.34.1", default-features = false, features = [
   "macros",
@@ -79,8 +78,12 @@ enterpolation = { version = "0.3.0", default-features = false, features = [
   "serde",
 ] }
 heapless = "0.9.2"
-num-traits = { version = "0.2.19", default-features = false, features = ["libm"] }
+num-traits = { version = "0.2.19", default-features = false, features = [
+  "libm",
+] }
 embassy-futures = "0.1.2"
+smartknob-core = { path = "../smartknob-core" }
+smartknob-esp32 = { path = "../smartknob-esp32" }
 
 
 [build-dependencies]
