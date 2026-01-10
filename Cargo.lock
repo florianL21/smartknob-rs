@@ -5113,6 +5113,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "smartknob-core"
+version = "0.1.0"
+dependencies = [
+ "atomic_float",
+ "cordic",
+ "embassy-sync 0.7.2",
+ "embassy-time",
+ "embedded-hal-async",
+ "enterpolation",
+ "fixed",
+ "foc",
+ "haptic_lib",
+ "log",
+ "num-traits",
+ "postcard",
+ "serde",
+ "thiserror 2.0.17",
+]
+
+[[package]]
 name = "smartknob-rs"
 version = "0.1.0"
 dependencies = [
