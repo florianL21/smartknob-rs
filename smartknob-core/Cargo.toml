@@ -25,3 +25,7 @@ enterpolation = { version = "0.3.0", default-features = false, features = [
 num-traits = { version = "0.2.19", default-features = false, features = [
   "libm",
 ] }
+ekv = { git = "https://github.com/embassy-rs/ekv.git", rev = "b68fd9a9369ab1b7f6181e8f7fc97aa99012a1e3" }
+embassy-futures = "0.1.2"
+embedded-storage = "0.3.1"
+ufmt = "0.2.0"

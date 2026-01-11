@@ -8,21 +8,22 @@ use esp_hal::{Async, usb_serial_jtag::UsbSerialJtag};
 use fixed::types::I16F16;
 use log::info;
 use postcard::experimental::max_size::MaxSize;
+use smartknob_core::flash::{FlashHandling, FlashKeys};
 use smartknob_core::haptic_core::MotorCommand;
+use smartknob_esp32::flash::{ESPFlashError, FlashHandler};
 use thiserror::Error;
 use ufmt::{uDebug, uwrite};
 
 use crate::{
     config::{ConfigError, LogChannelToggles, LogToggleSender, LogToggles},
     display::DISPLAY_BRIGHTNESS_SIGNAL,
-    flash::{FlashError, FlashHandler, FlashKeys},
     signals::{MOTOR_COMMAND_SIGNAL, REQUEST_POWER_DOWN},
 };
 
 #[derive(Error, Debug)]
 pub enum HandlerError {
     #[error("Flash read failed: {0:#?}")]
-    FlashError(#[from] FlashError),
+    FlashError(#[from] ESPFlashError),
     #[error("Infallible error")]
     Infallible(#[from] Infallible),
     #[error("Conversion to UTF-8 failed: {0:#?}")]

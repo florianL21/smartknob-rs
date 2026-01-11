@@ -7,6 +7,7 @@ use embassy_executor::Spawner;
 use embassy_sync::{blocking_mutex::raw::NoopRawMutex, mutex::Mutex};
 use embassy_time::{Duration, Timer};
 use esp_backtrace as _;
+use esp_bootloader_esp_idf::partitions::{DataPartitionSubType, PartitionType};
 use esp_hal::interrupt::software::SoftwareInterruptControl;
 use esp_hal::ledc::Ledc;
 use esp_hal::psram::{FlashFreq, PsramConfig, SpiRamFreq};
@@ -35,16 +36,15 @@ use smart_leds::{
     gamma,
 };
 use smartknob_core::haptic_core::get_encoder_position;
+use smartknob_esp32::flash::{FlashHandler, flash_task};
 use smartknob_esp32::motor_driver::mcpwm::Pins6PWM;
 use smartknob_rs::config::{LogToggleReceiver, LogToggleWatcher};
 use smartknob_rs::display::BacklightHandles;
-use smartknob_rs::flash::flash_task;
 use smartknob_rs::signals::{KNOB_EVENTS_CHANNEL, KNOB_TILT_ANGLE};
 use smartknob_rs::{
     cli::menu_handler,
     config::{LogChannel, may_log},
     display::{DisplayHandles, spawn_display_tasks},
-    flash::FlashHandler,
     knob_tilt::{KnobTiltEvent, read_ldc_task},
     motor_control::update_foc,
     shutdown::shutdown_handler,
@@ -174,7 +174,11 @@ async fn main(spawner: Spawner) {
     esp_rtos::start(timg0.timer0);
     info!("Embassy initialized!");
 
-    let f = FlashHandler::new(peripherals.FLASH).await;
+    let f = FlashHandler::new(
+        peripherals.FLASH,
+        PartitionType::Data(DataPartitionSubType::Fat),
+    )
+    .await;
 
     static FLASH: StaticCell<FlashHandler> = StaticCell::new();
     let flash = FLASH.init(f);

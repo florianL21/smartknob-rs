@@ -4,4 +4,5 @@
 //! can be used in isolation if their inputs and outputs (usually in the form of signals) are serviced by something.
 //! Please check the documentation of the submodules of this create to learn more about each individual system.
 
+pub mod flash;
 pub mod haptic_core;

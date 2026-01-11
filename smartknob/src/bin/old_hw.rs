@@ -6,6 +6,7 @@ extern crate alloc;
 use embassy_executor::Spawner;
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use esp_backtrace as _;
+use esp_bootloader_esp_idf::partitions::{DataPartitionSubType, PartitionType};
 use esp_hal::interrupt::software::SoftwareInterruptControl;
 use esp_hal::psram::{FlashFreq, PsramConfig, SpiRamFreq};
 use esp_hal::system::Stack;
@@ -23,10 +24,10 @@ use esp_hal::{
 use esp_rtos::embassy::Executor;
 use log::info;
 
+use smartknob_esp32::flash::{FlashHandler, flash_task};
 use smartknob_esp32::motor_driver::mcpwm::Pins6PWM;
 use smartknob_rs::config::LogToggleWatcher;
-use smartknob_rs::flash::flash_task;
-use smartknob_rs::{cli::menu_handler, flash::FlashHandler, motor_control::update_foc};
+use smartknob_rs::{cli::menu_handler, motor_control::update_foc};
 use static_cell::StaticCell;
 
 esp_bootloader_esp_idf::esp_app_desc!();
@@ -54,7 +55,11 @@ async fn main(spawner: Spawner) {
     esp_rtos::start(timg0.timer0);
     info!("Embassy initialized!");
 
-    let f = FlashHandler::new(peripherals.FLASH).await;
+    let f = FlashHandler::new(
+        peripherals.FLASH,
+        PartitionType::Data(DataPartitionSubType::Fat),
+    )
+    .await;
 
     static FLASH: StaticCell<FlashHandler> = StaticCell::new();
     let flash = FLASH.init(f);

@@ -160,7 +160,7 @@ impl<
             haptics,
             player: None,
             curve_scale: settings.curve_scale,
-            ticker: refresh_rate.map(|d| Ticker::every(d)),
+            ticker: refresh_rate.map(Ticker::every),
         }
     }
 

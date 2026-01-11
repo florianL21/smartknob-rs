@@ -5108,9 +5108,12 @@ version = "0.1.0"
 dependencies = [
  "atomic_float",
  "cordic",
+ "ekv",
+ "embassy-futures",
  "embassy-sync 0.7.2",
  "embassy-time",
  "embedded-hal-async",
+ "embedded-storage",
  "enterpolation",
  "fixed",
  "foc",
@@ -5120,14 +5123,28 @@ dependencies = [
  "postcard",
  "serde",
  "thiserror 2.0.17",
+ "ufmt",
 ]
 
 [[package]]
 name = "smartknob-esp32"
 version = "0.1.0"
 dependencies = [
+ "ekv",
+ "embassy-executor",
+ "embassy-futures",
+ "embassy-sync 0.7.2",
+ "embedded-storage",
+ "esp-bootloader-esp-idf",
  "esp-hal",
+ "esp-storage",
+ "log",
+ "postcard",
+ "serde",
  "smartknob-core",
+ "static_cell",
+ "thiserror 2.0.17",
+ "ufmt",
 ]
 
 [[package]]
