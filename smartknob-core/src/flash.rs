@@ -5,7 +5,7 @@ use core::fmt::Debug;
 use ekv::flash::{self, PageID};
 use ekv::{Database, ReadError, config};
 use embassy_futures::select;
-use embassy_sync::blocking_mutex::raw::NoopRawMutex;
+use embassy_sync::blocking_mutex::raw::{NoopRawMutex, RawMutex};
 use embedded_storage::nor_flash::{ErrorType, NorFlash, ReadNorFlash};
 use log::{error, info};
 use postcard::Deserializer;
@@ -15,11 +15,20 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use ufmt::uDebug;
 
-use crate::haptic_core::{
-    CalibrationData, FLASH_LOAD_REQUEST, FLASH_LOAD_RESPONSE, FLASH_STORE_SIGNAL,
-};
+use crate::haptic_core::CalibrationData;
+use crate::system_settings::StoreSignals;
+use crate::system_settings::log_toggles::LogChannelToggles;
 
 pub type FlashType<'a, Flash> = Database<PersistentStorage<Flash>, NoopRawMutex>;
+
+const fn max(a: usize, b: usize) -> usize {
+    [a, b][(a < b) as usize]
+}
+
+const MAX_BUFFER_SIZE: usize = max(
+    CalibrationData::POSTCARD_MAX_SIZE,
+    LogChannelToggles::POSTCARD_MAX_SIZE,
+);
 
 // Workaround for alignment requirements.
 #[repr(C, align(4))]
@@ -38,9 +47,13 @@ impl<T: NorFlash + ReadNorFlash> PersistentStorage<T> {
 
 #[derive(Copy, Clone)]
 pub enum FlashKeys {
-    Test,
     LogChannels,
     MotorAlignment,
+}
+
+pub struct RestoredState {
+    pub haptic_core: Option<CalibrationData>,
+    pub log_toggles: Option<LogChannelToggles>,
 }
 
 impl<'a> FlashKeys {
@@ -190,27 +203,66 @@ pub trait FlashHandling<Flash: NorFlash> {
         }
     }
 
-    fn run(&self) -> impl core::future::Future<Output = ()> {
+    fn restore(&self) -> impl core::future::Future<Output = RestoredState> {
         async {
-            match select::select(FLASH_LOAD_REQUEST.wait(), FLASH_STORE_SIGNAL.wait()).await {
-                select::Either::First(_) => {
-                    let mut buffer = [0u8; CalibrationData::POSTCARD_MAX_SIZE];
-                    match self.load(FlashKeys::MotorAlignment, &mut buffer).await {
-                        Ok(cal) => {
-                            FLASH_LOAD_RESPONSE.signal(cal);
-                        }
-                        Err(e) => error!("Failed to read cal data from flash: {e}"),
-                    }
+            // restore motor calibration
+            let mut buffer = [0u8; MAX_BUFFER_SIZE];
+            let haptic_core = match self.load(FlashKeys::MotorAlignment, &mut buffer).await {
+                Ok(cal) => cal,
+                Err(e) => {
+                    error!("Failed to read cal data from flash: {e}");
+                    None
                 }
-                select::Either::Second(cal) => {
+            };
+            let mut buffer = [0u8; MAX_BUFFER_SIZE];
+            // restore log toggles
+            let log_toggles = match self.load(FlashKeys::LogChannels, &mut buffer).await {
+                Ok(log_toggles) => log_toggles,
+                Err(e) => {
+                    error!("Failed to read log toggle data from flash: {e}");
+                    None
+                }
+            };
+            RestoredState {
+                haptic_core,
+                log_toggles,
+            }
+        }
+    }
+
+    fn run<M: RawMutex>(
+        &self,
+        restore_signals: &'static StoreSignals<M>,
+    ) -> impl core::future::Future<Output = ()> {
+        async {
+            match select::select(
+                restore_signals.haptic_core.wait(),
+                restore_signals.log_toggles.wait(),
+            )
+            .await
+            {
+                select::Either::First(data) => {
                     if let Err(e) = self
                         .store::<_, { CalibrationData::POSTCARD_MAX_SIZE }>(
                             &FlashKeys::MotorAlignment,
-                            &cal,
+                            &data,
                         )
                         .await
                     {
                         error!("Failed to store calibration to flash: {e}");
+                    } else {
+                        info!("Stored successfully!")
+                    }
+                }
+                select::Either::Second(cal) => {
+                    if let Err(e) = self
+                        .store::<_, { LogChannelToggles::POSTCARD_MAX_SIZE }>(
+                            &FlashKeys::LogChannels,
+                            &cal,
+                        )
+                        .await
+                    {
+                        error!("Failed to store log channels to flash: {e}");
                     } else {
                         info!("Stored successfully!")
                     }

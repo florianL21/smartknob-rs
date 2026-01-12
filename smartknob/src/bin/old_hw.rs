@@ -4,7 +4,7 @@
 extern crate alloc;
 
 use embassy_executor::Spawner;
-use embassy_sync::blocking_mutex::raw::NoopRawMutex;
+use embassy_sync::blocking_mutex::raw::{CriticalSectionRawMutex, NoopRawMutex};
 use esp_backtrace as _;
 use esp_bootloader_esp_idf::partitions::{DataPartitionSubType, PartitionType};
 use esp_hal::interrupt::software::SoftwareInterruptControl;
@@ -24,13 +24,25 @@ use esp_hal::{
 use esp_rtos::embassy::Executor;
 use log::info;
 
-use smartknob_esp32::flash::{FlashHandler, flash_task};
+use smartknob_core::flash::FlashHandling;
+use smartknob_core::system_settings::{HapticSystemStoreSignal, StoreSignals};
+use smartknob_esp32::flash::FlashHandler;
 use smartknob_esp32::motor_driver::mcpwm::Pins6PWM;
 use smartknob_rs::config::LogToggleWatcher;
 use smartknob_rs::{cli::menu_handler, motor_control::update_foc};
 use static_cell::StaticCell;
 
 esp_bootloader_esp_idf::esp_app_desc!();
+
+#[embassy_executor::task]
+pub async fn flash_task(
+    flash_handler: &'static FlashHandler,
+    store_signals: &'static StoreSignals<CriticalSectionRawMutex>,
+) {
+    loop {
+        flash_handler.run(store_signals).await;
+    }
+}
 
 #[esp_rtos::main]
 async fn main(spawner: Spawner) {
@@ -63,7 +75,11 @@ async fn main(spawner: Spawner) {
 
     static FLASH: StaticCell<FlashHandler> = StaticCell::new();
     let flash = FLASH.init(f);
-    spawner.must_spawn(flash_task(flash));
+    static SETTING_SIGNALS: StaticCell<StoreSignals<CriticalSectionRawMutex>> = StaticCell::new();
+    let setting_signals = SETTING_SIGNALS.init(StoreSignals::new());
+
+    let restored_state = flash.restore().await;
+    spawner.must_spawn(flash_task(flash, setting_signals));
 
     static LOG_TOGGLES: StaticCell<LogToggleWatcher<NoopRawMutex, 6>> = StaticCell::new();
     let log_toggles = LOG_TOGGLES.init(LogToggleWatcher::new());
@@ -106,6 +122,12 @@ async fn main(spawner: Spawner) {
     static APP_CORE_STACK: StaticCell<Stack<32768>> = StaticCell::new();
     let app_core_stack = APP_CORE_STACK.init(Stack::new());
 
+    let motor_calibration = restored_state.haptic_core;
+
+    static HAPTIC_SETTING_SIGNAL: StaticCell<&HapticSystemStoreSignal<CriticalSectionRawMutex>> =
+        StaticCell::new();
+    let haptic_setting_signal = HAPTIC_SETTING_SIGNAL.init(&setting_signals.haptic_core);
+
     esp_rtos::start_second_core(
         peripherals.CPU_CTRL,
         sw_int.software_interrupt0,
@@ -136,7 +158,14 @@ async fn main(spawner: Spawner) {
                     pin_tmc_wl.into(),
                 );
 
-                spawner.must_spawn(update_foc(spi_bus, mag_cs, peripherals.MCPWM0, pwm_pins));
+                spawner.must_spawn(update_foc(
+                    spi_bus,
+                    mag_cs,
+                    peripherals.MCPWM0,
+                    pwm_pins,
+                    motor_calibration,
+                    haptic_setting_signal,
+                ));
             });
         },
     );

@@ -6,21 +6,8 @@
 //! # Additional interfaces of this module
 //! This module has a few additional interfaces which need to be serviced for it to work.
 //! These interfaces are usually in the form of embassy signal which need to be haled/sent.
-//! ## Signals required for operation
-//! - The [`FLASH_STORE_SIGNAL`] is an output of this module.
-//!   It needs to be monitored by a different component in the system.
-//!   If it was set the value it contains should be written to non-volatile storage
-//! - The [`FLASH_LOAD_REQUEST`] is an output of this module.
-//!   It needs to be monitored by a different component in the system.
-//!   If it was set, this module is waiting for the [`FLASH_LOAD_RESPONSE`] signal
-//!   and can not continue its startup before it arrives.
-//! - The [`FLASH_LOAD_RESPONSE`] is an input to this module.
-//!   It needs to be sent by a different component in the system.
-//!   It needs to be set as a response to a received [`FLASH_LOAD_REQUEST`].
-//!   The contents of the signal should be the loaded calibration data from
-//!   non-volatile storage, or `None` if no such data exists.
 //!
-//! ## Other Signals
+//! ## Signals
 //! - The [`MOTOR_COMMAND_SIGNAL`] is an input to this module.
 //!   It triggers various actions, some of which may be essential
 //!   for the proper operation of this module.
@@ -34,26 +21,22 @@ use haptic_hardware::{HapticSystem, HapticSystemError};
 use motor_driver::MotorDriver;
 
 use atomic_float::AtomicF32;
-use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, signal::Signal};
+use embassy_sync::{
+    blocking_mutex::raw::{CriticalSectionRawMutex, RawMutex},
+    signal::Signal,
+};
 use embassy_time::{Duration, Ticker, Timer};
 use fixed::types::I16F16;
 use foc::pwm::Modulation;
 use haptic_lib::{AbsoluteCurve, Command, HapticPlayer, Playback};
 use log::{error, info, warn};
 
-use crate::haptic_core::haptic_hardware::InactivitySettings;
+use crate::{
+    haptic_core::haptic_hardware::InactivitySettings, system_settings::HapticSystemStoreSignal,
+};
 
 /// This signal can be set to trigger different action of the haptic system
 pub static MOTOR_COMMAND_SIGNAL: Signal<CriticalSectionRawMutex, MotorCommand> = Signal::new();
-/// Signal which is sent by this component to request the persistent storage of new calibration data
-/// Processing of the signal needs to be handled outside of this module
-pub static FLASH_STORE_SIGNAL: Signal<CriticalSectionRawMutex, CalibrationData> = Signal::new();
-/// This signal is sent by this module to request the flash handler to load the calibration data
-/// from flash and send it via the [`FLASH_LOAD_RESPONSE`] signal
-pub static FLASH_LOAD_REQUEST: Signal<CriticalSectionRawMutex, ()> = Signal::new();
-/// This signal is received by this module and should be sent by the flash handler after it has received a [`FLASH_LOAD_REQUEST`]
-pub static FLASH_LOAD_RESPONSE: Signal<CriticalSectionRawMutex, Option<CalibrationData>> =
-    Signal::new();
 
 /// This stores the absolute encoder position
 static ENCODER_POSITION: AtomicF32 = AtomicF32::new(0.0);
@@ -139,19 +122,20 @@ impl<
     ///   If the core is shared with other tasks it is recommended to set your desired
     ///   target refresh rate by passing in a Duration::from_hz().
     ///   Please note that if the system is too slow for reaching this refresh rate this task will still consume 100% of the CPU
+    /// - `restored_state` Calibration data which was restored from flash
     pub async fn new(
         encoder: E,
         driver: D,
         pole_pairs: u8,
         refresh_rate: Option<Duration>,
         settings: DetailedSettings,
+        restored_state: Option<CalibrationData>,
     ) -> Self {
         let mut haptics =
             HapticSystem::new(encoder, driver, settings.alignment_voltage, pole_pairs).await;
         haptics.set_inactivity_detection(settings.inactivity);
         // restore potential previous alignment data
-        FLASH_LOAD_REQUEST.signal(());
-        if let Some(cal) = FLASH_LOAD_RESPONSE.wait().await {
+        if let Some(cal) = restored_state {
             info!("Restored motor alignment data from flash");
             haptics.restore_calibration(cal)
         }
@@ -181,13 +165,13 @@ impl<
     }
 
     /// Run the core haptic system. This should be called in a task loop endlessly
-    pub async fn run(&mut self) {
+    pub async fn run<MU: RawMutex>(&mut self, store_signal: &HapticSystemStoreSignal<MU>) {
         if let Some(sig) = MOTOR_COMMAND_SIGNAL.try_take() {
             match sig {
                 MotorCommand::StartAlignment => {
                     let result = self.haptics.align().await;
                     if let Ok(cal_data) = result {
-                        FLASH_STORE_SIGNAL.signal(*cal_data);
+                        store_signal.signal(*cal_data);
                     } else {
                         error!("There is no calibration data to store");
                     }
@@ -209,8 +193,8 @@ impl<
                     Err(e) => warn!("encoder validation failed: {e}"),
                 },
                 MotorCommand::TuneStore => {
-                    if let Some(cal) = self.haptics.get_cal_data() {
-                        FLASH_STORE_SIGNAL.signal(*cal);
+                    if let Some(cal_data) = self.haptics.get_cal_data() {
+                        store_signal.signal(*cal_data);
                     } else {
                         warn!("System was not yet calibrated. No value was stored!");
                     }
@@ -234,7 +218,9 @@ impl<
                 let playback = player.play(encoder_meas.position);
                 match playback {
                     Playback::Value(v) => {
-                        if let Err(e) = self.haptics.set_motor(encoder_meas, v) {
+                        if let Err(e) = self.haptics.set_motor(encoder_meas, v)
+                            && !matches!(e, HapticSystemError::NotYetCalibrated)
+                        {
                             error!("Failed to set motor torque: {e}");
                         }
                     }
@@ -251,6 +237,7 @@ impl<
                                 Command::Torque(t) => {
                                     if let Ok(enc) = self.haptics.update_encoder().await
                                         && let Err(e) = self.haptics.set_motor(enc, t)
+                                        && !matches!(e, HapticSystemError::NotYetCalibrated)
                                     {
                                         error!("Failed to set motor torque: {e}");
                                     }

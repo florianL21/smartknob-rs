@@ -6,3 +6,4 @@
 
 pub mod flash;
 pub mod haptic_core;
+pub mod system_settings;

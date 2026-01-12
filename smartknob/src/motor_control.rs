@@ -1,5 +1,8 @@
 use embassy_embedded_hal::shared_bus::asynch::spi::SpiDevice;
-use embassy_sync::{blocking_mutex::raw::NoopRawMutex, mutex::Mutex};
+use embassy_sync::{
+    blocking_mutex::raw::{CriticalSectionRawMutex, NoopRawMutex},
+    mutex::Mutex,
+};
 use esp_backtrace as _;
 use esp_hal::{
     dma::{DmaRxBuf, DmaTxBuf},
@@ -12,7 +15,10 @@ use fixed::types::I16F16;
 use foc::pwm::SpaceVector;
 use haptic_lib::{CurveBuilder, Easing, EasingType};
 use log::info;
-use smartknob_core::haptic_core::{DetailedSettings, SmartknobHapticCore, encoder::MT6701Spi};
+use smartknob_core::{
+    haptic_core::{CalibrationData, DetailedSettings, SmartknobHapticCore, encoder::MT6701Spi},
+    system_settings::HapticSystemStoreSignal,
+};
 use smartknob_esp32::motor_driver::mcpwm::{MCPWM6, Pins6PWM};
 
 pub type SpiBus1 = Mutex<NoopRawMutex, esp_hal::spi::master::SpiDmaBus<'static, esp_hal::Async>>;
@@ -30,6 +36,8 @@ pub async fn update_foc(
     mag_csn: Output<'static>,
     mcpwm0: esp_hal::peripherals::MCPWM0<'static>,
     pwm_pins: Pins6PWM<'static, AnyPin<'static>>,
+    restored_state: Option<CalibrationData>,
+    settings_store_signals: &'static HapticSystemStoreSignal<CriticalSectionRawMutex>,
 ) {
     // setup encoder SPI communication
     let (rx_buffer, rx_descriptors, tx_buffer, tx_descriptors) =
@@ -59,6 +67,7 @@ pub async fn update_foc(
             MOTOR_POLE_PAIRS,
             None,
             DetailedSettings::default(),
+            restored_state,
         )
         .await;
 
@@ -72,6 +81,6 @@ pub async fn update_foc(
         .make_absolute(I16F16::ZERO);
     let _ = haptic_core.set_curve(&test_curve, 1.0).await;
     loop {
-        haptic_core.run().await;
+        haptic_core.run(settings_store_signals).await;
     }
 }
