@@ -10,7 +10,7 @@ pub const MAX_PATTERN_COMMANDS: usize = 6;
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum Command {
     /// Apply torque
-    Torque(I16F16),
+    Torque(f32),
     /// Delay the next command by this duration
     /// Note: Durations are converted to microseconds internally.
     /// Anything which does not fit into an u32 will be cut away
@@ -60,10 +60,10 @@ impl Command {
 
     /// Create a new torque command
     pub fn torque(torque: f32) -> Self {
-        Self::Torque(I16F16::from_num(torque))
+        Self::Torque(torque)
     }
 
-    pub(crate) fn scale(&self, value: I16F16) -> Self {
+    pub(crate) fn scale(&self, value: f32) -> Self {
         match self {
             Command::Delay(d) => Self::Delay(*d),
             Command::Torque(t) => Command::Torque(t * value),
@@ -92,7 +92,7 @@ impl HapticPattern {
         }
     }
 
-    pub fn play(&self, scale: I16F16) -> impl Iterator<Item = Command> {
+    pub fn play(&self, scale: f32) -> impl Iterator<Item = Command> {
         let num = (self.repeat * self.multiply) as usize;
         let mult = self.multiply as usize;
         self.commands
@@ -120,7 +120,7 @@ impl SequenceComponent {
         }
     }
 
-    pub fn play(&self, scale: I16F16) -> Option<impl Iterator<Item = Command>> {
+    pub fn play(&self, scale: f32) -> Option<impl Iterator<Item = Command>> {
         match self {
             Self::Pattern {
                 commands,

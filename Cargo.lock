@@ -1207,17 +1207,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "easing-fixed"
-version = "0.1.1"
-source = "git+https://github.com/florianL21/easing-fixed.git?rev=82865f28406e10fdfe476941477628eaff2ca105#82865f28406e10fdfe476941477628eaff2ca105"
-dependencies = [
- "fixed",
- "fixed-exp2",
- "fixed_trigonometry",
- "walkdir",
-]
-
-[[package]]
 name = "easy-cast"
 version = "0.5.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2094,28 +2083,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "fixed-exp2"
-version = "0.2.0"
-source = "git+https://github.com/florianL21/fixed-exp.git#dcdda1eb33df359f440f9623ce238bb45c8b4ae5"
-dependencies = [
- "fixed",
- "num-traits",
- "typenum",
-]
-
-[[package]]
-name = "fixed_trigonometry"
-version = "0.4.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1175a88851a809913fdad5873fc92ed70505b2611b52f73f73e1a344242ea8d2"
-dependencies = [
- "cordic",
- "fixed",
- "mixed-num",
- "num",
-]
-
-[[package]]
 name = "flate2"
 version = "1.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2497,9 +2464,10 @@ dependencies = [
 name = "haptic_lib"
 version = "0.1.0"
 dependencies = [
- "easing-fixed",
+ "enterpolation",
  "fixed",
  "heapless 0.9.2",
+ "log",
  "postcard",
  "serde",
  "thiserror 2.0.17",
@@ -2600,6 +2568,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2af2455f757db2b292a9b1768c4b70186d443bcb3b316252d6b540aec1cd89ed"
 dependencies = [
  "hash32 0.3.1",
+ "portable-atomic",
  "serde_core",
  "stable_deref_trait",
 ]
@@ -3362,9 +3331,9 @@ dependencies = [
 
 [[package]]
 name = "log"
-version = "0.4.28"
+version = "0.4.29"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "34080505efa8e45a4b816c349525ebe327ceaa8559756f0356cba97ef3bf7432"
+checksum = "5e5032e24019045c762d3c0f28f5b6b8bbf38563a65908389bf7978758920897"
 
 [[package]]
 name = "loop9"
@@ -3482,19 +3451,6 @@ dependencies = [
  "embedded-hal 1.0.0",
  "embedded-hal-async",
  "heapless 0.8.0",
-]
-
-[[package]]
-name = "mixed-num"
-version = "0.5.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "58f06478ec84c0ffbd66db335bf3dafed0c625fdc2ca7c4b9792deef0328bf3e"
-dependencies = [
- "cordic",
- "fixed",
- "libm",
- "num",
- "typenum",
 ]
 
 [[package]]
@@ -3642,19 +3598,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0676bb32a98c1a483ce53e500a81ad9c3d5b3f7c920c28c24e9cb0980d0b5bc8"
 
 [[package]]
-name = "num"
-version = "0.4.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "35bd024e8b2ff75562e5f34e7f4905839deb4b22955ef5e73d2fea1b9813cb23"
-dependencies = [
- "num-complex",
- "num-integer",
- "num-iter",
- "num-rational",
- "num-traits",
-]
-
-[[package]]
 name = "num-bigint"
 version = "0.4.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3690,17 +3633,6 @@ version = "0.1.46"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7969661fd2958a5cb096e56c8e1ad0444ac2bbcd0061bd28660485a44879858f"
 dependencies = [
- "num-traits",
-]
-
-[[package]]
-name = "num-iter"
-version = "0.1.45"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1429034a0490724d0075ebb2bc9e875d6503c3cf69e235a8941aa757d83ef5bf"
-dependencies = [
- "autocfg",
- "num-integer",
  "num-traits",
 ]
 

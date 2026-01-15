@@ -217,7 +217,7 @@ impl<
             if let Some(ref mut player) = self.player {
                 let playback = player.play(encoder_meas.position);
                 match playback {
-                    Playback::Value(v) => {
+                    Playback::Torque(v) => {
                         if let Err(e) = self.haptics.set_motor(encoder_meas, v)
                             && !matches!(e, HapticSystemError::NotYetCalibrated)
                         {
