@@ -2,21 +2,22 @@ extern crate std;
 
 use charming::{
     component::{
-        Axis, DataZoom, DataZoomType, Feature, Legend, Restore, SaveAsImage, Title, Toolbox,
+        Axis, DataZoom, DataZoomType, Feature, Restore, SaveAsImage, Title, Toolbox,
         ToolboxDataZoom,
     },
-    element::{AxisLine, AxisType, ItemStyle, Tooltip},
-    series::{Graph, Line},
+    element::{AxisType, Tooltip},
+    series::Line,
     Chart, HtmlRenderer,
 };
-use fixed::types::I16F16;
-use haptic_lib::{AbsoluteCurve, CurveBuilder, Easing, EasingType, HapticCurve, HapticPlayer};
+use haptic_lib::{CurveBuilder, HapticCurve, HapticPlayer, Playback};
 
 fn create_graph<const N: usize>(start: f32, curve: HapticCurve<N>, sample_step: f32) -> Chart {
-    let absolut_curve = curve.make_absolute(I16F16::from_num(start));
-    let mut player = HapticPlayer::new(I16F16::from_num(start), &absolut_curve);
-    let width: f32 = player.curve_width().to_num();
-    let start_angle = start - 1.0;
+    let curve_start_angle = curve.start_angle();
+    let absolut_curve = curve.instantiate().unwrap();
+    println!("{absolut_curve:#?}");
+    let mut player = HapticPlayer::new(start, &absolut_curve);
+    let width = player.curve_width();
+    let start_angle = start + curve_start_angle - 1.0;
     let end_anlge = start_angle + width + 2.0;
 
     let steps = ((end_anlge - start_angle) / sample_step) as u32;
@@ -24,8 +25,14 @@ fn create_graph<const N: usize>(start: f32, curve: HapticCurve<N>, sample_step: 
     let mut x_data: Vec<f32> = Vec::new();
     let mut data: Vec<f32> = Vec::new();
     for _ in 0..steps {
-        data.push(player.play(I16F16::from_num(x)).to_num());
-        x_data.push(x);
+        let playback = player.play(x);
+        match playback {
+            Playback::Torque(v) => {
+                data.push(v);
+                x_data.push(x);
+            }
+            _ => {}
+        }
         x += sample_step;
     }
 
@@ -53,12 +60,13 @@ fn create_graph<const N: usize>(start: f32, curve: HapticCurve<N>, sample_step: 
 }
 
 fn main() {
+    env_logger::init();
     let test_curve = CurveBuilder::<6>::new()
-        .add_eased(0.3, 1.0, 0.0, Easing::Sinusoidal(EasingType::Out))
-        .add_eased(0.5, 0.0, -1.0, Easing::Sinusoidal(EasingType::In))
-        .add_eased(0.5, 1.0, 0.0, Easing::Sinusoidal(EasingType::Out))
-        .add_eased(0.3, 0.0, -1.0, Easing::Sinusoidal(EasingType::In))
-        .build()
+        .add_bezier3(0.3, [1.0, 0.0, 0.0])
+        .add_bezier3(0.5, [0.0, -0.1, -1.0])
+        .add_bezier3(0.5, [1.0, 0.1, 0.0])
+        .add_bezier3(0.3, [0.0, 0.0, -1.0])
+        .build(-0.3)
         .unwrap();
 
     let chart = create_graph(0.0, test_curve, 0.01);

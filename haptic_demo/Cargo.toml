@@ -5,5 +5,7 @@ edition = "2024"
 
 [dependencies]
 charming = "0.6.0"
+env_logger = "0.11.8"
 fixed = { version = "1.29.0", features = ["std"] }
 haptic_lib = { path = "../haptic_lib" }
+log = "0.4.29"

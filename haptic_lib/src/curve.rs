@@ -1,12 +1,26 @@
-pub use crate::easings::Easing;
-use crate::{Angle, HapticPattern, Value, patterns::Command};
+// pub use crate::easings::Easing;
+extern crate alloc;
+use crate::{Angle, Value};
 use core::slice::Iter;
 
-use fixed::types::I16F16;
+use alloc::boxed::Box;
+use enterpolation::linear::{Linear, LinearError};
+use enterpolation::{Curve, Equidistant};
+use enterpolation::{
+    Identity, Signal, TransformInput,
+    bezier::{Bezier, BezierError},
+};
 use heapless::Vec;
 use serde::{Deserialize, Serialize};
 
 use thiserror::Error;
+#[derive(Error, Debug)]
+pub enum InterpolationBuilderError {
+    #[error("Failed to build bezier interpolation: {0}")]
+    BezierError(BezierError),
+    #[error("Failed to build linear interpolation: {0}")]
+    LinearError(LinearError),
+}
 
 #[derive(Error, Debug)]
 pub enum CurveError {
@@ -18,98 +32,79 @@ pub enum CurveError {
     NotEnoughCapacity(usize),
     #[error("Value must be in range of -1.0 to 1.0, but `value` was out of range at index {0:?}")]
     ValueOutOfRange(usize),
+    #[error("Failed to instantiate curve: {0}")]
+    InstantiationError(#[from] InterpolationBuilderError),
 }
 
 /// This is a single component of a haptic curve.
 /// A component has a width (angle range) and defines how the output value behaves over that range.
 /// These components are chained together in a list to form a haptic curve over a certain angle range.
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum CurveComponent {
     /// A constant value over a certain angle range
     Const {
         /// The width of this component in the curve
-        width: Angle,
+        width: f32,
         /// The constant torque value to apply over this range
-        value: Value,
-        /// Optional haptic pattern to play when entering the angle range of this component
-        pattern_on_entry: Option<HapticPattern>,
+        value: f32,
     },
     /// An transition from a start value to an end value over a certain angle range with a specified easing function
-    Eased {
+    Bezier3 {
         /// The width of this component in the curve
-        width: Angle,
-        /// The torque value at the start of this component
-        start: Value,
-        /// The torque value at the end of this component
-        end: Value,
-        /// The easing function to use for this transition
-        easing: Easing,
-        /// Optional haptic pattern to play when entering the angle range of this component
-        pattern_on_entry: Option<HapticPattern>,
+        width: f32,
+        /// Points for defining the bezier curve
+        points: [f32; 3],
+    },
+    Linear {
+        /// The width of this component in the curve
+        width: f32,
+        /// Value at the start of the component
+        start: f32,
+        /// Value at the end o the component
+        end: f32,
     },
 }
 
 impl CurveComponent {
+    fn build(
+        self,
+        start_angle: f32,
+    ) -> Result<Box<dyn CurveComponentInstance>, InterpolationBuilderError> {
+        let curve: Box<dyn CurveComponentInstance> = match self {
+            CurveComponent::Bezier3 { width, points } => {
+                // info!("domain: [{start_angle}, {}]", start_angle + width);
+                Box::new(BezierComponent {
+                    curve: Bezier::builder()
+                        .elements(points)
+                        .domain(0.0, width)
+                        .constant()
+                        .build()
+                        .map_err(InterpolationBuilderError::BezierError)?,
+                })
+            }
+            CurveComponent::Const { value, width } => Box::new(ConstComponent {
+                value,
+                start_angle: 0.0,
+                width,
+            }),
+            CurveComponent::Linear { width, start, end } => Box::new(LinearComponent {
+                curve: Linear::builder()
+                    .elements([start, end])
+                    .equidistant()
+                    .domain(0.0, width)
+                    .build()
+                    .map_err(InterpolationBuilderError::LinearError)?,
+            }),
+        };
+        Ok(curve)
+    }
+
     /// Get the width of this curve component
-    pub(crate) fn width(&self) -> &Angle {
+    pub(crate) fn width(&self) -> &f32 {
         match self {
             CurveComponent::Const { width, .. } => width,
-            CurveComponent::Eased { width, .. } => width,
-        }
-    }
-
-    /// Get the curve value at a specific angle within this component.
-    /// `angle` must be in the range of 0 to width of this component
-    pub(crate) fn value(&self, angle: Angle) -> Value {
-        match self {
-            CurveComponent::Const { value, .. } => *value,
-            CurveComponent::Eased {
-                start,
-                end,
-                width,
-                easing,
-                ..
-            } => start + (end - start) * easing.at_normalized(angle / width),
-        }
-    }
-
-    /// Get the curve value at the start of this component
-    pub(crate) fn start(&self) -> &Value {
-        match self {
-            CurveComponent::Const { value, .. } => value,
-            CurveComponent::Eased { start, .. } => start,
-        }
-    }
-
-    /// Get the curve value at the end of this component
-    pub(crate) fn end(&self) -> &Value {
-        match self {
-            CurveComponent::Const { value, .. } => value,
-            CurveComponent::Eased { end, .. } => end,
-        }
-    }
-
-    /// Check if the values of this component are within valid range
-    fn values_valid(&self) -> bool {
-        match self {
-            CurveComponent::Const { value, .. } => *value >= -Value::ONE && *value <= Value::ONE,
-            CurveComponent::Eased { start, end, .. } => {
-                *start >= -Value::ONE
-                    && *start <= Value::ONE
-                    && *end >= -Value::ONE
-                    && *end <= Value::ONE
-            }
-        }
-    }
-
-    pub(crate) fn pattern(&self) -> &Option<HapticPattern> {
-        match self {
-            CurveComponent::Const {
-                pattern_on_entry, ..
-            } => pattern_on_entry,
-            CurveComponent::Eased {
-                pattern_on_entry, ..
-            } => pattern_on_entry,
+            CurveComponent::Bezier3 { width, .. } => width,
+            CurveComponent::Linear { width, .. } => width,
         }
     }
 }
@@ -117,58 +112,146 @@ impl CurveComponent {
 /// Curves always start at negative infinity. They always go left to right (increasing angle values).
 /// The angle value after the last curve component is considered to be positive infinity.
 /// Because of this the last curve component must be one that can handle infinite values, like for example the [`CurveComponent::Const`] component
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct HapticCurve<const N: usize> {
     /// Individual components of this curve
     pub(crate) components: Vec<CurveComponent, N>,
+    pub(crate) start_angle: Angle,
 }
 
 impl<const N: usize> HapticCurve<N> {
-    pub(crate) fn as_iter(&self) -> CurveIter<'_> {
-        CurveIter::new(&self.components)
-    }
-
-    /// Convert this curve into an absolute curve starting at a given absolute angle
-    pub fn make_absolute(self, start_angle: Angle) -> AbsoluteCurve<N> {
-        let start_value = self.components.first().map_or(Angle::ZERO, |c| *c.start());
-        let end_value = self.components.last().map_or(Angle::ZERO, |c| *c.end());
-        AbsoluteCurve {
-            curve: self,
+    /// Make a curve description into a playable instance.
+    pub fn instantiate(self) -> Result<CurveInstance<N>, CurveError> {
+        let total_width = self.components.iter().map(|c| c.width()).sum();
+        let mut curr_angle = self.start_angle;
+        let mut components = Vec::new();
+        for (i, comp) in self.components.into_iter().enumerate() {
+            let width = *comp.width();
+            components
+                .push(comp.build(curr_angle)?)
+                .map_err(|_| CurveError::NotEnoughCapacity(i))?;
+            curr_angle += width;
+        }
+        let start_value = components.first().ok_or(CurveError::EmptyCurve)?.start();
+        let end_value = components.last().ok_or(CurveError::EmptyCurve)?.end();
+        Ok(CurveInstance {
+            start_angle: self.start_angle,
+            total_width,
+            components,
             start_value,
             end_value,
-            start_angle,
-        }
+        })
+    }
+
+    pub fn start_angle(&self) -> Angle {
+        self.start_angle
     }
 }
 
-/// This type of curve has a beginning and an end. It is anchored at a specific starting point. In other words this type of curve does not repeat infinitely
-pub struct AbsoluteCurve<const N: usize> {
-    pub(crate) curve: HapticCurve<N>,
-    /// Initial value which the curve starts out with. This can be viewed as a [`CurveComponent::Const`] which starts at -infinity
-    pub(crate) start_value: Value,
-    /// Value of the curve after the last component. This can be viewed as a [`CurveComponent::Const`] which is appended to the end of the curve and has infinite width
-    pub(crate) end_value: Value,
-    /// Angle at which the curve will start playing. This is an absolute angle in this context but will be relative to a given start offset during actual playback
+pub(crate) trait CurveComponentInstance: core::fmt::Debug {
+    fn sample(&self, at: Angle) -> Value;
+    fn domain(&self) -> [Angle; 2];
+
+    fn start(&self) -> Value {
+        let t = self.domain();
+        self.sample(t[0])
+    }
+
+    fn end(&self) -> Value {
+        let t = self.domain();
+        self.sample(t[1])
+    }
+
+    fn width(&self) -> Angle {
+        let domain = self.domain();
+        domain[1] - domain[0]
+    }
+}
+
+#[derive(Debug)]
+struct BezierComponent<const N: usize> {
+    curve: TransformInput<Bezier<f32, [f32; N], enterpolation::ConstSpace<f32, N>>, f32, f32>,
+}
+
+impl<const N: usize> CurveComponentInstance for BezierComponent<N> {
+    fn sample(&self, at: f32) -> f32 {
+        self.curve.eval(at)
+    }
+
+    fn domain(&self) -> [Angle; 2] {
+        self.curve.domain()
+    }
+}
+
+#[derive(Debug)]
+struct ConstComponent {
+    value: Value,
+    start_angle: Angle,
+    width: Angle,
+}
+
+impl CurveComponentInstance for ConstComponent {
+    fn sample(&self, _: f32) -> f32 {
+        self.value
+    }
+
+    fn domain(&self) -> [Angle; 2] {
+        [self.start_angle, self.start_angle + self.width]
+    }
+}
+
+#[derive(Debug)]
+struct LinearComponent {
+    curve: Linear<Equidistant<f32>, [f32; 2], Identity>,
+}
+
+impl CurveComponentInstance for LinearComponent {
+    fn sample(&self, at: f32) -> f32 {
+        self.curve.eval(at)
+    }
+
+    fn domain(&self) -> [Angle; 2] {
+        self.curve.domain()
+    }
+}
+
+#[derive(Debug)]
+pub struct CurveInstance<const N: usize> {
+    /// List of components in this curve
+    pub(crate) components: Vec<Box<dyn CurveComponentInstance>, N>,
+    /// Offset from zero which defines where the curve starts at
     pub(crate) start_angle: Angle,
+    /// Total width of all elements in the curve
+    pub(crate) total_width: Angle,
+    /// Torque value at the very start of the curve
+    pub(crate) start_value: Value,
+    /// Torque value at the very end of the curve
+    pub(crate) end_value: Value,
+}
+
+impl<const N: usize> CurveInstance<N> {
+    pub(crate) fn as_iter(&self) -> CurveIter<'_> {
+        CurveIter::new(&self.components, self.start_angle)
+    }
 }
 
 #[derive(Debug)]
 pub(crate) struct ComponentView<'a> {
-    pub(crate) component: &'a CurveComponent,
-    pub(crate) start_angle: Angle,
-    pub(crate) end_angle: Angle,
+    pub(crate) component: &'a Box<dyn CurveComponentInstance>,
+    pub(crate) start_angle: f32,
+    pub(crate) end_angle: f32,
 }
 
 pub(crate) struct CurveIter<'a> {
-    iter: Iter<'a, CurveComponent>,
+    iter: Iter<'a, Box<dyn CurveComponentInstance>>,
     curr_angle: Angle,
 }
 
 impl<'a> CurveIter<'a> {
-    fn new(curve: &'a [CurveComponent]) -> Self {
+    fn new(curve: &'a [Box<dyn CurveComponentInstance>], start_angle: Angle) -> Self {
         CurveIter {
             iter: curve.iter(),
-            curr_angle: Angle::ZERO,
+            curr_angle: start_angle,
         }
     }
 }
@@ -217,10 +300,10 @@ impl<const N: usize> CurveBuilder<N> {
             self.over_capacity += 1;
             return self;
         }
-        if !component.values_valid() {
-            self.range_error = Some(CurveError::ValueOutOfRange(self.components.iter().count()));
-            return self;
-        }
+        // if !component.values_valid() {
+        //     self.range_error = Some(CurveError::ValueOutOfRange(self.components.iter().count()));
+        //     return self;
+        // }
         if self.components.push(component).is_err() {
             self.over_capacity = 1;
         }
@@ -231,54 +314,35 @@ impl<const N: usize> CurveBuilder<N> {
     /// `value` must be in the range of -1.0 to 1.0
     pub fn add_const(self, width: f32, value: f32) -> Self {
         self.add_component(CurveComponent::Const {
-            width: I16F16::from_num(width),
-            value: I16F16::from_num(value),
-            pattern_on_entry: None,
-        })
-    }
-
-    /// Add a segment to the curve which plays a haptic pattern upon entry, the value otherwise remains constant.
-    /// `value` must be in the range of -1.0 to 1.0
-    pub fn add_pattern(
-        self,
-        width: f32,
-        value: f32,
-        pattern: &[Command],
-        repeat: u16,
-        multiply: u16,
-    ) -> Self {
-        self.add_component(CurveComponent::Const {
-            width: I16F16::from_num(width),
-            value: I16F16::from_num(value),
-            pattern_on_entry: Some(HapticPattern::new(
-                Vec::from_iter(pattern.iter().cloned()),
-                repeat,
-                multiply,
-            )),
+            width: width,
+            value: value,
         })
     }
 
     /// Add a segment to the curve during which the output value linearly transitions from `start_value` to `end_value`.
     /// `start_value` and `end_value` must be in the range of -1.0 to 1.0
     pub fn add_linear(self, width: f32, start_value: f32, end_value: f32) -> Self {
-        self.add_eased(width, start_value, end_value, Easing::Linear)
+        self.add_component(CurveComponent::Linear {
+            width: width,
+            start: start_value,
+            end: end_value,
+        })
     }
 
-    /// Add a segment to the curve during which the output value transitions from `start_value` to `end_value`
-    /// smoothly defined by the given easing function.
-    /// `start_value` and `end_value` must be in the range of -1.0 to 1.0
-    pub fn add_eased(self, width: f32, start_value: f32, end_value: f32, easing: Easing) -> Self {
-        self.add_component(CurveComponent::Eased {
-            width: I16F16::from_num(width),
-            start: I16F16::from_num(start_value),
-            end: I16F16::from_num(end_value),
-            easing,
-            pattern_on_entry: None,
+    /// Add a segment to the curve which is defined via the given control points
+    /// During playback it will interpolate smoothly
+    /// The control points given via `points` must produce a curve which is always in the range of -1.0 to 1.0
+    pub fn add_bezier3(self, width: f32, points: [f32; 3]) -> Self {
+        self.add_component(CurveComponent::Bezier3 {
+            width: width,
+            points,
         })
     }
 
     /// Finalize the curve building process and return the constructed curve
-    pub fn build(self) -> Result<HapticCurve<N>, CurveError> {
+    /// By specifying `start_angle` you may shift where the start point of the curve is located at as an absolute position.
+    /// When a curve starts playing the initial angle will be zero
+    pub fn build(self, start_angle: Angle) -> Result<HapticCurve<N>, CurveError> {
         if let Some(e) = self.range_error {
             return Err(e);
         }
@@ -290,6 +354,7 @@ impl<const N: usize> CurveBuilder<N> {
         }
         Ok(HapticCurve {
             components: self.components,
+            start_angle,
         })
     }
 }

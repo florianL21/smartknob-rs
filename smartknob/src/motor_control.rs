@@ -11,9 +11,8 @@ use esp_hal::{
     spi,
     time::Rate,
 };
-use fixed::types::I16F16;
 use foc::pwm::SpaceVector;
-use haptic_lib::{CurveBuilder, Easing, EasingType};
+use haptic_lib::CurveBuilder;
 use log::info;
 use smartknob_core::{
     haptic_core::{CalibrationData, DetailedSettings, SmartknobHapticCore, encoder::MT6701Spi},
@@ -74,13 +73,14 @@ pub async fn update_foc(
         .await;
 
     let test_curve = CurveBuilder::<6>::new()
-        .add_eased(0.3, 1.0, 0.0, Easing::Cubic(EasingType::Out))
-        .add_eased(0.5, 0.0, -1.0, Easing::Cubic(EasingType::In))
-        .add_eased(0.5, 1.0, 0.0, Easing::Cubic(EasingType::Out))
-        .add_eased(0.3, 0.0, -1.0, Easing::Cubic(EasingType::In))
-        .build()
+        .add_bezier3(0.3, [1.0, 0.0, 0.0])
+        .add_bezier3(0.5, [0.0, -0.1, -1.0])
+        .add_bezier3(0.5, [1.0, 0.1, 0.0])
+        .add_bezier3(0.3, [0.0, 0.0, -1.0])
+        .build(-0.3)
         .unwrap()
-        .make_absolute(I16F16::ZERO);
+        .instantiate()
+        .unwrap();
     let _ = haptic_core.set_curve(&test_curve, 1.0).await;
     loop {
         haptic_core.run(settings_store_signals).await;

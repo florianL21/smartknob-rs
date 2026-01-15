@@ -30,7 +30,7 @@ use embassy_sync::{
 use embassy_time::{Duration, Instant, Ticker, Timer};
 use fixed::types::I16F16;
 use foc::pwm::Modulation;
-use haptic_lib::{AbsoluteCurve, Command, HapticPlayer, Playback};
+use haptic_lib::{Command, CurveInstance, HapticPlayer, Playback};
 use log::{error, info, warn};
 
 use crate::{
@@ -242,12 +242,13 @@ impl<
     /// If no modification of the curve is desired this should be set to 1.0
     pub async fn set_curve(
         &mut self,
-        curve: &'a AbsoluteCurve<MAX_CURVE_ELEM>,
+        curve: &'a CurveInstance<MAX_CURVE_ELEM>,
         curve_scale: f32,
     ) -> Result<(), HapticSystemError<E::Error>> {
         let meas = self.haptics.update_encoder().await?;
         self.player = Some(
-            HapticPlayer::new(meas.position, curve).with_scale(self.curve_scale * curve_scale),
+            HapticPlayer::new(meas.position.to_num(), curve)
+                .with_scale(self.curve_scale * curve_scale),
         );
         Ok(())
     }
@@ -299,15 +300,13 @@ impl<
             }
         }
         if let Ok(encoder_meas) = self.haptics.update_encoder().await {
-            ENCODER_POSITION.store(
-                encoder_meas.position.to_num(),
-                core::sync::atomic::Ordering::Relaxed,
-            );
+            let encoder_position = encoder_meas.position.to_num();
+            ENCODER_POSITION.store(encoder_position, core::sync::atomic::Ordering::Relaxed);
             if let Some(ref mut player) = self.player {
-                let playback = player.play(encoder_meas.position);
+                let playback = player.play(encoder_position);
                 match playback {
-                    Playback::Value(v) => {
-                        if let Err(e) = self.haptics.set_motor(encoder_meas, v)
+                    Playback::Torque(v) => {
+                        if let Err(e) = self.haptics.set_motor(encoder_meas, I16F16::from_num(v))
                             && !matches!(e, HapticSystemError::NotYetCalibrated)
                         {
                             error!("Failed to set motor torque: {e}");
@@ -325,7 +324,8 @@ impl<
                                 }
                                 Command::Torque(t) => {
                                     if let Ok(enc) = self.haptics.update_encoder().await
-                                        && let Err(e) = self.haptics.set_motor(enc, t)
+                                        && let Err(e) =
+                                            self.haptics.set_motor(enc, I16F16::from_num(t))
                                         && !matches!(e, HapticSystemError::NotYetCalibrated)
                                     {
                                         error!("Failed to set motor torque: {e}");

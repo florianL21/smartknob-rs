@@ -13,15 +13,31 @@ subsystems may be replaced by custom implementations by users of the library as 
 ### The layers:
 
 * The `haptic_lib` is a create which contains curve definitions. This crate is kept so generic that it can be used by both the embedded system as well as a potential PC application. This will contain builders which can be used to construct curves/patterns. It may also come with a predefined set of ready to use curves and patterns
-* The `smartknob_core` crate implements all major shareable sub-components of the smartknob in a non hardware specific way. No PCB specific or even CPU architecture specific things are allowed in here.
-  * The haptic core is responsible for playing back haptic curves and patterns, it also contains the FOC algorithms.
-  * The flash handler together with the settings handler is responsible to provide a common way of storing information which any and all components of the `smartknob_core` crate may need
-  * Even somewhat custom logic can be placed here if it makes sense to share across different hardware implementations. But they still have to keep the constraint to be hardware independent.
-* The `smartknob_esp32` crate takes the generic constructs from `smartknob_core` and concretely implements them for the ESP32 controllers. This for example means implementing the interfacing with the actual flash driver of the ESP or adding hardware specific drivers for example the MCPWM peripheral of the ESP32.
+
+## The `smartknob_core` crate
+
+The `smartknob_core` crate implements all major shareable sub-components of the smartknob in a non hardware specific way. No PCB specific or even CPU architecture specific things are allowed in here.
+
+### The haptic core
+
+The haptic core is responsible for playing back haptic curves and patterns, it also contains the FOC algorithms, non-linearity corrections, gear ratio configuration
+
+### The settings handler
+
+A lot of sub-components need some sort of calibration/configuration data. So it makes sense to have one generic way of handling these.
+This is closely connected with the flash handler and implemented in such a way that it can be used alongside other setting systems for other components outside of the smartknob "ecosystem".
+
+### Additional components
+
+Even somewhat custom logic can be placed here if it makes sense to share across different hardware implementations. But they still have to keep the constraint to be hardware independent.
+
+For example the calculations needed for knob tilt and press detection via inductive sensors could be placed here.
 
 
+## The `smartknob_esp32` crate
 
-## The
+The `smartknob_esp32` crate takes the generic constructs from `smartknob_core` and concretely implements them for the ESP32 controllers. This for example means implementing the interfacing with the actual flash driver of the ESP or adding hardware specific drivers for example the MCPWM peripheral of the ESP32.
+
 
 ## The `smartknob` crate
 
