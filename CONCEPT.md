@@ -1,11 +1,46 @@
 # Concept for haptic programming for the Smartknob
 
+## Software overview
+
+The software stack is composed of a few layers which serve different purposes.
+
+Consider the following diagram:
+![](media/software-layers.svg)
+
+The big boxes represent rust crates and the smaller boxes within them represent subsystems which can be used independently of each other.
+subsystems may be replaced by custom implementations by users of the library as long as some basic communication principals are kept in mind.
+
+### The layers:
+
+* The `haptic_lib` is a create which contains curve definitions. This crate is kept so generic that it can be used by both the embedded system as well as a potential PC application. This will contain builders which can be used to construct curves/patterns. It may also come with a predefined set of ready to use curves and patterns
+* The `smartknob_core` crate implements all major shareable sub-components of the smartknob in a non hardware specific way. No PCB specific or even CPU architecture specific things are allowed in here.
+  * The haptic core is responsible for playing back haptic curves and patterns, it also contains the FOC algorithms.
+  * The flash handler together with the settings handler is responsible to provide a common way of storing information which any and all components of the `smartknob_core` crate may need
+  * Even somewhat custom logic can be placed here if it makes sense to share across different hardware implementations. But they still have to keep the constraint to be hardware independent.
+* The `smartknob_esp32` crate takes the generic constructs from `smartknob_core` and concretely implements them for the ESP32 controllers. This for example means implementing the interfacing with the actual flash driver of the ESP or adding hardware specific drivers for example the MCPWM peripheral of the ESP32.
+
+
+
+## The
+
+## The `smartknob` crate
+
+Maybe these would even be a single git repo specific to one specific hardware.
+
+The `smartknob` crate is the crate which brings it all together. It is the most hardware specific, and a single implementation may be only usable on one specific hardware device. This crate basically is what configures all sub-components from all other crates and defines how they connect, which pins they should use etc.
+This is also where special one-off features would be implemented. These could for example be some custom buttons, vibration motors, etc.
+
+The UI would probably best be implemented in its own crate and then be pulled in inside the `smartknob` crate.
+Events for updating the UI state and also interfaces to allow the UI to set settings, update curves etc. can be provided and be connected together in the `smartknob` crate.
+
+
+## The `smartknob_core` crate
+
 The main idea would be to have 2 layers of configuration where higher layers take precedence over lower ones.
-Additionally the UI is somewhat decoupled from the haptic feedback and can subscribe to events sent by the rest of the system.
 
-The main goal of this concept is to create a framework of how haptic systems can be described and may even provide a pre-made library of patterns, or even dynamic builders of such, for generic reuse.
+The main goal of this concept is to create a framework of how haptic systems can be described.
 
-## `Layer0` - Haptic curve
+### `Layer0` - Haptic curve
 
 This is the main layer. It runs the haptic curve.
 The haptic curve defines any sort of haptic feedback which is based on the rotational state of the knob.
@@ -15,10 +50,10 @@ A haptic curve defines how much torque and in which direction this torque should
 As an example, [here](media/haptic-curve-on-off.html) is the curve of the ON/OFF demo of the original smartknob firmware.
 
 
-### Serialization
+#### Serialization
 
 A haptic curve should be serializable to the wire.
-My current intention of doing this, is to keep a simple and user writable approach:
+My current intention of doing this, is to keep a simple and user writable approach (but users may use fancy UIs or higher level builder APIs to actually construct these curves):
 
 A Haptic curve consists of a sequence of references to `segment`s.
 A `segment` consists of a sequence of `part`s.
@@ -87,7 +122,7 @@ HapticCurve {
 }
 ```
 
-## `Layer1` - Haptic patterns
+### `Layer1` - Haptic patterns
 
 This layer is responsible for playing back quick one time feedback patterns.
 Since these patterns fully occupy the motor they always take precedence over the layer 0 haptic curves.
@@ -99,12 +134,12 @@ The decision of when a haptic pattern is active on layer 1 is made via looking u
 This curve consists of a sequence of segments.
 There are 2 types of segments:
 
-### `Space` segments
+#### `Space` segments
 
 These only consist of a `width` and while the knob is positioned within such a section `Layer1` is considered inactive.
 
 
-### `HapticEvent` segments
+#### `HapticEvent` segments
 
 These always considered to have zero width but they do come with an `activation_overlap` and a `deactivation_gap`.
 These 2 values produce an `activation zone` and a `deactivation zone`.
@@ -121,11 +156,11 @@ To illustrate this consider the following diagram:
 
 TODO
 
-### Serialization
+#### Serialization
 
 Similar to the Haptic curve this serialization will work exactly the same way
 
-## UI
+## The UI crate
 
 The UI is somewhat decoupled from the whole haptic system.
 The UI will mainly receive events from the haptic system and
