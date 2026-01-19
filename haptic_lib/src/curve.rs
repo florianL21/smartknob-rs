@@ -1,25 +1,30 @@
-// pub use crate::easings::Easing;
 extern crate alloc;
+
+mod components;
+use crate::curve::components::{
+    BezierComponent, ConstComponent, CurveComponentInstance, LinearComponent,
+};
 use crate::{Angle, Value};
 use core::slice::Iter;
 
 use alloc::boxed::Box;
 use enterpolation::linear::{Linear, LinearError};
-use enterpolation::{Curve, Equidistant};
 use enterpolation::{
-    Identity, Signal, TransformInput,
+    TransformInput,
     bezier::{Bezier, BezierError},
 };
 use heapless::Vec;
 use serde::{Deserialize, Serialize};
-
 use thiserror::Error;
+
 #[derive(Error, Debug)]
 pub enum InterpolationBuilderError {
     #[error("Failed to build bezier interpolation: {0}")]
     BezierError(BezierError),
     #[error("Failed to build linear interpolation: {0}")]
     LinearError(LinearError),
+    #[error("At least one of the values along this components is not within -1.0 to 1.0")]
+    ValueOutOfRange,
 }
 
 #[derive(Error, Debug)]
@@ -48,13 +53,35 @@ pub enum CurveComponent {
         /// The constant torque value to apply over this range
         value: f32,
     },
-    /// An transition from a start value to an end value over a certain angle range with a specified easing function
+    /// Define a bezier curve with 3 points
     Bezier3 {
         /// The width of this component in the curve
         width: f32,
         /// Points for defining the bezier curve
         points: [f32; 3],
     },
+    /// Define a bezier curve with 4 points
+    Bezier4 {
+        /// The width of this component in the curve
+        width: f32,
+        /// Points for defining the bezier curve
+        points: [f32; 4],
+    },
+    /// Define a bezier curve with 5 points
+    Bezier5 {
+        /// The width of this component in the curve
+        width: f32,
+        /// Points for defining the bezier curve
+        points: [f32; 5],
+    },
+    /// Define a bezier curve with 6 points
+    Bezier6 {
+        /// The width of this component in the curve
+        width: f32,
+        /// Points for defining the bezier curve
+        points: [f32; 6],
+    },
+    /// A transition from a start to an end value linearly over its width
     Linear {
         /// The width of this component in the curve
         width: f32,
@@ -65,23 +92,36 @@ pub enum CurveComponent {
     },
 }
 
+fn make_bezier<const N: usize>(
+    width: f32,
+    points: [f32; N],
+) -> Result<
+    TransformInput<Bezier<f32, [f32; N], enterpolation::ConstSpace<f32, N>>, f32, f32>,
+    InterpolationBuilderError,
+> {
+    Bezier::builder()
+        .elements(points)
+        .domain(0.0, width)
+        .constant()
+        .build()
+        .map_err(InterpolationBuilderError::BezierError)
+}
+
 impl CurveComponent {
-    fn build(
-        self,
-        start_angle: f32,
-    ) -> Result<Box<dyn CurveComponentInstance>, InterpolationBuilderError> {
+    fn build(self) -> Result<Box<dyn CurveComponentInstance>, InterpolationBuilderError> {
         let curve: Box<dyn CurveComponentInstance> = match self {
-            CurveComponent::Bezier3 { width, points } => {
-                // info!("domain: [{start_angle}, {}]", start_angle + width);
-                Box::new(BezierComponent {
-                    curve: Bezier::builder()
-                        .elements(points)
-                        .domain(0.0, width)
-                        .constant()
-                        .build()
-                        .map_err(InterpolationBuilderError::BezierError)?,
-                })
-            }
+            CurveComponent::Bezier3 { width, points } => Box::new(BezierComponent {
+                curve: make_bezier(width, points)?,
+            }),
+            CurveComponent::Bezier4 { width, points } => Box::new(BezierComponent {
+                curve: make_bezier(width, points)?,
+            }),
+            CurveComponent::Bezier5 { width, points } => Box::new(BezierComponent {
+                curve: make_bezier(width, points)?,
+            }),
+            CurveComponent::Bezier6 { width, points } => Box::new(BezierComponent {
+                curve: make_bezier(width, points)?,
+            }),
             CurveComponent::Const { value, width } => Box::new(ConstComponent {
                 value,
                 start_angle: 0.0,
@@ -96,6 +136,13 @@ impl CurveComponent {
                     .map_err(InterpolationBuilderError::LinearError)?,
             }),
         };
+        let sample_step = self.width() / 20.0;
+        for i in 0..20 {
+            let sample = curve.sample(i as f32 * sample_step);
+            if sample < -1.0 || sample > 1.0 {
+                return Err(InterpolationBuilderError::ValueOutOfRange);
+            }
+        }
         Ok(curve)
     }
 
@@ -104,6 +151,9 @@ impl CurveComponent {
         match self {
             CurveComponent::Const { width, .. } => width,
             CurveComponent::Bezier3 { width, .. } => width,
+            CurveComponent::Bezier4 { width, .. } => width,
+            CurveComponent::Bezier5 { width, .. } => width,
+            CurveComponent::Bezier6 { width, .. } => width,
             CurveComponent::Linear { width, .. } => width,
         }
     }
@@ -123,14 +173,17 @@ impl<const N: usize> HapticCurve<N> {
     /// Make a curve description into a playable instance.
     pub fn instantiate(self) -> Result<CurveInstance<N>, CurveError> {
         let total_width = self.components.iter().map(|c| c.width()).sum();
-        let mut curr_angle = self.start_angle;
         let mut components = Vec::new();
         for (i, comp) in self.components.into_iter().enumerate() {
-            let width = *comp.width();
             components
-                .push(comp.build(curr_angle)?)
+                .push(comp.build().map_err(|e| {
+                    if matches!(e, InterpolationBuilderError::ValueOutOfRange) {
+                        CurveError::ValueOutOfRange(i)
+                    } else {
+                        e.into()
+                    }
+                })?)
                 .map_err(|_| CurveError::NotEnoughCapacity(i))?;
-            curr_angle += width;
         }
         let start_value = components.first().ok_or(CurveError::EmptyCurve)?.start();
         let end_value = components.last().ok_or(CurveError::EmptyCurve)?.end();
@@ -145,73 +198,6 @@ impl<const N: usize> HapticCurve<N> {
 
     pub fn start_angle(&self) -> Angle {
         self.start_angle
-    }
-}
-
-pub(crate) trait CurveComponentInstance: core::fmt::Debug {
-    fn sample(&self, at: Angle) -> Value;
-    fn domain(&self) -> [Angle; 2];
-
-    fn start(&self) -> Value {
-        let t = self.domain();
-        self.sample(t[0])
-    }
-
-    fn end(&self) -> Value {
-        let t = self.domain();
-        self.sample(t[1])
-    }
-
-    fn width(&self) -> Angle {
-        let domain = self.domain();
-        domain[1] - domain[0]
-    }
-}
-
-#[derive(Debug)]
-struct BezierComponent<const N: usize> {
-    curve: TransformInput<Bezier<f32, [f32; N], enterpolation::ConstSpace<f32, N>>, f32, f32>,
-}
-
-impl<const N: usize> CurveComponentInstance for BezierComponent<N> {
-    fn sample(&self, at: f32) -> f32 {
-        self.curve.eval(at)
-    }
-
-    fn domain(&self) -> [Angle; 2] {
-        self.curve.domain()
-    }
-}
-
-#[derive(Debug)]
-struct ConstComponent {
-    value: Value,
-    start_angle: Angle,
-    width: Angle,
-}
-
-impl CurveComponentInstance for ConstComponent {
-    fn sample(&self, _: f32) -> f32 {
-        self.value
-    }
-
-    fn domain(&self) -> [Angle; 2] {
-        [self.start_angle, self.start_angle + self.width]
-    }
-}
-
-#[derive(Debug)]
-struct LinearComponent {
-    curve: Linear<Equidistant<f32>, [f32; 2], Identity>,
-}
-
-impl CurveComponentInstance for LinearComponent {
-    fn sample(&self, at: f32) -> f32 {
-        self.curve.eval(at)
-    }
-
-    fn domain(&self) -> [Angle; 2] {
-        self.curve.domain()
     }
 }
 
@@ -300,10 +286,6 @@ impl<const N: usize> CurveBuilder<N> {
             self.over_capacity += 1;
             return self;
         }
-        // if !component.values_valid() {
-        //     self.range_error = Some(CurveError::ValueOutOfRange(self.components.iter().count()));
-        //     return self;
-        // }
         if self.components.push(component).is_err() {
             self.over_capacity = 1;
         }
