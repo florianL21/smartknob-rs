@@ -25,14 +25,16 @@ use esp_rtos::embassy::Executor;
 use log::info;
 
 use smartknob_core::flash::FlashHandling;
+use smartknob_core::system_settings::log_toggles::LogToggleWatcher;
 use smartknob_core::system_settings::{HapticSystemStoreSignal, StoreSignals};
 use smartknob_esp32::flash::FlashHandler;
 use smartknob_esp32::motor_driver::mcpwm::Pins6PWM;
-use smartknob_rs::config::LogToggleWatcher;
 use smartknob_rs::{cli::menu_handler, motor_control::update_foc};
 use static_cell::StaticCell;
 
 esp_bootloader_esp_idf::esp_app_desc!();
+
+type LogWatcher = LogToggleWatcher<CriticalSectionRawMutex, 6>;
 
 #[embassy_executor::task]
 pub async fn flash_task(
@@ -81,7 +83,7 @@ async fn main(spawner: Spawner) {
     let restored_state = flash.restore().await;
     spawner.must_spawn(flash_task(flash, setting_signals));
 
-    static LOG_TOGGLES: StaticCell<LogToggleWatcher<NoopRawMutex, 6>> = StaticCell::new();
+    static LOG_TOGGLES: StaticCell<LogWatcher> = StaticCell::new();
     let log_toggles = LOG_TOGGLES.init(LogToggleWatcher::new());
 
     // -DPIN_UH=46
@@ -127,6 +129,8 @@ async fn main(spawner: Spawner) {
     static HAPTIC_SETTING_SIGNAL: StaticCell<&HapticSystemStoreSignal<CriticalSectionRawMutex>> =
         StaticCell::new();
     let haptic_setting_signal = HAPTIC_SETTING_SIGNAL.init(&setting_signals.haptic_core);
+    static LOG_TOGGLE_REF: StaticCell<&LogWatcher> = StaticCell::new();
+    let log_toggles_foc = LOG_TOGGLE_REF.init(log_toggles);
 
     esp_rtos::start_second_core(
         peripherals.CPU_CTRL,
@@ -165,6 +169,7 @@ async fn main(spawner: Spawner) {
                     pwm_pins,
                     motor_calibration,
                     haptic_setting_signal,
+                    log_toggles_foc.dyn_receiver().unwrap(),
                 ));
             });
         },

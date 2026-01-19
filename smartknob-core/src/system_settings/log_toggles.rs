@@ -72,7 +72,9 @@ log_toggles!(
     render,
     Render,
     display_transfer,
-    DisplayTransfer
+    DisplayTransfer,
+    foc_loop,
+    FOCLoop
 );
 
 #[derive(Clone, Debug, uDebug, Default)]
@@ -82,7 +84,7 @@ pub struct LogToggles {
 }
 
 impl LogToggles {
-    fn should_log(&self, channel: LogChannel) -> bool {
+    pub fn should_log(&self, channel: LogChannel) -> bool {
         self.active && self.config.should_log(channel)
     }
 }

@@ -31,9 +31,11 @@ use mipidsi::asynchronous::{
     options::{ColorInversion, ColorOrder},
 };
 use smartknob_core::haptic_core::get_encoder_position;
+use smartknob_core::system_settings::log_toggles::{
+    LogChannel, LogToggleReceiver, LogToggleWatcher, may_log,
+};
 use thiserror::Error;
 
-use crate::config::{LogChannel, LogToggleReceiver, LogToggleWatcher, may_log};
 use crate::knob_tilt::KnobTiltEvent;
 use crate::signals::{KNOB_EVENTS_CHANNEL, KNOB_TILT_ANGLE, KNOB_TILT_MAGNITUDE};
 

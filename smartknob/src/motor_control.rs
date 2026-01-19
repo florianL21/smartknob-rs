@@ -17,7 +17,7 @@ use haptic_lib::{CurveBuilder, Easing, EasingType};
 use log::info;
 use smartknob_core::{
     haptic_core::{CalibrationData, DetailedSettings, SmartknobHapticCore, encoder::MT6701Spi},
-    system_settings::HapticSystemStoreSignal,
+    system_settings::{HapticSystemStoreSignal, log_toggles::LogToggleReceiver},
 };
 use smartknob_esp32::motor_driver::mcpwm::{MCPWM6, Pins6PWM};
 
@@ -38,6 +38,7 @@ pub async fn update_foc(
     pwm_pins: Pins6PWM<'static, AnyPin<'static>>,
     restored_state: Option<CalibrationData>,
     settings_store_signals: &'static HapticSystemStoreSignal<CriticalSectionRawMutex>,
+    log_receiver: LogToggleReceiver,
 ) {
     // setup encoder SPI communication
     let (rx_buffer, rx_descriptors, tx_buffer, tx_descriptors) =
@@ -68,6 +69,7 @@ pub async fn update_foc(
             None,
             DetailedSettings::default(),
             restored_state,
+            log_receiver,
         )
         .await;
 

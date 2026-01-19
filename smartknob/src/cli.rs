@@ -10,12 +10,14 @@ use log::info;
 use postcard::experimental::max_size::MaxSize;
 use smartknob_core::flash::{FlashHandling, FlashKeys};
 use smartknob_core::haptic_core::MotorCommand;
+use smartknob_core::system_settings::log_toggles::{
+    ConfigError, LogChannelToggles, LogToggleSender, LogToggles,
+};
 use smartknob_esp32::flash::{ESPFlashError, FlashHandler};
 use thiserror::Error;
 use ufmt::{uDebug, uwrite};
 
 use crate::{
-    config::{ConfigError, LogChannelToggles, LogToggleSender, LogToggles},
     display::DISPLAY_BRIGHTNESS_SIGNAL,
     signals::{MOTOR_COMMAND_SIGNAL, REQUEST_POWER_DOWN},
 };

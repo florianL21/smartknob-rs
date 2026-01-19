@@ -15,6 +15,8 @@ pub mod encoder;
 mod haptic_hardware;
 pub mod motor_driver;
 
+use core::f32;
+
 use encoder::AbsolutePositionEncoder;
 pub use haptic_hardware::CalibrationData;
 use haptic_hardware::{HapticSystem, HapticSystemError};
@@ -25,15 +27,21 @@ use embassy_sync::{
     blocking_mutex::raw::{CriticalSectionRawMutex, RawMutex},
     signal::Signal,
 };
-use embassy_time::{Duration, Ticker, Timer};
+use embassy_time::{Duration, Instant, Ticker, Timer};
 use fixed::types::I16F16;
 use foc::pwm::Modulation;
 use haptic_lib::{AbsoluteCurve, Command, HapticPlayer, Playback};
 use log::{error, info, warn};
 
 use crate::{
-    haptic_core::haptic_hardware::InactivitySettings, system_settings::HapticSystemStoreSignal,
+    haptic_core::haptic_hardware::InactivitySettings,
+    system_settings::{
+        HapticSystemStoreSignal,
+        log_toggles::{LogChannel, LogToggleReceiver, may_log},
+    },
 };
+
+const LOG_STATISTICS_EVERY: Duration = Duration::from_secs(10);
 
 /// This signal can be set to trigger different action of the haptic system
 pub static MOTOR_COMMAND_SIGNAL: Signal<CriticalSectionRawMutex, MotorCommand> = Signal::new();
@@ -71,6 +79,75 @@ pub enum MotorCommand {
     },
 }
 
+struct Statistic {
+    min: u64,
+    max: u64,
+    avg: f32,
+}
+
+impl Statistic {
+    fn new() -> Self {
+        Self {
+            avg: 0.0,
+            min: u64::MAX,
+            max: u64::MIN,
+        }
+    }
+
+    fn record(&mut self, value: u64) {
+        if value < self.min {
+            self.min = value;
+        }
+        if value > self.max {
+            self.max = value;
+        }
+        self.avg = (self.avg + value as f32) / 2.0;
+    }
+}
+
+struct StatisticsLogging {
+    /// timestamp of then the last foc loop iteration finished
+    last_run: Instant,
+    /// Instant of the last time the statistics were logged
+    last_report: Instant,
+    /// Log receiver for printing statistics
+    log_receiver: LogToggleReceiver,
+    /// Latency statistics
+    latency_statistics: Statistic,
+    /// Loop time statistics
+    loop_statistics: Statistic,
+}
+
+impl StatisticsLogging {
+    async fn log(&mut self, start: Instant) {
+        let now = Instant::now();
+        may_log(&mut self.log_receiver, LogChannel::FOCLoop, || {
+            let processing_time = now.duration_since(start);
+            let latency = start.duration_since(self.last_run);
+            self.latency_statistics.record(latency.as_micros());
+            self.loop_statistics.record(processing_time.as_micros());
+            if now.duration_since(self.last_report) > LOG_STATISTICS_EVERY {
+                self.last_report = now;
+                info!(
+                    "FOC loop latency\t min: {:5.0}us; max: {:5.0}us; avg: {:5.2}us",
+                    self.latency_statistics.min,
+                    self.latency_statistics.max,
+                    self.latency_statistics.avg
+                );
+                info!(
+                    "FOC loop time\t min: {:5.0}us; max: {:5.0}us; avg: {:5.2}us",
+                    self.loop_statistics.min, self.loop_statistics.max, self.loop_statistics.avg
+                );
+                // Reset the statistics for the next iteration so tht min and max values are reset
+                self.latency_statistics = Statistic::new();
+                self.loop_statistics = Statistic::new();
+            }
+        })
+        .await;
+        self.last_run = now;
+    }
+}
+
 pub struct SmartknobHapticCore<
     'a,
     E: AbsolutePositionEncoder,
@@ -82,7 +159,10 @@ pub struct SmartknobHapticCore<
     haptics: HapticSystem<E, D, M, PWM_RESOLUTION>,
     player: Option<HapticPlayer<'a, MAX_CURVE_ELEM>>,
     curve_scale: f32,
+    /// Optional ticker for throttling the FOC loop
     ticker: Option<Ticker>,
+    /// Data for logging statistics to the terminal
+    statistics: StatisticsLogging,
 }
 
 pub struct DetailedSettings {
@@ -130,6 +210,7 @@ impl<
         refresh_rate: Option<Duration>,
         settings: DetailedSettings,
         restored_state: Option<CalibrationData>,
+        log_receiver: LogToggleReceiver,
     ) -> Self {
         let mut haptics =
             HapticSystem::new(encoder, driver, settings.alignment_voltage, pole_pairs).await;
@@ -145,6 +226,13 @@ impl<
             player: None,
             curve_scale: settings.curve_scale,
             ticker: refresh_rate.map(Ticker::every),
+            statistics: StatisticsLogging {
+                last_run: Instant::from_millis(0),
+                last_report: Instant::from_millis(0),
+                log_receiver,
+                latency_statistics: Statistic::new(),
+                loop_statistics: Statistic::new(),
+            },
         }
     }
 
@@ -166,6 +254,7 @@ impl<
 
     /// Run the core haptic system. This should be called in a task loop endlessly
     pub async fn run<MU: RawMutex>(&mut self, store_signal: &HapticSystemStoreSignal<MU>) {
+        let start = Instant::now();
         if let Some(sig) = MOTOR_COMMAND_SIGNAL.try_take() {
             match sig {
                 MotorCommand::StartAlignment => {
@@ -248,6 +337,7 @@ impl<
                 }
             }
         }
+        self.statistics.log(start).await;
         if let Some(ref mut ticker) = self.ticker {
             ticker.next().await;
         }

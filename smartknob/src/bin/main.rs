@@ -38,15 +38,16 @@ use smart_leds::{
 };
 use smartknob_core::flash::FlashHandling;
 use smartknob_core::haptic_core::get_encoder_position;
+use smartknob_core::system_settings::log_toggles::{
+    LogChannel, LogToggleReceiver, LogToggleWatcher, may_log,
+};
 use smartknob_core::system_settings::{HapticSystemStoreSignal, StoreSignals};
 use smartknob_esp32::flash::FlashHandler;
 use smartknob_esp32::motor_driver::mcpwm::Pins6PWM;
-use smartknob_rs::config::{LogToggleReceiver, LogToggleWatcher};
 use smartknob_rs::display::BacklightHandles;
 use smartknob_rs::signals::{KNOB_EVENTS_CHANNEL, KNOB_TILT_ANGLE};
 use smartknob_rs::{
     cli::menu_handler,
-    config::{LogChannel, may_log},
     display::{DisplayHandles, spawn_display_tasks},
     knob_tilt::{KnobTiltEvent, read_ldc_task},
     motor_control::update_foc,
@@ -57,6 +58,7 @@ use static_cell::StaticCell;
 esp_bootloader_esp_idf::esp_app_desc!();
 
 type I2cBus1 = Mutex<NoopRawMutex, esp_hal::i2c::master::I2c<'static, esp_hal::Async>>;
+type LogWatcher = LogToggleWatcher<CriticalSectionRawMutex, 6>;
 
 #[embassy_executor::task]
 async fn log_rotations(mut log_receiver: LogToggleReceiver) {
@@ -238,7 +240,7 @@ async fn main(spawner: Spawner) {
     let brightness_sensor_pin = peripherals.GPIO4;
     let power_off_pin = peripherals.GPIO38;
 
-    static LOG_TOGGLES: StaticCell<LogToggleWatcher<NoopRawMutex, 6>> = StaticCell::new();
+    static LOG_TOGGLES: StaticCell<LogWatcher> = StaticCell::new();
     let log_toggles = LOG_TOGGLES.init(LogToggleWatcher::new());
 
     // Encoder initialization
@@ -251,6 +253,8 @@ async fn main(spawner: Spawner) {
     static HAPTIC_SETTING_SIGNAL: StaticCell<&HapticSystemStoreSignal<CriticalSectionRawMutex>> =
         StaticCell::new();
     let haptic_setting_signal = HAPTIC_SETTING_SIGNAL.init(&setting_signals.haptic_core);
+    static LOG_TOGGLE_REF: StaticCell<&LogWatcher> = StaticCell::new();
+    let log_toggles_foc = LOG_TOGGLE_REF.init(log_toggles);
 
     esp_rtos::start_second_core(
         peripherals.CPU_CTRL,
@@ -289,6 +293,7 @@ async fn main(spawner: Spawner) {
                     pwm_pins,
                     motor_calibration,
                     haptic_setting_signal,
+                    log_toggles_foc.dyn_receiver().unwrap(),
                 ));
             });
         },
