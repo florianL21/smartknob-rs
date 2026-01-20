@@ -120,8 +120,8 @@ struct StatisticsLogging {
 
 impl StatisticsLogging {
     async fn log(&mut self, start: Instant) {
-        let now = Instant::now();
         may_log(&mut self.log_receiver, LogChannel::FOCLoop, || {
+            let now = Instant::now();
             let processing_time = now.duration_since(start);
             let latency = start.duration_since(self.last_run);
             self.latency_statistics.record(latency.as_micros());
@@ -144,7 +144,7 @@ impl StatisticsLogging {
             }
         })
         .await;
-        self.last_run = now;
+        self.last_run = Instant::now();
     }
 }
 
