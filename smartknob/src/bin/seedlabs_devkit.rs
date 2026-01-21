@@ -5,7 +5,6 @@ extern crate alloc;
 
 use embassy_executor::Spawner;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
-use embassy_sync::{blocking_mutex::raw::NoopRawMutex, mutex::Mutex};
 use embassy_time::{Duration, Timer};
 use esp_backtrace as _;
 use esp_bootloader_esp_idf::partitions::{DataPartitionSubType, PartitionType};
@@ -17,8 +16,7 @@ use esp_hal::system::Stack;
 use esp_hal::timer::timg::TimerGroup;
 use esp_hal::{
     clock::CpuClock,
-    gpio::{AnyPin, Input, InputConfig, Level, Output, OutputConfig},
-    i2c::master::{Config as I2cConfig, I2c},
+    gpio::{AnyPin, Level, Output, OutputConfig},
     rmt::Rmt,
     spi::{
         Mode,
@@ -48,15 +46,13 @@ use smartknob_rs::signals::{KNOB_EVENTS_CHANNEL, KNOB_TILT_ANGLE};
 use smartknob_rs::{
     cli::menu_handler,
     display::{DisplayHandles, spawn_display_tasks},
-    knob_tilt::{KnobTiltEvent, read_ldc_task},
+    knob_tilt::KnobTiltEvent,
     motor_control::update_foc,
-    shutdown::shutdown_handler,
 };
 use static_cell::StaticCell;
 
 esp_bootloader_esp_idf::esp_app_desc!();
 
-type I2cBus1 = Mutex<NoopRawMutex, esp_hal::i2c::master::I2c<'static, esp_hal::Async>>;
 type LogWatcher = LogToggleWatcher<CriticalSectionRawMutex, 6>;
 
 #[embassy_executor::task]
@@ -94,7 +90,7 @@ async fn led_ring(
     led_pin: AnyPin<'static>,
     mut log_receiver: LogToggleReceiver,
 ) {
-    const NUM_LEDS: usize = 24;
+    const NUM_LEDS: usize = 72;
     const _LED_OFFSET: usize = 1;
 
     let mut tilt_receiver = KNOB_EVENTS_CHANNEL.subscriber()
@@ -202,42 +198,33 @@ async fn main(spawner: Spawner) {
     let restored_state = flash.restore().await;
     spawner.must_spawn(flash_task(flash, setting_signals));
 
-    // Pins for LDC1614
-    let pins_ldc_int_pin = peripherals.GPIO40;
-    let pins_i2c_scl = peripherals.GPIO42;
-    let pins_i2c_sda = peripherals.GPIO41;
-
     // Pins for WS2812B LEDs
-    let pin_led_data = peripherals.GPIO39;
+    let pin_led_data = peripherals.GPIO12;
 
     // pins for TMC6300
-    let _pin_tmc_diag = peripherals.GPIO47;
-    let pin_tmc_uh = peripherals.GPIO48;
-    let pin_tmc_ul = peripherals.GPIO17;
-    let pin_tmc_vh = peripherals.GPIO21;
-    let pin_tmc_vl = peripherals.GPIO46;
-    let pin_tmc_wh = peripherals.GPIO18;
-    let pin_tmc_wl = peripherals.GPIO45;
+    let pin_tmc_uh = peripherals.GPIO8;
+    let pin_tmc_ul = peripherals.GPIO16;
+    let pin_tmc_vh = peripherals.GPIO18;
+    let pin_tmc_vl = peripherals.GPIO7;
+    let pin_tmc_wh = peripherals.GPIO17;
+    let pin_tmc_wl = peripherals.GPIO15;
 
     // pins for MT6701-CT
-    let pin_mag_clk = peripherals.GPIO11;
-    let pin_mag_do = peripherals.GPIO10;
-    let pin_mag_csn = peripherals.GPIO12;
-    let _pin_mag_push = peripherals.GPIO3;
+    let pin_mag_clk = peripherals.GPIO13;
+    let pin_mag_do = peripherals.GPIO14;
+    let pin_mag_csn = peripherals.GPIO11;
 
     // pins for display
-    let pin_lcd_sck = peripherals.GPIO13;
+    let pin_lcd_sck = peripherals.GPIO4;
     // let pin_lcd_miso = peripherals.GPIO;
-    let pin_lcd_mosi = peripherals.GPIO14;
-    let pin_lcd_dc = peripherals.GPIO16; //pin 22
-    // BEWARE!!! Schematic has mismatched pins!
-    let pin_lcd_cs = peripherals.GPIO15; //pin 21 // BL pin on the base PCB; CS on the display PCB
-    let pin_lcd_bl = peripherals.GPIO9; // RST pin on the base PCB; BL on the display PCB
-    let pin_lcd_reset = peripherals.GPIO8; // CS pin on the base PCB; RST on the display PCB
+    let pin_lcd_mosi = peripherals.GPIO3;
+    let pin_lcd_dc = peripherals.GPIO2;
+    let pin_lcd_cs = peripherals.GPIO9;
+    let pin_lcd_bl = peripherals.GPIO5;
+    let pin_lcd_reset = peripherals.GPIO10;
 
     // various other pins
-    let brightness_sensor_pin = peripherals.GPIO4;
-    let power_off_pin = peripherals.GPIO38;
+    let brightness_sensor_pin = peripherals.GPIO1;
 
     static LOG_TOGGLES: StaticCell<LogWatcher> = StaticCell::new();
     let log_toggles = LOG_TOGGLES.init(LogToggleWatcher::new());
@@ -303,22 +290,6 @@ async fn main(spawner: Spawner) {
         .spawn(menu_handler(serial, flash, log_toggles.dyn_sender()))
         .ok();
 
-    // LDC sensor
-    let i2c_bus: I2c<'_, esp_hal::Async> = I2c::new(
-        peripherals.I2C0,
-        I2cConfig::default().with_frequency(Rate::from_khz(300)),
-    )
-    .unwrap()
-    .with_scl(pins_i2c_scl)
-    .with_sda(pins_i2c_sda)
-    .into_async();
-    static I2C_BUS: StaticCell<I2cBus1> = StaticCell::new();
-    let i2c_bus = I2C_BUS.init(Mutex::new(i2c_bus));
-
-    let ldc_int_pin = Input::new(pins_ldc_int_pin, InputConfig::default());
-
-    spawner.must_spawn(read_ldc_task(i2c_bus, ldc_int_pin));
-
     // log encoder values
     spawner.must_spawn(log_rotations(log_toggles.dyn_receiver().unwrap()));
 
@@ -357,9 +328,6 @@ async fn main(spawner: Spawner) {
     };
 
     spawn_display_tasks(spawner, display_handles, backlight_stuff, log_toggles).unwrap();
-
-    let power_off_pin = Output::new(power_off_pin, Level::High, OutputConfig::default());
-    spawner.must_spawn(shutdown_handler(power_off_pin));
 
     info!("All tasks spawned");
     let stats = esp_alloc::HEAP.stats();

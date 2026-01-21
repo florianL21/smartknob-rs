@@ -50,19 +50,22 @@ espup install
 Environment setup for ESP toolchain
 
 ```sh
-. $HOME/export-esp.sh
+. set_env.sh
 ```
 
+Always compile the full firmware from within the smartknob directory.
+You can choose different hardware variants by changing the name given to "--bin"
 Always compile for release
 
 ```sh
-cargo build --release
+cd smartknob
+cargo build --release --bin seedlabs_devkit
 ```
 
 And to flash to the target run
 
 ```sh
-cargo run --release
+cargo run --release --bin seedlabs_devkit
 ```
 
 ## Using the firmware
