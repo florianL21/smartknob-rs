@@ -5,6 +5,9 @@ rustflags = ["-C", "link-arg=-nostartfiles", "-Z", "stack-protector=all"]
 [env]
 ESP_LOG = "info"
 ESP_HAL_CONFIG_PSRAM_MODE = "octal"
+DEP_LV_CONFIG_PATH = { relative = true, value = "./smartknob" }
+CROSS_COMPILE = "xtensa-esp32-elf"
+
 
 [build]
 target = "xtensa-esp32s3-none-elf"

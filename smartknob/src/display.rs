@@ -1,34 +1,34 @@
-use alloc::boxed::Box;
-use alloc::rc::Rc;
+use alloc::ffi::CString;
+use alloc::string::ToString;
+use embassy_embedded_hal::shared_bus::asynch::spi::SpiDevice;
 use embassy_executor::{SpawnError, Spawner};
-use embassy_sync::pubsub::WaitResult;
-use embassy_sync::signal::Signal;
-use esp_hal::analog::adc::{Adc, AdcCalBasic, AdcConfig, Attenuation};
-use esp_hal::dma::{DmaRxBuf, DmaTxBuf};
-use esp_hal::gpio::DriveMode;
-use esp_hal::peripherals::GPIO4;
-use esp_hal::{dma_buffers, spi};
-use esp_hal::{gpio::Output, time::Rate};
-use log::{error, info, warn};
-use slint::LogicalPosition;
-use slint::platform::Platform;
-use slint::platform::WindowEvent;
-use slint::platform::software_renderer::{MinimalSoftwareWindow, Rgb565Pixel};
-
+use embassy_sync::blocking_mutex;
 use embassy_sync::blocking_mutex::raw::{CriticalSectionRawMutex, RawMutex};
-
+use embassy_sync::signal::Signal;
 use embassy_sync::{blocking_mutex::raw::NoopRawMutex, mutex::Mutex};
 use embassy_time::{Delay, Duration, Instant, Ticker, Timer};
+use embedded_graphics::draw_target::DrawTarget;
+use embedded_graphics::pixelcolor::Rgb565;
+use esp_hal::dma::{DmaRxBuf, DmaTxBuf};
+use esp_hal::gpio::DriveMode;
 use esp_hal::ledc::channel::ChannelIFace;
 use esp_hal::ledc::timer::TimerIFace;
 use esp_hal::ledc::{self, LSGlobalClkSource, Ledc, LowSpeed};
-// use esp_hal::psram::{FlashFreq, PsramConfig, SpiRamFreq, SpiTimingConfigCoreClock};
-use embassy_embedded_hal::shared_bus::asynch::spi::SpiDevice;
-use mipidsi::asynchronous::{
-    Builder,
-    interface::SpiInterface,
-    models::{GC9A01, Model},
-    options::{ColorInversion, ColorOrder},
+use esp_hal::{dma_buffers, spi};
+use esp_hal::{gpio::Output, time::Rate};
+use lcd_async::Builder;
+use lcd_async::interface::SpiInterface;
+use lcd_async::models::GC9A01;
+use lcd_async::options::{ColorInversion, ColorOrder};
+use lcd_async::raw_framebuf::RawFrameBuf;
+use log::{error, info, warn};
+use lv_bevy_ecs::support::LabelLongMode;
+use lv_bevy_ecs::{
+    display::{Display, DrawBuffer},
+    events::Event,
+    functions::*,
+    support::Align,
+    widgets::{Arc, Label, LvglWorld},
 };
 use smartknob_core::haptic_core::get_encoder_position;
 use smartknob_core::system_settings::log_toggles::{
@@ -36,30 +36,25 @@ use smartknob_core::system_settings::log_toggles::{
 };
 use thiserror::Error;
 
-use crate::knob_tilt::KnobTiltEvent;
-use crate::signals::{KNOB_EVENTS_CHANNEL, KNOB_TILT_ANGLE, KNOB_TILT_MAGNITUDE};
-
-slint::include_modules!();
-
-const TARGET_FPS: u64 = 60;
+const DISPLAY_RENDER_DELAY: Duration = Duration::from_millis(10);
 const INITIAL_DISPLAY_BRIGHTNESS: u8 = 100;
 const BRIGHTNESS_FADE_DURATION_MS: u16 = 1000;
 
-const DISPLAY_SIZE: (u16, u16) = GC9A01::FRAMEBUFFER_SIZE;
-const FRAME_BUFFER_SIZE: usize = (DISPLAY_SIZE.0 * DISPLAY_SIZE.1) as usize;
-const DISPLAY_BUFFER_SIZE: usize = FRAME_BUFFER_SIZE / 2;
-const TARGET_FRAME_DURATION: Duration = Duration::from_millis(1000 / TARGET_FPS);
+const WIDTH: usize = 240;
+const HEIGHT: usize = 240;
+const LINE_HEIGHT: usize = HEIGHT / 20;
+// Rgb565 uses 2 bytes per pixel
+const FRAME_BUFFER_SIZE: usize = WIDTH * HEIGHT * 2;
 
 pub type DisplaySpiBus = spi::master::SpiDma<'static, esp_hal::Blocking>;
-type FBType = [Rgb565Pixel; FRAME_BUFFER_SIZE];
-const DISPLAY_SPI_DMA_BUFFER_SIZE: usize = DISPLAY_BUFFER_SIZE;
-const SPI_TRANSFER_BUFFER_SIZE: usize = DISPLAY_BUFFER_SIZE;
-
-pub static SLINT_READY_SIGNAL: Signal<CriticalSectionRawMutex, ()> = Signal::new();
-type FrameBufferExchange = Signal<CriticalSectionRawMutex, &'static mut FBType>;
+type FBType = [u8; FRAME_BUFFER_SIZE];
+const DISPLAY_SPI_DMA_BUFFER_SIZE: usize = FRAME_BUFFER_SIZE / 4;
 
 /// Set the display brightness with a percentage between 0 - 100%
 pub static DISPLAY_BRIGHTNESS_SIGNAL: Signal<CriticalSectionRawMutex, u8> = Signal::new();
+
+static LVGL_READY_SIGNAL: Signal<CriticalSectionRawMutex, ()> = Signal::new();
+static FRAMEBUFFER_READY: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 
 pub struct DisplayHandles {
     pub spi_bus: DisplaySpiBus,
@@ -72,7 +67,7 @@ pub struct DisplayHandles {
 pub struct BacklightHandles {
     pub ledc: Ledc<'static>,
     pub adc_instance: esp_hal::peripherals::ADC1<'static>,
-    pub brightness_sensor_pin: GPIO4<'static>,
+    // pub brightness_sensor_pin: GPIO4<'static>,
     pub backlight_output: Output<'static>,
 }
 
@@ -90,23 +85,19 @@ pub fn spawn_display_tasks<M: RawMutex, const N: usize>(
     backlight_handles: BacklightHandles,
     log_toggles: &'static LogToggleWatcher<M, N>,
 ) -> Result<(), DisplayTaskError> {
-    static TX: FrameBufferExchange = FrameBufferExchange::new();
-    static RX: FrameBufferExchange = FrameBufferExchange::new();
-    let (fb0, fb1) = init_fbs_heap();
+    let fb0 = init_fbs_heap();
+
+    let stats = esp_alloc::HEAP.stats();
+    info!("Current Heap stats: {}", stats);
 
     spawner.spawn(display_task(
         display_handles,
-        &RX,
-        &TX,
-        fb1,
+        fb0,
         log_toggles
             .dyn_receiver()
             .ok_or(DisplayTaskError::LogReceiverOutOfCapacity)?,
     ))?;
     spawner.spawn(render_task(
-        &TX,
-        &RX,
-        fb0,
         log_toggles
             .dyn_receiver()
             .ok_or(DisplayTaskError::LogReceiverOutOfCapacity)?,
@@ -121,26 +112,7 @@ pub fn spawn_display_tasks<M: RawMutex, const N: usize>(
     Ok(())
 }
 
-struct MyPlatform {
-    window: Rc<MinimalSoftwareWindow>,
-    // optional: some timer device from your device's HAL crate
-    start_instant: Instant,
-}
-
-impl Platform for MyPlatform {
-    fn create_window_adapter(
-        &self,
-    ) -> Result<Rc<dyn slint::platform::WindowAdapter>, slint::PlatformError> {
-        // Since on MCUs, there can be only one window, just return a clone of self.window.
-        // We'll also use the same window in the event loop.
-        Ok(self.window.clone())
-    }
-    fn duration_since_start(&self) -> core::time::Duration {
-        self.start_instant.elapsed().into()
-    }
-}
-
-fn init_fbs_heap() -> (&'static mut FBType, &'static mut FBType) {
+fn init_fbs_heap() -> &'static mut FBType {
     // If the framebuffer is too large to fit in ram, we can allocate it on the
     // heap in PSRAM instead.
     // Allocate the framebuffer to PSRAM without ever putting it on the stack first
@@ -150,41 +122,17 @@ fn init_fbs_heap() -> (&'static mut FBType, &'static mut FBType) {
 
     let layout = Layout::new::<FBType>();
 
-    let fb0 = unsafe {
-        let ptr = alloc(layout) as *mut FBType;
-        Box::from_raw(ptr)
-    };
-    let fb1 = unsafe {
+    let fb = unsafe {
         let ptr = alloc(layout) as *mut FBType;
         Box::from_raw(ptr)
     };
 
-    let fb0 = Box::leak(fb0);
-    let fb1 = Box::leak(fb1);
-    (fb0, fb1)
-}
-
-/// Get a buffer for holding one full spi transaction which is allocated on the heap because it is too big for the stack
-fn get_spi_buffer() -> &'static mut [u8; SPI_TRANSFER_BUFFER_SIZE] {
-    use alloc::alloc::alloc;
-    use alloc::boxed::Box;
-    use core::alloc::Layout;
-
-    let layout = Layout::new::<[u8; SPI_TRANSFER_BUFFER_SIZE]>();
-
-    let buf = unsafe {
-        let ptr = alloc(layout) as *mut [u8; SPI_TRANSFER_BUFFER_SIZE];
-        Box::from_raw(ptr)
-    };
-
-    Box::leak(buf)
+    Box::leak(fb)
 }
 
 #[embassy_executor::task]
 pub async fn display_task(
     display_handles: DisplayHandles,
-    rx: &'static FrameBufferExchange,
-    tx: &'static FrameBufferExchange,
     fb: &'static mut FBType,
     mut log_receiver: LogToggleReceiver,
 ) {
@@ -200,9 +148,8 @@ pub async fn display_task(
     let device = SpiDevice::new(&spi_bus, display_handles.lcd_cs);
 
     let mut delay = Delay {};
-    let buffer = get_spi_buffer();
-    let di = SpiInterface::new(device, display_handles.dc_output, buffer);
-    let mut display = Builder::new(GC9A01, di)
+    let di = SpiInterface::new(device, display_handles.dc_output);
+    let mut tft_display = Builder::new(GC9A01, di)
         .reset_pin(display_handles.reset_output)
         .invert_colors(ColorInversion::Inverted)
         .color_order(ColorOrder::Bgr)
@@ -210,172 +157,112 @@ pub async fn display_task(
         .await
         .unwrap();
 
+    lv_init();
+
+    lv_bevy_ecs::logging::connect();
+
+    let mutex: blocking_mutex::Mutex<NoopRawMutex, &'static mut FBType> =
+        blocking_mutex::Mutex::new(fb);
+
+    let buffer =
+        DrawBuffer::<{ WIDTH * LINE_HEIGHT }, Rgb565>::create(WIDTH as u32, LINE_HEIGHT as u32);
+    let mut display = Display::create(WIDTH as i32, HEIGHT as i32);
+
+    display.register(buffer, |refresh| {
+        let area = refresh.rectangle;
+        let data = refresh.colors.iter().cloned();
+        unsafe {
+            mutex.lock_mut(|fb| {
+                let mut fbuf = RawFrameBuf::<Rgb565, _>::new(&mut fb[..], WIDTH, HEIGHT);
+
+                // This next call causes the stack to overflow. Maybe because of the cloned iterator in line 103?
+                fbuf.fill_contiguous(&area, data)
+                    .expect("Cannot fill display");
+                FRAMEBUFFER_READY.signal(());
+            })
+        }
+    });
+
+    LVGL_READY_SIGNAL.signal(());
+
     DISPLAY_BRIGHTNESS_SIGNAL.signal(INITIAL_DISPLAY_BRIGHTNESS);
 
-    let mut fb = fb;
-    let mut ticker = Ticker::every(TARGET_FRAME_DURATION / 2);
     loop {
+        FRAMEBUFFER_READY.wait().await;
         let t = Instant::now();
-
+        let fb = mutex.borrow();
         // Send the frame to the display
-        display
-            .set_pixels(
-                0,
-                0,
-                DISPLAY_SIZE.0 - 1,
-                DISPLAY_SIZE.1 - 1,
-                fb.iter()
-                    .map(|x| embedded_graphics_core::pixelcolor::raw::RawU16::new(x.0).into()),
-            )
+        tft_display
+            .show_raw_data(0, 0, WIDTH as u16, HEIGHT as u16, *fb)
             .await
             .ok();
         may_log(&mut log_receiver, LogChannel::DisplayTransfer, || {
-            info!("Frame took {} ms", t.elapsed().as_millis());
+            info!("Frame took {}ms to transfer", t.elapsed().as_millis());
         })
         .await;
-        // wait for a new fb to transfer, once there is one send the old FB back and continue with transferring the just received one
-        let new_fb = rx.wait().await;
-        tx.signal(fb);
-        fb = new_fb;
+    }
+}
+
+#[embassy_executor::task]
+pub async fn render_task(mut log_receiver: LogToggleReceiver) {
+    // UI setup
+    let mut prev_time = Instant::now();
+
+    let mut ticker = Ticker::every(DISPLAY_RENDER_DELAY);
+    loop {
+        let t = Instant::now();
+        let current_time = Instant::now();
+        let diff = current_time.duration_since(prev_time);
+        lv_tick_inc(diff.into());
+        lv_timer_handler();
+        may_log(&mut log_receiver, LogChannel::Render, || {
+            info!("Render time: {}ms", t.elapsed().as_millis())
+        })
+        .await;
+        prev_time = current_time;
         ticker.next().await;
     }
 }
 
 #[embassy_executor::task]
-pub async fn render_task(
-    rx: &'static FrameBufferExchange,
-    tx: &'static FrameBufferExchange,
-    mut fb: &'static mut FBType,
-    mut log_receiver: LogToggleReceiver,
-) {
-    let mut knob_tilt = KNOB_EVENTS_CHANNEL.subscriber().expect(
-        "Could not get knob event channel subscriber. Please increase number of maximal subs",
-    );
-    // UI setup
-    let window = MinimalSoftwareWindow::new(
-        slint::platform::software_renderer::RepaintBufferType::SwappedBuffers,
-    );
-    slint::platform::set_platform(Box::new(MyPlatform {
-        window: window.clone(),
-        start_instant: Instant::now(),
-    }))
-    .unwrap();
-
-    window.as_ref().set_size(slint::PhysicalSize::new(
-        DISPLAY_SIZE.0 as u32,
-        DISPLAY_SIZE.1 as u32,
-    ));
-
-    SLINT_READY_SIGNAL.signal(());
-    let mut ticker = Ticker::every(TARGET_FRAME_DURATION);
-    let mut last_key = slint::platform::Key::Space;
-    let mut last_encoder_position = get_encoder_position();
-    let center = LogicalPosition::new(DISPLAY_SIZE.0 as f32 / 2.0, DISPLAY_SIZE.1 as f32 / 2.0);
-    loop {
-        slint::platform::update_timers_and_animations();
-
-        // process and possibly dispatch events here
-        match knob_tilt.try_next_message() {
-            Some(WaitResult::Message(event)) => {
-                let event = match event {
-                    KnobTiltEvent::PressStart => Some(WindowEvent::KeyPressed {
-                        text: slint::platform::Key::Return.into(),
-                    }),
-                    KnobTiltEvent::PressEnd => Some(WindowEvent::KeyReleased {
-                        text: slint::platform::Key::Return.into(),
-                    }),
-                    KnobTiltEvent::TiltStart(dir) => Some(WindowEvent::KeyPressed {
-                        text: match dir {
-                            crate::knob_tilt::TiltDirection::Down => {
-                                last_key = slint::platform::Key::DownArrow;
-                                last_key
-                            }
-                            crate::knob_tilt::TiltDirection::Left => {
-                                last_key = slint::platform::Key::LeftArrow;
-                                last_key
-                            }
-                            crate::knob_tilt::TiltDirection::Right => {
-                                last_key = slint::platform::Key::RightArrow;
-                                last_key
-                            }
-                            crate::knob_tilt::TiltDirection::Up => {
-                                last_key = slint::platform::Key::UpArrow;
-                                last_key
-                            }
-                        }
-                        .into(),
-                    }),
-                    KnobTiltEvent::TiltEnd => Some(WindowEvent::KeyReleased {
-                        text: last_key.into(),
-                    }),
-                    _ => None,
-                };
-                if let Some(event) = event
-                    && let Err(e) = window.try_dispatch_event(event)
-                {
-                    error!("Slint platform error: {e}");
-                }
-            }
-            Some(WaitResult::Lagged(n)) => {
-                error!("Lost {n} knob tilt/push events. UI state my be out of sync")
-            }
-            None => {}
-        }
-        let current_encoder_position = get_encoder_position();
-        // Emulate the encoder position by sending scroll events to slint
-        if last_encoder_position != current_encoder_position {
-            let delta = current_encoder_position - last_encoder_position;
-            last_encoder_position = current_encoder_position;
-            let event = WindowEvent::PointerScrolled {
-                position: center,
-                delta_x: delta,
-                delta_y: 0.0,
-            };
-            if let Err(e) = window.try_dispatch_event(event) {
-                error!("Slint platform error: {e}");
-            }
-        }
-
-        let t = Instant::now();
-        let is_dirty = window.draw_if_needed(|renderer| {
-            renderer.render(fb, DISPLAY_SIZE.0 as usize);
-        });
-        if is_dirty {
-            may_log(&mut log_receiver, LogChannel::Render, || {
-                info!(
-                    "New frame available. Rendering took {} ms",
-                    t.elapsed().as_millis()
-                )
-            })
-            .await;
-            // send the frame buffer to be rendered
-            tx.signal(fb);
-            // get the next frame buffer
-            fb = rx.wait().await;
-        } else {
-            ticker.next().await;
-        }
-    }
-}
-
-#[embassy_executor::task]
 pub async fn ui_task() {
-    SLINT_READY_SIGNAL.wait().await;
-    let ui = MainWindow::new().unwrap();
-    ui.show().expect("unable to show main window");
+    let mut world = LvglWorld::default();
+
+    LVGL_READY_SIGNAL.wait().await;
+
+    let mut arc = Arc::create_widget();
+    lv_obj_set_size(&mut arc, 150, 150);
+    lv_arc_set_rotation(&mut arc, 135);
+    lv_arc_set_bg_angles(&mut arc, 0, 270);
+    lv_arc_set_value(&mut arc, 10);
+    lv_obj_set_align(&mut arc, Align::Center.into());
+
+    let mut label = Label::create_widget();
+    lv_label_set_long_mode(&mut label, LabelLongMode::Clip.into());
+    lv_label_set_text_static(&mut label, c"asdasdasd");
+    lv_obj_set_align(&mut label, Align::TopMid.into());
+
+    lv_obj_add_event_cb(&mut arc, Event::ValueChanged, |mut event| {
+        let Some(mut obj) = lv_event_get_target_obj(&mut event) else {
+            lv_bevy_ecs::warn!("Target obj was null");
+            return;
+        };
+        let value = lv_arc_get_value(&mut obj);
+        let text = CString::new(value.to_string()).unwrap();
+        lv_label_set_text(&mut label, text.as_c_str());
+    });
+
+    world.spawn(label);
+    world.spawn(arc);
+
     loop {
-        // info!("Switiching toggle!");
-        let tilt_angle = KNOB_TILT_ANGLE.load(core::sync::atomic::Ordering::Relaxed);
-        let magnitude = KNOB_TILT_MAGNITUDE.load(core::sync::atomic::Ordering::Relaxed);
-        ui.global::<State>()
-            .set_tilt_angle(tilt_angle * 180.0 / core::f32::consts::PI);
-        ui.global::<State>().set_tilt_magnitude(magnitude);
+        let _enc = get_encoder_position();
         Timer::after_millis(30).await;
     }
 }
 
 #[embassy_executor::task]
-async fn brightness_task(handles: BacklightHandles, mut log_receiver: LogToggleReceiver) {
+async fn brightness_task(handles: BacklightHandles, mut _log_receiver: LogToggleReceiver) {
     let mut current_brightness = 0;
 
     // backlight control
@@ -399,10 +286,6 @@ async fn brightness_task(handles: BacklightHandles, mut log_receiver: LogToggleR
         })
         .unwrap();
 
-    let mut adc1_config = AdcConfig::new();
-    let mut pin = adc1_config
-        .enable_pin_with_cal::<_, AdcCalBasic<_>>(handles.brightness_sensor_pin, Attenuation::_0dB);
-    let mut adc1 = Adc::new(handles.adc_instance, adc1_config);
     loop {
         if !channel0.is_duty_fade_running()
             && let Some(new_brighness) = DISPLAY_BRIGHTNESS_SIGNAL.try_take()
@@ -416,13 +299,6 @@ async fn brightness_task(handles: BacklightHandles, mut log_receiver: LogToggleR
             } else {
                 current_brightness = new_brighness;
             }
-        }
-
-        if let Ok(val) = adc1.read_oneshot(&mut pin) {
-            may_log(&mut log_receiver, LogChannel::Brightness, || {
-                info!("Brightness: {val}")
-            })
-            .await;
         }
         Timer::after_millis(200).await;
     }
