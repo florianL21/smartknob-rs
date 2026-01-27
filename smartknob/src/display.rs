@@ -269,17 +269,55 @@ pub async fn ui_task() {
         lv_bevy_ecs::sys::lv_scale_set_rotation(scale, 155);  // Start from bottom-left
         lv_bevy_ecs::sys::lv_scale_set_label_show(scale, false);  // No labels
         
-        // Style the ticks - white color
-        // LV_PART_ITEMS = 0x00050000 (minor ticks)
-        // LV_PART_INDICATOR = 0x00020000 (major ticks)
-        lv_bevy_ecs::sys::lv_obj_set_style_length(scale, 10, 0x00050000);  // Minor tick length
-        lv_bevy_ecs::sys::lv_obj_set_style_length(scale, 15, 0x00020000);  // Major tick length
-        lv_bevy_ecs::sys::lv_obj_set_style_line_color(scale, lv_bevy_ecs::sys::lv_color_hex(0xFFFFFF), 0x00050000);
-        lv_bevy_ecs::sys::lv_obj_set_style_line_color(scale, lv_bevy_ecs::sys::lv_color_hex(0xFFFFFF), 0x00020000);
-        lv_bevy_ecs::sys::lv_obj_set_style_line_width(scale, 2, 0x00050000);
-        lv_bevy_ecs::sys::lv_obj_set_style_line_width(scale, 3, 0x00020000);
+        // Hide built-in ticks - we'll draw custom gradient-colored ticks
+        lv_bevy_ecs::sys::lv_obj_set_style_length(scale, 0, 0x00050000);  // Hide minor ticks
+        lv_bevy_ecs::sys::lv_obj_set_style_length(scale, 0, 0x00020000);  // Hide major ticks
         
         SCALE = scale;
+
+        // Draw custom tick lines with gradient colors (blue to red)
+        // 21 ticks: 0, 5, 10, ... 100
+        let center_x: f32 = 120.0;
+        let center_y: f32 = 120.0;
+        let tick_outer_radius: f32 = 95.0;
+        let tick_inner_radius: f32 = 80.0;  // 15px tick length
+        
+        // Static storage for tick line points
+        static mut TICK_POINTS: [[lv_bevy_ecs::sys::lv_point_precise_t; 2]; 21] = 
+            [[lv_bevy_ecs::sys::lv_point_precise_t { x: 0, y: 0 }; 2]; 21];
+        
+        for tick_idx in 0..=20 {
+            let tick_value = tick_idx * 5;  // 0, 5, 10, ... 100
+            let progress = tick_value as f32 / 100.0;
+            
+            // Calculate angle: gauge 0 = 155°, gauge 100 = 155° + 230° = 385°
+            let angle_deg = 155.0 + progress * 230.0;
+            let angle_rad = angle_deg * core::f32::consts::PI / 180.0;
+            
+            let cos_val = libm::cosf(angle_rad);
+            let sin_val = libm::sinf(angle_rad);
+            
+            let outer_x = (center_x + tick_outer_radius * cos_val) as i32;
+            let outer_y = (center_y + tick_outer_radius * sin_val) as i32;
+            let inner_x = (center_x + tick_inner_radius * cos_val) as i32;
+            let inner_y = (center_y + tick_inner_radius * sin_val) as i32;
+            
+            // Gradient color: blue (cold) to red (hot)
+            let r = (100.0 + progress * 80.0) as u8;
+            let g = (180.0 - progress * 150.0) as u8;
+            let b = (255.0 - progress * 225.0) as u8;
+            let tick_color = ((r as u32) << 16) | ((g as u32) << 8) | (b as u32);
+            
+            // Create tick line
+            let line = lv_bevy_ecs::sys::lv_line_create(screen);
+            
+            TICK_POINTS[tick_idx][0] = lv_bevy_ecs::sys::lv_point_precise_t { x: outer_x, y: outer_y };
+            TICK_POINTS[tick_idx][1] = lv_bevy_ecs::sys::lv_point_precise_t { x: inner_x, y: inner_y };
+            
+            lv_bevy_ecs::sys::lv_line_set_points(line, TICK_POINTS[tick_idx].as_ptr(), 2);
+            lv_bevy_ecs::sys::lv_obj_set_style_line_color(line, lv_bevy_ecs::sys::lv_color_hex(tick_color), 0);
+            lv_bevy_ecs::sys::lv_obj_set_style_line_width(line, 2, 0);
+        }
 
         // Create needle line
         let needle = lv_bevy_ecs::sys::lv_line_create(scale);
@@ -292,7 +330,17 @@ pub async fn ui_task() {
         
         NEEDLE_LINE = needle;
 
-        // Create center value label
+        // Create center circle to cover inner 20px of needle
+        // This makes the needle appear to start 20px from center
+        let center_circle = lv_bevy_ecs::sys::lv_obj_create(screen);
+        lv_bevy_ecs::sys::lv_obj_set_size(center_circle, 40, 40);  // 20px radius = 40px diameter
+        lv_bevy_ecs::sys::lv_obj_center(center_circle);
+        lv_bevy_ecs::sys::lv_obj_set_style_radius(center_circle, 20, 0);  // Make it circular
+        lv_bevy_ecs::sys::lv_obj_set_style_bg_color(center_circle, lv_bevy_ecs::sys::lv_color_hex(0x0A0A2E), 0);
+        lv_bevy_ecs::sys::lv_obj_set_style_bg_opa(center_circle, 255, 0);
+        lv_bevy_ecs::sys::lv_obj_set_style_border_width(center_circle, 0, 0);
+
+        // Create center value label (on top of circle)
         let label = lv_bevy_ecs::sys::lv_label_create(screen);
         lv_bevy_ecs::sys::lv_obj_center(label);
         lv_bevy_ecs::sys::lv_obj_set_style_text_color(label, lv_bevy_ecs::sys::lv_color_hex(0xFFFFFF), 0);
