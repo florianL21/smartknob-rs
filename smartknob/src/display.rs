@@ -42,7 +42,7 @@ const BRIGHTNESS_FADE_DURATION_MS: u16 = 1000;
 
 const WIDTH: usize = 240;
 const HEIGHT: usize = 240;
-const LINE_HEIGHT: usize = HEIGHT / 20;
+const LINE_HEIGHT: usize = HEIGHT / 4; // 60 lines - larger buffer = fewer render iterations
 // Rgb565 uses 2 bytes per pixel
 const FRAME_BUFFER_SIZE: usize = WIDTH * HEIGHT * 2;
 
