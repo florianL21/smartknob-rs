@@ -247,51 +247,55 @@ pub async fn ui_task() {
         lv_bevy_ecs::sys::lv_obj_set_style_bg_opa(screen, 255, 0);
     }
 
-    // Store arc and label as static pointers for the update loop
-    static mut GAUGE_ARC: *mut lv_bevy_ecs::sys::lv_obj_t = core::ptr::null_mut();
+    // Store scale, needle, and label as static pointers for the update loop
+    static mut SCALE: *mut lv_bevy_ecs::sys::lv_obj_t = core::ptr::null_mut();
+    static mut NEEDLE_LINE: *mut lv_bevy_ecs::sys::lv_obj_t = core::ptr::null_mut();
     static mut VALUE_LABEL: *mut lv_bevy_ecs::sys::lv_obj_t = core::ptr::null_mut();
 
     unsafe {
         let screen = lv_bevy_ecs::sys::lv_screen_active();
 
-        // Create 230° gauge arc
-        let arc = lv_bevy_ecs::sys::lv_arc_create(screen);
-        lv_bevy_ecs::sys::lv_obj_set_size(arc, 200, 200);
-        lv_bevy_ecs::sys::lv_obj_center(arc);
-        lv_bevy_ecs::sys::lv_arc_set_rotation(arc, 155);  // Start from bottom-left
-        lv_bevy_ecs::sys::lv_arc_set_bg_angles(arc, 0, 230);  // 230° arc
-        lv_bevy_ecs::sys::lv_arc_set_range(arc, 0, 100);
-        lv_bevy_ecs::sys::lv_arc_set_value(arc, 0);
+        // Create scale widget - 230° round gauge
+        let scale = lv_bevy_ecs::sys::lv_scale_create(screen);
+        lv_bevy_ecs::sys::lv_obj_set_size(scale, 200, 200);
+        lv_bevy_ecs::sys::lv_obj_center(scale);
         
-        // Style the arc - light blue indicator
-        lv_bevy_ecs::sys::lv_obj_set_style_arc_color(
-            arc,
-            lv_bevy_ecs::sys::lv_color_hex(0x64B4FF),  // Light blue
-            0x00000008,  // LV_PART_INDICATOR
-        );
-        lv_bevy_ecs::sys::lv_obj_set_style_arc_width(arc, 8, 0x00000008);
+        // Configure scale: round inner mode (8), 230 degree arc
+        lv_bevy_ecs::sys::lv_scale_set_mode(scale, 8);  // LV_SCALE_MODE_ROUND_INNER
+        lv_bevy_ecs::sys::lv_scale_set_range(scale, 0, 100);
+        lv_bevy_ecs::sys::lv_scale_set_total_tick_count(scale, 21);  // Ticks every 5 units
+        lv_bevy_ecs::sys::lv_scale_set_major_tick_every(scale, 5);   // Major tick every 25 units
+        lv_bevy_ecs::sys::lv_scale_set_angle_range(scale, 230);
+        lv_bevy_ecs::sys::lv_scale_set_rotation(scale, 155);  // Start from bottom-left
+        lv_bevy_ecs::sys::lv_scale_set_label_show(scale, false);  // No labels
         
-        // Style background track - dark gray
-        lv_bevy_ecs::sys::lv_obj_set_style_arc_color(
-            arc,
-            lv_bevy_ecs::sys::lv_color_hex(0x333333),
-            0,  // LV_PART_MAIN (background)
-        );
-        lv_bevy_ecs::sys::lv_obj_set_style_arc_width(arc, 8, 0);
+        // Style the ticks - white color
+        // LV_PART_ITEMS = 0x00050000 (minor ticks)
+        // LV_PART_INDICATOR = 0x00020000 (major ticks)
+        lv_bevy_ecs::sys::lv_obj_set_style_length(scale, 10, 0x00050000);  // Minor tick length
+        lv_bevy_ecs::sys::lv_obj_set_style_length(scale, 15, 0x00020000);  // Major tick length
+        lv_bevy_ecs::sys::lv_obj_set_style_line_color(scale, lv_bevy_ecs::sys::lv_color_hex(0xFFFFFF), 0x00050000);
+        lv_bevy_ecs::sys::lv_obj_set_style_line_color(scale, lv_bevy_ecs::sys::lv_color_hex(0xFFFFFF), 0x00020000);
+        lv_bevy_ecs::sys::lv_obj_set_style_line_width(scale, 2, 0x00050000);
+        lv_bevy_ecs::sys::lv_obj_set_style_line_width(scale, 3, 0x00020000);
         
-        // Remove the knob (circular handle)
-        lv_bevy_ecs::sys::lv_obj_remove_style(arc, core::ptr::null_mut(), 0x00040000);  // LV_PART_KNOB
+        SCALE = scale;
+
+        // Create needle line
+        let needle = lv_bevy_ecs::sys::lv_line_create(scale);
+        lv_bevy_ecs::sys::lv_obj_set_style_line_color(needle, lv_bevy_ecs::sys::lv_color_hex(0x64B4FF), 0);
+        lv_bevy_ecs::sys::lv_obj_set_style_line_width(needle, 3, 0);
+        lv_bevy_ecs::sys::lv_obj_set_style_line_rounded(needle, true, 0);
         
-        GAUGE_ARC = arc;
+        // Set initial needle position
+        lv_bevy_ecs::sys::lv_scale_set_line_needle_value(scale, needle, 60, 0);
+        
+        NEEDLE_LINE = needle;
 
         // Create center value label
         let label = lv_bevy_ecs::sys::lv_label_create(screen);
         lv_bevy_ecs::sys::lv_obj_center(label);
-        lv_bevy_ecs::sys::lv_obj_set_style_text_color(
-            label,
-            lv_bevy_ecs::sys::lv_color_hex(0xFFFFFF),
-            0,
-        );
+        lv_bevy_ecs::sys::lv_obj_set_style_text_color(label, lv_bevy_ecs::sys::lv_color_hex(0xFFFFFF), 0);
         lv_bevy_ecs::sys::lv_label_set_text(label, c"0".as_ptr());
         
         VALUE_LABEL = label;
@@ -304,22 +308,21 @@ pub async fn ui_task() {
         let detent_float = enc / 0.4;
         let detent_index = ((detent_float + 0.5) as i32).clamp(0, 25);
         let gauge_value = (detent_index * 4).min(100);
-        
+
         // Calculate gradient color: blue (cold) to red (hot)
         let progress = gauge_value as f32 / 100.0;
         let r = (100.0 + progress * 80.0) as u8;   // 100 -> 180
         let g = (180.0 - progress * 150.0) as u8;  // 180 -> 30
         let b = (255.0 - progress * 225.0) as u8;  // 255 -> 30
-        let arc_color = ((r as u32) << 16) | ((g as u32) << 8) | (b as u32);
+        let needle_color = ((r as u32) << 16) | ((g as u32) << 8) | (b as u32);
 
         unsafe {
-            lv_bevy_ecs::sys::lv_arc_set_value(GAUGE_ARC, gauge_value);
-            
-            // Update arc color based on value
-            lv_bevy_ecs::sys::lv_obj_set_style_arc_color(
-                GAUGE_ARC,
-                lv_bevy_ecs::sys::lv_color_hex(arc_color),
-                0x00000008,  // LV_PART_INDICATOR
+            // Update needle position and color
+            lv_bevy_ecs::sys::lv_scale_set_line_needle_value(SCALE, NEEDLE_LINE, 60, gauge_value);
+            lv_bevy_ecs::sys::lv_obj_set_style_line_color(
+                NEEDLE_LINE,
+                lv_bevy_ecs::sys::lv_color_hex(needle_color),
+                0,
             );
             
             let text = CString::new(alloc::format!("{}", gauge_value)).unwrap();

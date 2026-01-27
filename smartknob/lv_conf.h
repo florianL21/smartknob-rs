@@ -756,7 +756,7 @@
 
 #define LV_USE_DROPDOWN   0   /**< Requires: lv_label */
 
-#define LV_USE_IMAGE      0   /**< Requires: lv_label */
+#define LV_USE_IMAGE      1   /**< Requires: lv_label */
 
 #define LV_USE_IMAGEBUTTON     0
 
@@ -771,7 +771,7 @@
 
 #define LV_USE_LED        0
 
-#define LV_USE_LINE       0
+#define LV_USE_LINE       1
 
 #define LV_USE_LIST       0
 
@@ -783,7 +783,7 @@
 
 #define LV_USE_ROLLER     0   /**< Requires: lv_label */
 
-#define LV_USE_SCALE      0
+#define LV_USE_SCALE      1
 
 #define LV_USE_SLIDER     0   /**< Requires: lv_bar */
 
