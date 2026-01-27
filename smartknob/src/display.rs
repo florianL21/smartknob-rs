@@ -305,8 +305,22 @@ pub async fn ui_task() {
         let detent_index = ((detent_float + 0.5) as i32).clamp(0, 25);
         let gauge_value = (detent_index * 4).min(100);
         
+        // Calculate gradient color: blue (cold) to red (hot)
+        let progress = gauge_value as f32 / 100.0;
+        let r = (100.0 + progress * 80.0) as u8;   // 100 -> 180
+        let g = (180.0 - progress * 150.0) as u8;  // 180 -> 30
+        let b = (255.0 - progress * 225.0) as u8;  // 255 -> 30
+        let arc_color = ((r as u32) << 16) | ((g as u32) << 8) | (b as u32);
+
         unsafe {
             lv_bevy_ecs::sys::lv_arc_set_value(GAUGE_ARC, gauge_value);
+            
+            // Update arc color based on value
+            lv_bevy_ecs::sys::lv_obj_set_style_arc_color(
+                GAUGE_ARC,
+                lv_bevy_ecs::sys::lv_color_hex(arc_color),
+                0x00000008,  // LV_PART_INDICATOR
+            );
             
             let text = CString::new(alloc::format!("{}", gauge_value)).unwrap();
             lv_bevy_ecs::sys::lv_label_set_text(VALUE_LABEL, text.as_ptr());
