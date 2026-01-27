@@ -17,3 +17,6 @@ target/
 #.idea/
 
 haptic_demo/chart.html
+
+# Claude AI notes
+claude.md
