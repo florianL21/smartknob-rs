@@ -297,11 +297,13 @@ pub async fn ui_task() {
         VALUE_LABEL = label;
     }
 
-    // Encoder controls gauge
-    // Encoder range 0-10 maps to gauge 0-100
+    // Encoder controls gauge - snap to 25 detent positions
+    // Each detent = 0.4 encoder units, gauge shows 0, 4, 8, ... 100
     loop {
         let enc = get_encoder_position();
-        let gauge_value = ((enc * 10.0) as i32).clamp(0, 100);
+        let detent_float = enc / 0.4;
+        let detent_index = ((detent_float + 0.5) as i32).clamp(0, 25);
+        let gauge_value = (detent_index * 4).min(100);
         
         unsafe {
             lv_bevy_ecs::sys::lv_arc_set_value(GAUGE_ARC, gauge_value);
