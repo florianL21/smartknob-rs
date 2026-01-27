@@ -230,6 +230,23 @@ pub async fn ui_task() {
 
     LVGL_READY_SIGNAL.wait().await;
 
+    // Add gradient background (dark blue to dark purple)
+    unsafe {
+        let screen = lv_bevy_ecs::sys::lv_screen_active();
+        lv_bevy_ecs::sys::lv_obj_set_style_bg_color(
+            screen,
+            lv_bevy_ecs::sys::lv_color_hex(0x0A0A2E),  // Dark blue
+            0,
+        );
+        lv_bevy_ecs::sys::lv_obj_set_style_bg_grad_color(
+            screen,
+            lv_bevy_ecs::sys::lv_color_hex(0x1A0A2E),  // Dark purple
+            0,
+        );
+        lv_bevy_ecs::sys::lv_obj_set_style_bg_grad_dir(screen, 1, 0);  // 1 = vertical
+        lv_bevy_ecs::sys::lv_obj_set_style_bg_opa(screen, 255, 0);
+    }
+
     let mut arc = Arc::create_widget();
     lv_obj_set_size(&mut arc, 150, 150);
     lv_arc_set_rotation(&mut arc, 135);
