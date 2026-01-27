@@ -73,10 +73,11 @@ pub async fn update_foc(
         .await;
     // Create a curve with 25 identical detents for encoder positions 0-10
     // Each detent = 0.4 encoder units (10 / 25 = 0.4)
-    // Gauge value = encoder * 10, so each detent = 4 on the gauge
+    // Gauge value = detent * 4 (0, 4, 8, ... 100)
     let detent_curve = CurveBuilder::<52>::new()
         // 25 detents, each with 2 segments (0.2 + 0.2 = 0.4 width)
         // All identical: 0.7 torque, cubic easing
+        // Detents 1-5
         .add_bezier3(0.2, [0.0, 0.0, -0.7])
         .add_bezier3(0.2, [0.7, 0.7, 0.0])
         .add_bezier3(0.2, [0.0, 0.0, -0.7])
@@ -87,7 +88,7 @@ pub async fn update_foc(
         .add_bezier3(0.2, [0.7, 0.7, 0.0])
         .add_bezier3(0.2, [0.0, 0.0, -0.7])
         .add_bezier3(0.2, [0.7, 0.7, 0.0])
-        // 5 detents done
+        // Detents 6-10
         .add_bezier3(0.2, [0.0, 0.0, -0.7])
         .add_bezier3(0.2, [0.7, 0.7, 0.0])
         .add_bezier3(0.2, [0.0, 0.0, -0.7])
@@ -98,7 +99,7 @@ pub async fn update_foc(
         .add_bezier3(0.2, [0.7, 0.7, 0.0])
         .add_bezier3(0.2, [0.0, 0.0, -0.7])
         .add_bezier3(0.2, [0.7, 0.7, 0.0])
-        // 10 detents done
+        // Detents 11-15
         .add_bezier3(0.2, [0.0, 0.0, -0.7])
         .add_bezier3(0.2, [0.7, 0.7, 0.0])
         .add_bezier3(0.2, [0.0, 0.0, -0.7])
@@ -109,7 +110,7 @@ pub async fn update_foc(
         .add_bezier3(0.2, [0.7, 0.7, 0.0])
         .add_bezier3(0.2, [0.0, 0.0, -0.7])
         .add_bezier3(0.2, [0.7, 0.7, 0.0])
-        // 15 detents done
+        // Detents 16-20
         .add_bezier3(0.2, [0.0, 0.0, -0.7])
         .add_bezier3(0.2, [0.7, 0.7, 0.0])
         .add_bezier3(0.2, [0.0, 0.0, -0.7])
@@ -120,7 +121,7 @@ pub async fn update_foc(
         .add_bezier3(0.2, [0.7, 0.7, 0.0])
         .add_bezier3(0.2, [0.0, 0.0, -0.7])
         .add_bezier3(0.2, [0.7, 0.7, 0.0])
-        // 20 detents done
+        // Detents 21-25
         .add_bezier3(0.2, [0.0, 0.0, -0.7])
         .add_bezier3(0.2, [0.7, 0.7, 0.0])
         .add_bezier3(0.2, [0.0, 0.0, -0.7])
