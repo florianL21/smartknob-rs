@@ -61,7 +61,7 @@ pub async fn update_foc(
     )
     .unwrap();
 
-    let mut haptic_core: SmartknobHapticCore<'_, _, _, SpaceVector, _, 6> =
+    let mut haptic_core: SmartknobHapticCore<'_, _, _, SpaceVector, _, 52> =
         SmartknobHapticCore::new(
             encoder,
             motor_driver,
@@ -73,15 +73,72 @@ pub async fn update_foc(
         )
         .await;
 
-    let test_curve = CurveBuilder::<6>::new()
-        .add_eased(0.3, 1.0, 0.0, Easing::Cubic(EasingType::Out))
-        .add_eased(0.5, 0.0, -1.0, Easing::Cubic(EasingType::In))
-        .add_eased(0.5, 1.0, 0.0, Easing::Cubic(EasingType::Out))
-        .add_eased(0.3, 0.0, -1.0, Easing::Cubic(EasingType::In))
+    // Create a curve with 25 identical detents for encoder positions 0-10
+    // Each detent = 0.4 encoder units (10 / 25 = 0.4)
+    // Gauge value = encoder * 10, so each detent = 4 on the gauge
+    let detent_curve = CurveBuilder::<52>::new()
+        // 25 detents, each with 2 segments (0.2 + 0.2 = 0.4 width)
+        // All identical: 0.7 torque, cubic easing
+        .add_eased(0.2, 0.0, -0.7, Easing::Cubic(EasingType::In))
+        .add_eased(0.2, 0.7, 0.0, Easing::Cubic(EasingType::Out))
+        .add_eased(0.2, 0.0, -0.7, Easing::Cubic(EasingType::In))
+        .add_eased(0.2, 0.7, 0.0, Easing::Cubic(EasingType::Out))
+        .add_eased(0.2, 0.0, -0.7, Easing::Cubic(EasingType::In))
+        .add_eased(0.2, 0.7, 0.0, Easing::Cubic(EasingType::Out))
+        .add_eased(0.2, 0.0, -0.7, Easing::Cubic(EasingType::In))
+        .add_eased(0.2, 0.7, 0.0, Easing::Cubic(EasingType::Out))
+        .add_eased(0.2, 0.0, -0.7, Easing::Cubic(EasingType::In))
+        .add_eased(0.2, 0.7, 0.0, Easing::Cubic(EasingType::Out))
+        // 5 detents done
+        .add_eased(0.2, 0.0, -0.7, Easing::Cubic(EasingType::In))
+        .add_eased(0.2, 0.7, 0.0, Easing::Cubic(EasingType::Out))
+        .add_eased(0.2, 0.0, -0.7, Easing::Cubic(EasingType::In))
+        .add_eased(0.2, 0.7, 0.0, Easing::Cubic(EasingType::Out))
+        .add_eased(0.2, 0.0, -0.7, Easing::Cubic(EasingType::In))
+        .add_eased(0.2, 0.7, 0.0, Easing::Cubic(EasingType::Out))
+        .add_eased(0.2, 0.0, -0.7, Easing::Cubic(EasingType::In))
+        .add_eased(0.2, 0.7, 0.0, Easing::Cubic(EasingType::Out))
+        .add_eased(0.2, 0.0, -0.7, Easing::Cubic(EasingType::In))
+        .add_eased(0.2, 0.7, 0.0, Easing::Cubic(EasingType::Out))
+        // 10 detents done
+        .add_eased(0.2, 0.0, -0.7, Easing::Cubic(EasingType::In))
+        .add_eased(0.2, 0.7, 0.0, Easing::Cubic(EasingType::Out))
+        .add_eased(0.2, 0.0, -0.7, Easing::Cubic(EasingType::In))
+        .add_eased(0.2, 0.7, 0.0, Easing::Cubic(EasingType::Out))
+        .add_eased(0.2, 0.0, -0.7, Easing::Cubic(EasingType::In))
+        .add_eased(0.2, 0.7, 0.0, Easing::Cubic(EasingType::Out))
+        .add_eased(0.2, 0.0, -0.7, Easing::Cubic(EasingType::In))
+        .add_eased(0.2, 0.7, 0.0, Easing::Cubic(EasingType::Out))
+        .add_eased(0.2, 0.0, -0.7, Easing::Cubic(EasingType::In))
+        .add_eased(0.2, 0.7, 0.0, Easing::Cubic(EasingType::Out))
+        // 15 detents done
+        .add_eased(0.2, 0.0, -0.7, Easing::Cubic(EasingType::In))
+        .add_eased(0.2, 0.7, 0.0, Easing::Cubic(EasingType::Out))
+        .add_eased(0.2, 0.0, -0.7, Easing::Cubic(EasingType::In))
+        .add_eased(0.2, 0.7, 0.0, Easing::Cubic(EasingType::Out))
+        .add_eased(0.2, 0.0, -0.7, Easing::Cubic(EasingType::In))
+        .add_eased(0.2, 0.7, 0.0, Easing::Cubic(EasingType::Out))
+        .add_eased(0.2, 0.0, -0.7, Easing::Cubic(EasingType::In))
+        .add_eased(0.2, 0.7, 0.0, Easing::Cubic(EasingType::Out))
+        .add_eased(0.2, 0.0, -0.7, Easing::Cubic(EasingType::In))
+        .add_eased(0.2, 0.7, 0.0, Easing::Cubic(EasingType::Out))
+        // 20 detents done
+        .add_eased(0.2, 0.0, -0.7, Easing::Cubic(EasingType::In))
+        .add_eased(0.2, 0.7, 0.0, Easing::Cubic(EasingType::Out))
+        .add_eased(0.2, 0.0, -0.7, Easing::Cubic(EasingType::In))
+        .add_eased(0.2, 0.7, 0.0, Easing::Cubic(EasingType::Out))
+        .add_eased(0.2, 0.0, -0.7, Easing::Cubic(EasingType::In))
+        .add_eased(0.2, 0.7, 0.0, Easing::Cubic(EasingType::Out))
+        .add_eased(0.2, 0.0, -0.7, Easing::Cubic(EasingType::In))
+        .add_eased(0.2, 0.7, 0.0, Easing::Cubic(EasingType::Out))
+        .add_eased(0.2, 0.0, -0.7, Easing::Cubic(EasingType::In))
+        .add_eased(0.2, 0.7, 0.0, Easing::Cubic(EasingType::Out))
+        // 25 detents done - extend with no resistance
+        .add_const(10.0, 0.0)
         .build()
         .unwrap()
         .make_absolute(I16F16::ZERO);
-    let _ = haptic_core.set_curve(&test_curve, 1.0).await;
+    let _ = haptic_core.set_curve(&detent_curve, 0.7).await;
     loop {
         haptic_core.run(settings_store_signals).await;
     }
