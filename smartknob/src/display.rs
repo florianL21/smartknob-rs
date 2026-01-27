@@ -247,34 +247,70 @@ pub async fn ui_task() {
         lv_bevy_ecs::sys::lv_obj_set_style_bg_opa(screen, 255, 0);
     }
 
-    let mut arc = Arc::create_widget();
-    lv_obj_set_size(&mut arc, 150, 150);
-    lv_arc_set_rotation(&mut arc, 135);
-    lv_arc_set_bg_angles(&mut arc, 0, 270);
-    lv_arc_set_value(&mut arc, 10);
-    lv_obj_set_align(&mut arc, Align::Center.into());
+    // Store arc and label as static pointers for the update loop
+    static mut GAUGE_ARC: *mut lv_bevy_ecs::sys::lv_obj_t = core::ptr::null_mut();
+    static mut VALUE_LABEL: *mut lv_bevy_ecs::sys::lv_obj_t = core::ptr::null_mut();
 
-    let mut label = Label::create_widget();
-    lv_label_set_long_mode(&mut label, LabelLongMode::Clip.into());
-    lv_label_set_text_static(&mut label, c"asdasdasd");
-    lv_obj_set_align(&mut label, Align::TopMid.into());
+    unsafe {
+        let screen = lv_bevy_ecs::sys::lv_screen_active();
 
-    lv_obj_add_event_cb(&mut arc, Event::ValueChanged, |mut event| {
-        let Some(mut obj) = lv_event_get_target_obj(&mut event) else {
-            lv_bevy_ecs::warn!("Target obj was null");
-            return;
-        };
-        let value = lv_arc_get_value(&mut obj);
-        let text = CString::new(value.to_string()).unwrap();
-        lv_label_set_text(&mut label, text.as_c_str());
-    });
+        // Create 230° gauge arc
+        let arc = lv_bevy_ecs::sys::lv_arc_create(screen);
+        lv_bevy_ecs::sys::lv_obj_set_size(arc, 200, 200);
+        lv_bevy_ecs::sys::lv_obj_center(arc);
+        lv_bevy_ecs::sys::lv_arc_set_rotation(arc, 155);  // Start from bottom-left
+        lv_bevy_ecs::sys::lv_arc_set_bg_angles(arc, 0, 230);  // 230° arc
+        lv_bevy_ecs::sys::lv_arc_set_range(arc, 0, 100);
+        lv_bevy_ecs::sys::lv_arc_set_value(arc, 0);
+        
+        // Style the arc - light blue indicator
+        lv_bevy_ecs::sys::lv_obj_set_style_arc_color(
+            arc,
+            lv_bevy_ecs::sys::lv_color_hex(0x64B4FF),  // Light blue
+            0x00000008,  // LV_PART_INDICATOR
+        );
+        lv_bevy_ecs::sys::lv_obj_set_style_arc_width(arc, 8, 0x00000008);
+        
+        // Style background track - dark gray
+        lv_bevy_ecs::sys::lv_obj_set_style_arc_color(
+            arc,
+            lv_bevy_ecs::sys::lv_color_hex(0x333333),
+            0,  // LV_PART_MAIN (background)
+        );
+        lv_bevy_ecs::sys::lv_obj_set_style_arc_width(arc, 8, 0);
+        
+        // Remove the knob (circular handle)
+        lv_bevy_ecs::sys::lv_obj_remove_style(arc, core::ptr::null_mut(), 0x00040000);  // LV_PART_KNOB
+        
+        GAUGE_ARC = arc;
 
-    world.spawn(label);
-    world.spawn(arc);
+        // Create center value label
+        let label = lv_bevy_ecs::sys::lv_label_create(screen);
+        lv_bevy_ecs::sys::lv_obj_center(label);
+        lv_bevy_ecs::sys::lv_obj_set_style_text_color(
+            label,
+            lv_bevy_ecs::sys::lv_color_hex(0xFFFFFF),
+            0,
+        );
+        lv_bevy_ecs::sys::lv_label_set_text(label, c"0".as_ptr());
+        
+        VALUE_LABEL = label;
+    }
 
+    // Encoder controls gauge
+    // Encoder range 0-10 maps to gauge 0-100
     loop {
-        let _enc = get_encoder_position();
-        Timer::after_millis(30).await;
+        let enc = get_encoder_position();
+        let gauge_value = ((enc * 10.0) as i32).clamp(0, 100);
+        
+        unsafe {
+            lv_bevy_ecs::sys::lv_arc_set_value(GAUGE_ARC, gauge_value);
+            
+            let text = CString::new(alloc::format!("{}", gauge_value)).unwrap();
+            lv_bevy_ecs::sys::lv_label_set_text(VALUE_LABEL, text.as_ptr());
+        }
+        
+        Timer::after_millis(16).await;  // ~60fps
     }
 }
 
