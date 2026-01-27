@@ -75,10 +75,11 @@ pub async fn update_foc(
 
     // Create a curve with 25 identical detents for encoder positions 0-10
     // Each detent = 0.4 encoder units (10 / 25 = 0.4)
-    // Gauge value = encoder * 10, so each detent = 4 on the gauge
+    // Gauge value = detent * 4 (0, 4, 8, ... 100)
     let detent_curve = CurveBuilder::<52>::new()
         // 25 detents, each with 2 segments (0.2 + 0.2 = 0.4 width)
         // All identical: 0.7 torque, cubic easing
+        // Detents 1-5
         .add_eased(0.2, 0.0, -0.7, Easing::Cubic(EasingType::In))
         .add_eased(0.2, 0.7, 0.0, Easing::Cubic(EasingType::Out))
         .add_eased(0.2, 0.0, -0.7, Easing::Cubic(EasingType::In))
@@ -89,7 +90,7 @@ pub async fn update_foc(
         .add_eased(0.2, 0.7, 0.0, Easing::Cubic(EasingType::Out))
         .add_eased(0.2, 0.0, -0.7, Easing::Cubic(EasingType::In))
         .add_eased(0.2, 0.7, 0.0, Easing::Cubic(EasingType::Out))
-        // 5 detents done
+        // Detents 6-10
         .add_eased(0.2, 0.0, -0.7, Easing::Cubic(EasingType::In))
         .add_eased(0.2, 0.7, 0.0, Easing::Cubic(EasingType::Out))
         .add_eased(0.2, 0.0, -0.7, Easing::Cubic(EasingType::In))
@@ -100,7 +101,7 @@ pub async fn update_foc(
         .add_eased(0.2, 0.7, 0.0, Easing::Cubic(EasingType::Out))
         .add_eased(0.2, 0.0, -0.7, Easing::Cubic(EasingType::In))
         .add_eased(0.2, 0.7, 0.0, Easing::Cubic(EasingType::Out))
-        // 10 detents done
+        // Detents 11-15
         .add_eased(0.2, 0.0, -0.7, Easing::Cubic(EasingType::In))
         .add_eased(0.2, 0.7, 0.0, Easing::Cubic(EasingType::Out))
         .add_eased(0.2, 0.0, -0.7, Easing::Cubic(EasingType::In))
@@ -111,7 +112,7 @@ pub async fn update_foc(
         .add_eased(0.2, 0.7, 0.0, Easing::Cubic(EasingType::Out))
         .add_eased(0.2, 0.0, -0.7, Easing::Cubic(EasingType::In))
         .add_eased(0.2, 0.7, 0.0, Easing::Cubic(EasingType::Out))
-        // 15 detents done
+        // Detents 16-20
         .add_eased(0.2, 0.0, -0.7, Easing::Cubic(EasingType::In))
         .add_eased(0.2, 0.7, 0.0, Easing::Cubic(EasingType::Out))
         .add_eased(0.2, 0.0, -0.7, Easing::Cubic(EasingType::In))
@@ -122,7 +123,7 @@ pub async fn update_foc(
         .add_eased(0.2, 0.7, 0.0, Easing::Cubic(EasingType::Out))
         .add_eased(0.2, 0.0, -0.7, Easing::Cubic(EasingType::In))
         .add_eased(0.2, 0.7, 0.0, Easing::Cubic(EasingType::Out))
-        // 20 detents done
+        // Detents 21-25
         .add_eased(0.2, 0.0, -0.7, Easing::Cubic(EasingType::In))
         .add_eased(0.2, 0.7, 0.0, Easing::Cubic(EasingType::Out))
         .add_eased(0.2, 0.0, -0.7, Easing::Cubic(EasingType::In))
