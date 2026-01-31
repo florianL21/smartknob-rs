@@ -1,4 +1,4 @@
-use super::{BacklightHandles, DisplayHandles, DisplayTaskError, brightness_task};
+use super::{BacklightHandles, DisplayHandles, DisplayTaskError};
 use crate::signals::DISPLAY_BRIGHTNESS_SIGNAL;
 use alloc::ffi::CString;
 use embassy_embedded_hal::shared_bus::asynch::spi::SpiDevice;
@@ -12,7 +12,6 @@ use embedded_graphics::draw_target::DrawTarget;
 use embedded_graphics::pixelcolor::Rgb565;
 use esp_hal::dma::{DmaRxBuf, DmaTxBuf};
 use esp_hal::dma_buffers;
-use lcd_async::options::Orientation;
 use lcd_async::{
     Builder,
     interface::SpiInterface,
@@ -49,7 +48,6 @@ static FRAMEBUFFER_READY: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 pub fn spawn_display_tasks<M: RawMutex, const N: usize>(
     spawner: Spawner,
     display_handles: DisplayHandles,
-    backlight_handles: BacklightHandles,
     log_toggles: &'static LogToggleWatcher<M, N>,
 ) -> Result<(), DisplayTaskError> {
     let fb0 = init_fbs_heap();
@@ -70,12 +68,6 @@ pub fn spawn_display_tasks<M: RawMutex, const N: usize>(
             .ok_or(DisplayTaskError::LogReceiverOutOfCapacity)?,
     ))?;
     spawner.spawn(ui_task())?;
-    spawner.spawn(brightness_task(
-        backlight_handles,
-        log_toggles
-            .dyn_receiver()
-            .ok_or(DisplayTaskError::LogReceiverOutOfCapacity)?,
-    ))?;
     Ok(())
 }
 
@@ -193,7 +185,7 @@ pub async fn render_task(mut log_receiver: LogToggleReceiver) {
 
 #[embassy_executor::task]
 pub async fn ui_task() {
-    let mut world = LvglWorld::default();
+    let mut _world = LvglWorld::default();
 
     LVGL_READY_SIGNAL.wait().await;
 

@@ -44,6 +44,7 @@ use smartknob_core::system_settings::log_toggles::{
 use smartknob_core::system_settings::{HapticSystemStoreSignal, StoreSignals};
 use smartknob_esp32::flash::FlashHandler;
 use smartknob_esp32::motor_driver::mcpwm::Pins6PWM;
+use smartknob_rs::display::BacklightTask;
 use smartknob_rs::signals::{KNOB_EVENTS_CHANNEL, KNOB_TILT_ANGLE};
 use smartknob_rs::{
     cli::menu_handler,
@@ -353,11 +354,17 @@ async fn main(spawner: Spawner) {
     let backlight_stuff = BacklightHandles {
         adc_instance: peripherals.ADC1,
         backlight_output: Output::new(pin_lcd_bl, Level::Low, OutputConfig::default()),
-        // brightness_sensor_pin,
+        brightness_sensor: None,
         ledc: Ledc::new(peripherals.LEDC),
     };
 
-    spawn_display_tasks(spawner, display_handles, backlight_stuff, log_toggles).unwrap();
+    spawn_display_tasks(spawner, display_handles, log_toggles).unwrap();
+    spawner.must_spawn(brightness_task(
+        backlight_stuff,
+        log_toggles
+            .dyn_receiver()
+            .expect("Could not get log toggle receiver"),
+    ));
 
     let power_off_pin = Output::new(power_off_pin, Level::High, OutputConfig::default());
     spawner.must_spawn(shutdown_handler(power_off_pin));
@@ -365,4 +372,10 @@ async fn main(spawner: Spawner) {
     info!("All tasks spawned");
     let stats = esp_alloc::HEAP.stats();
     info!("Current Heap stats: {}", stats);
+}
+
+#[embassy_executor::task]
+async fn brightness_task(handles: BacklightHandles, log_receiver: LogToggleReceiver) {
+    let mut bl = BacklightTask::new(handles, log_receiver);
+    bl.run().await;
 }

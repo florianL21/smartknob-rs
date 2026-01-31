@@ -13,6 +13,6 @@
   ],
   "rust-analyzer.cargo.features": [
     "slint",
-    "lvgl"
+    // "lvgl"
   ]
 }

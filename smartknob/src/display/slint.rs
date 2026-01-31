@@ -1,4 +1,4 @@
-use super::{BacklightHandles, DisplayHandles, DisplayTaskError, brightness_task};
+use super::{DisplayHandles, DisplayTaskError};
 use crate::knob_tilt::KnobTiltEvent;
 use crate::signals::{
     DISPLAY_BRIGHTNESS_SIGNAL, KNOB_EVENTS_CHANNEL, KNOB_TILT_ANGLE, KNOB_TILT_MAGNITUDE,
@@ -56,7 +56,6 @@ type FrameBufferExchange = Signal<CriticalSectionRawMutex, &'static mut FBType>;
 pub fn spawn_display_tasks<M: RawMutex, const N: usize>(
     spawner: Spawner,
     display_handles: DisplayHandles,
-    backlight_handles: BacklightHandles,
     log_toggles: &'static LogToggleWatcher<M, N>,
 ) -> Result<(), DisplayTaskError> {
     static TX: FrameBufferExchange = FrameBufferExchange::new();
@@ -81,12 +80,6 @@ pub fn spawn_display_tasks<M: RawMutex, const N: usize>(
             .ok_or(DisplayTaskError::LogReceiverOutOfCapacity)?,
     ))?;
     spawner.spawn(ui_task())?;
-    spawner.spawn(brightness_task(
-        backlight_handles,
-        log_toggles
-            .dyn_receiver()
-            .ok_or(DisplayTaskError::LogReceiverOutOfCapacity)?,
-    ))?;
     Ok(())
 }
 

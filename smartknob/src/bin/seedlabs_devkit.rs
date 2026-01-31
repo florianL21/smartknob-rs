@@ -42,10 +42,10 @@ use smartknob_core::system_settings::log_toggles::{
 use smartknob_core::system_settings::{HapticSystemStoreSignal, StoreSignals};
 use smartknob_esp32::flash::FlashHandler;
 use smartknob_esp32::motor_driver::mcpwm::Pins6PWM;
-use smartknob_rs::display::{BacklightHandles, DisplayHandles};
+use smartknob_rs::display::{BacklightHandles, BacklightTask, DisplayHandles};
 use smartknob_rs::signals::{KNOB_EVENTS_CHANNEL, KNOB_TILT_ANGLE};
 use smartknob_rs::{
-    cli::menu_handler, display::lvgl::spawn_display_tasks, knob_tilt::KnobTiltEvent,
+    cli::menu_handler, display::slint::spawn_display_tasks, knob_tilt::KnobTiltEvent,
     motor_control::update_foc,
 };
 use static_cell::StaticCell;
@@ -223,7 +223,7 @@ async fn main(spawner: Spawner) {
     let pin_lcd_reset = peripherals.GPIO10;
 
     // various other pins
-    let brightness_sensor_pin = peripherals.GPIO1;
+    let _brightness_sensor_pin = peripherals.GPIO1;
 
     static LOG_TOGGLES: StaticCell<LogWatcher> = StaticCell::new();
     let log_toggles = LOG_TOGGLES.init(LogToggleWatcher::new());
@@ -323,13 +323,25 @@ async fn main(spawner: Spawner) {
     let backlight_stuff = BacklightHandles {
         adc_instance: peripherals.ADC1,
         backlight_output: Output::new(pin_lcd_bl, Level::Low, OutputConfig::default()),
-        // brightness_sensor_pin,
+        brightness_sensor: None,
         ledc: Ledc::new(peripherals.LEDC),
     };
 
-    spawn_display_tasks(spawner, display_handles, backlight_stuff, log_toggles).unwrap();
+    spawn_display_tasks(spawner, display_handles, log_toggles).unwrap();
+    spawner.must_spawn(brightness_task(
+        backlight_stuff,
+        log_toggles
+            .dyn_receiver()
+            .expect("Could not get log toggle receiver"),
+    ));
 
     info!("All tasks spawned");
     let stats = esp_alloc::HEAP.stats();
     info!("Current Heap stats: {}", stats);
+}
+
+#[embassy_executor::task]
+async fn brightness_task(handles: BacklightHandles, log_receiver: LogToggleReceiver) {
+    let mut bl = BacklightTask::new(handles, log_receiver);
+    bl.run().await;
 }
