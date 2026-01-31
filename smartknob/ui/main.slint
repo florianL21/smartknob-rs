@@ -1,0 +1,25 @@
+export global State {
+    in property <angle> encoder_angle: 0.0;
+    in property <angle> tilt_angle: 0.0;
+    in property <float> tilt_magnitude: 0.0;
+}
+
+import { Slider } from "slider.slint";
+
+
+export component MainWindow inherits Window {
+    width: 240px;
+    height: 240px;
+    background: black;
+    in property <angle> encoder_angle: 0.0;
+
+    Rectangle {
+        border-radius: 20px;
+        width: 16px;
+        height: 16px;
+        background: red;
+        x: 112px - State.tilt_magnitude * 0.01px * sin(State.tilt_angle);
+        y: 112px + State.tilt_magnitude * 0.01px * cos(State.tilt_angle);
+        animate x, y { duration: 100ms; }
+    }
+}

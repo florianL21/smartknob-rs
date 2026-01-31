@@ -217,7 +217,7 @@ impl<
         haptics.set_inactivity_detection(settings.inactivity);
         // restore potential previous alignment data
         if let Some(cal) = restored_state {
-            info!("Restored motor alignment data from flash");
+            info!("Restored motor alignment data from flash: {cal:#?}");
             haptics.restore_calibration(cal)
         }
 

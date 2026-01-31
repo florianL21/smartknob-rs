@@ -77,6 +77,21 @@ num-traits = { version = "0.2.19", default-features = false, features = [
 embassy-futures = "0.1.2"
 smartknob-core = { path = "../smartknob-core" }
 smartknob-esp32 = { path = "../smartknob-esp32" }
-lv_bevy_ecs = { version = "0.6.5", default-features = false }
 lcd-async = "0.1.1"
-bevy_ecs = { version = "0.17.0", default-features = false }
+lv_bevy_ecs = { version = "0.6.5", default-features = false, optional = true }
+bevy_ecs = { version = "0.18.0", default-features = false, optional = true }
+slint = { git = "https://github.com/florianL21/slint", rev = "d3a47ed", default-features = false, features = [
+  "compat-1-2",
+  "unsafe-single-threaded",
+  "libm",
+  "renderer-software",
+], optional = true }
+bytemuck = "1.25.0"
+
+[build-dependencies]
+slint-build = { git = "https://github.com/florianL21/slint", rev = "d3a47ed", optional = true }
+
+[features]
+default = ["slint"]
+lvgl = ["dep:lv_bevy_ecs", "dep:bevy_ecs"]
+slint = ["dep:slint-build", "dep:slint"]

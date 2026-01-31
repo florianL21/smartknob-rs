@@ -17,10 +17,7 @@ use smartknob_esp32::flash::{ESPFlashError, FlashHandler};
 use thiserror::Error;
 use ufmt::{uDebug, uwrite};
 
-use crate::{
-    display::DISPLAY_BRIGHTNESS_SIGNAL,
-    signals::{MOTOR_COMMAND_SIGNAL, REQUEST_POWER_DOWN},
-};
+use crate::signals::{DISPLAY_BRIGHTNESS_SIGNAL, MOTOR_COMMAND_SIGNAL, REQUEST_POWER_DOWN};
 
 #[derive(Error, Debug)]
 pub enum HandlerError {

@@ -27,6 +27,7 @@ use esp_hal::{
 };
 use esp_hal_smartled::{SmartLedsAdapter, smart_led_buffer};
 use esp_rtos::embassy::Executor;
+use lcd_async::options::Orientation;
 use log::info;
 use smart_leds::{
     SmartLedsWrite, brightness,
@@ -41,12 +42,10 @@ use smartknob_core::system_settings::log_toggles::{
 use smartknob_core::system_settings::{HapticSystemStoreSignal, StoreSignals};
 use smartknob_esp32::flash::FlashHandler;
 use smartknob_esp32::motor_driver::mcpwm::Pins6PWM;
-use smartknob_rs::display::BacklightHandles;
+use smartknob_rs::display::{BacklightHandles, DisplayHandles};
 use smartknob_rs::signals::{KNOB_EVENTS_CHANNEL, KNOB_TILT_ANGLE};
 use smartknob_rs::{
-    cli::menu_handler,
-    display::{DisplayHandles, spawn_display_tasks},
-    knob_tilt::KnobTiltEvent,
+    cli::menu_handler, display::lvgl::spawn_display_tasks, knob_tilt::KnobTiltEvent,
     motor_control::update_foc,
 };
 use static_cell::StaticCell;
@@ -318,6 +317,7 @@ async fn main(spawner: Spawner) {
         lcd_cs: Output::new(pin_lcd_cs, Level::Low, OutputConfig::default()),
         dc_output: Output::new(pin_lcd_dc, Level::Low, OutputConfig::default()),
         reset_output: Output::new(pin_lcd_reset, Level::Low, OutputConfig::default()),
+        orientation: Orientation::default(),
     };
 
     let backlight_stuff = BacklightHandles {

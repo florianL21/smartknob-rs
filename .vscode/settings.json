@@ -11,4 +11,8 @@
   "cSpell.words": [
     "Smartknob"
   ],
+  "rust-analyzer.cargo.features": [
+    "slint",
+    "lvgl"
+  ]
 }
