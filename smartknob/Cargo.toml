@@ -7,6 +7,11 @@ version = "0.1.0"
 name = "smartknob-rs"
 path = "./src/bin/main.rs"
 
+[[bin]]
+name = "seedlabs-devkit"
+path = "./src/bin/seedlabs_devkit.rs"
+required-features = ["lvgl"]
+
 [dependencies]
 esp-backtrace = { version = "0.18.1", features = [
   "esp32s3",
