@@ -5,12 +5,11 @@ pub mod slint;
 
 use embassy_executor::SpawnError;
 use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, signal::Signal};
-use embassy_time::Timer;
+use embassy_time::{Duration, Timer};
 use esp_hal::{
-    analog::adc::{Adc, AdcCalBasic, AdcChannel, AdcConfig, AdcPin, Attenuation},
+    analog::adc::{Adc, AdcCalBasic, AdcChannel, AdcPin},
     gpio::{AnalogPin, DriveMode, Output},
     ledc::{self, LSGlobalClkSource, Ledc, LowSpeed, channel::ChannelIFace, timer::TimerIFace},
-    peripherals::GPIO4,
     spi,
     time::Rate,
 };
@@ -19,8 +18,6 @@ use log::{error, info, warn};
 use smartknob_core::system_settings::log_toggles::{LogChannel, LogToggleReceiver, may_log};
 use static_cell::StaticCell;
 use thiserror::Error;
-
-const BRIGHTNESS_FADE_DURATION_MS: u16 = 1000;
 
 pub static DISPLAY_BRIGHTNESS_SIGNAL: Signal<CriticalSectionRawMutex, u8> = Signal::new();
 
@@ -52,13 +49,17 @@ pub enum DisplayTaskError {
 }
 
 pub trait BrightnessSensor {
-    fn sample(&self) -> Option<u16>;
+    fn sample(&mut self) -> Option<u16>;
 }
 
-// pub struct ADCBrightnessSensor<'a, ADC, PIN> {
-//     adc: Adc<'a, ADC, esp_hal::Blocking>,
-//     adc_pin: Option<AdcPin<PIN, ADC, AdcCalBasic<ADC>>>,
-// }
+pub struct ADCBrightnessSensor<'a, ADC, PIN>
+where
+    ADC: esp_hal::analog::adc::RegisterAccess,
+    PIN: AdcChannel + AnalogPin,
+{
+    _adc: Adc<'a, ADC, esp_hal::Blocking>,
+    _adc_pin: Option<AdcPin<PIN, ADC, AdcCalBasic<ADC>>>,
+}
 
 // impl<'a, ADC, PIN> ADCBrightnessSensor<'a, ADC, PIN> {
 //     fn new(pin: PIN) -> Self {
@@ -71,10 +72,13 @@ pub trait BrightnessSensor {
 
 // impl<'a, ADC, PIN> BrightnessSensor for ADCBrightnessSensor<'a, ADC, PIN>
 // where
-//     ADC: esp_hal::analog::adc::RegisterAccess,
+//     ADC: esp_hal::analog::adc::RegisterAccess
+//         + esp_hal::analog::adc::CalibrationAccess
+//         + esp_hal::analog::adc::AdcCalEfuse
+//         + 'a,
 //     PIN: AdcChannel + AnalogPin,
 // {
-//     fn sample(&self) -> Option<u16> {
+//     fn sample(&mut self) -> Option<u16> {
 //         if let Some(ref mut pin) = self.adc_pin
 //             && let Ok(val) = self.adc.read_oneshot(pin)
 //         {
@@ -90,6 +94,10 @@ pub struct BacklightTask<'a> {
     ledc_channel: ledc::channel::Channel<'a, LowSpeed>,
     current_brightness: u8,
     brightness_sensor: Option<&'static mut dyn BrightnessSensor>,
+    /// How much time should pass between sampling the brightness sensor/updating the backlight intensity
+    sample_time: Duration,
+    /// How long should a brightness fade take in ms
+    brightness_fade: u16,
 }
 
 impl<'a> BacklightTask<'a> {
@@ -122,6 +130,8 @@ impl<'a> BacklightTask<'a> {
             ledc_channel: channel0,
             log_receiver,
             brightness_sensor: handles.brightness_sensor,
+            brightness_fade: 1000,
+            sample_time: Duration::from_millis(200),
         }
     }
 
@@ -133,14 +143,14 @@ impl<'a> BacklightTask<'a> {
                 if let Err(e) = self.ledc_channel.start_duty_fade(
                     self.current_brightness,
                     new_brighness,
-                    BRIGHTNESS_FADE_DURATION_MS,
+                    self.brightness_fade,
                 ) {
                     warn!("Display backlight fade failed: {e:?}");
                 } else {
                     self.current_brightness = new_brighness;
                 }
             }
-            if let Some(sensor) = &self.brightness_sensor
+            if let Some(ref mut sensor) = self.brightness_sensor
                 && let Some(sample) = sensor.sample()
             {
                 may_log(&mut self.log_receiver, LogChannel::Brightness, || {
@@ -148,7 +158,7 @@ impl<'a> BacklightTask<'a> {
                 })
                 .await;
             }
-            Timer::after_millis(200).await;
+            Timer::after(self.sample_time).await;
         }
     }
 }
