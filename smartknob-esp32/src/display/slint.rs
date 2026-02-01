@@ -1,8 +1,6 @@
 use super::{DisplayHandles, DisplayTaskError};
-use crate::knob_tilt::KnobTiltEvent;
-use crate::signals::{
-    DISPLAY_BRIGHTNESS_SIGNAL, KNOB_EVENTS_CHANNEL, KNOB_TILT_ANGLE, KNOB_TILT_MAGNITUDE,
-};
+use crate::display::{DISPLAY_BRIGHTNESS_SIGNAL, UI_READY_SIGNAL};
+use crate::knob_tilt::{KNOB_EVENTS_CHANNEL, KNOB_TILT_ANGLE, KNOB_TILT_MAGNITUDE, KnobTiltEvent};
 use alloc::boxed::Box;
 use alloc::rc::Rc;
 use embassy_embedded_hal::shared_bus::asynch::spi::SpiDevice;
@@ -50,9 +48,15 @@ type FBType = [u8; FRAME_BUFFER_SIZE_U8];
 type SlintFBType = [Rgb565Pixel; FRAME_BUFFER_SIZE_U16];
 const DISPLAY_SPI_DMA_BUFFER_SIZE: usize = FRAME_BUFFER_SIZE_U8 / 4;
 
-pub static SLINT_READY_SIGNAL: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 type FrameBufferExchange = Signal<CriticalSectionRawMutex, &'static mut FBType>;
 
+/// This is the main function of this module.
+/// It should be called in the main function of the firmware if a display is present.
+/// This function will spawn any required tasks for rendering via the used UI framework
+/// and transferring the framebuffer to the display.
+///
+/// The actual management of the UI and its state happens in the [`ui_task`] which
+/// has to be spawned separately by the user as it is easily replicable
 pub fn spawn_display_tasks<M: RawMutex, const N: usize>(
     spawner: Spawner,
     display_handles: DisplayHandles,
@@ -79,7 +83,6 @@ pub fn spawn_display_tasks<M: RawMutex, const N: usize>(
             .dyn_receiver()
             .ok_or(DisplayTaskError::LogReceiverOutOfCapacity)?,
     ))?;
-    spawner.spawn(ui_task())?;
     Ok(())
 }
 
@@ -149,7 +152,7 @@ fn init_slint_fb_heap() -> &'static mut SlintFBType {
 }
 
 #[embassy_executor::task]
-pub async fn display_task(
+async fn display_task(
     display_handles: DisplayHandles,
     rx: &'static FrameBufferExchange,
     tx: &'static FrameBufferExchange,
@@ -203,7 +206,7 @@ pub async fn display_task(
 }
 
 #[embassy_executor::task]
-pub async fn render_task(
+async fn render_task(
     rx: &'static FrameBufferExchange,
     tx: &'static FrameBufferExchange,
     mut fb: &'static mut FBType,
@@ -232,7 +235,7 @@ pub async fn render_task(
         Size::new(DISPLAY_SIZE.0 as u32, DISPLAY_SIZE.1 as u32),
     );
 
-    SLINT_READY_SIGNAL.signal(());
+    UI_READY_SIGNAL.signal(());
     let mut ticker = Ticker::every(TARGET_FRAME_DURATION);
     let mut last_key = slint::platform::Key::Space;
     let mut last_encoder_position = get_encoder_position();
@@ -344,13 +347,17 @@ pub async fn render_task(
     }
 }
 
+/// This task renders a predefined UI.
+/// If custom UI handling is desired a user should simply not spawn this task and just implement their own UI task.
+///
+/// Note for implementing your own UI task:
+/// You should wait() for the [`UI_READY_SIGNAL`] before doing any UI related work as otherwise the system may crash
 #[embassy_executor::task]
 pub async fn ui_task() {
-    SLINT_READY_SIGNAL.wait().await;
+    UI_READY_SIGNAL.wait().await;
     let ui = MainWindow::new().unwrap();
     ui.show().expect("unable to show main window");
     loop {
-        // info!("Switiching toggle!");
         let tilt_angle = KNOB_TILT_ANGLE.load(core::sync::atomic::Ordering::Relaxed);
         let magnitude = KNOB_TILT_MAGNITUDE.load(core::sync::atomic::Ordering::Relaxed);
         ui.global::<State>()

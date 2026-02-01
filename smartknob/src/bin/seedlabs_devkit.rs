@@ -27,7 +27,6 @@ use esp_hal::{
 };
 use esp_hal_smartled::{SmartLedsAdapter, smart_led_buffer};
 use esp_rtos::embassy::Executor;
-use lcd_async::options::Orientation;
 use log::info;
 use smart_leds::{
     SmartLedsWrite, brightness,
@@ -42,12 +41,15 @@ use smartknob_core::system_settings::log_toggles::{
 use smartknob_core::system_settings::{HapticSystemStoreSignal, StoreSignals};
 use smartknob_esp32::flash::FlashHandler;
 use smartknob_esp32::motor_driver::mcpwm::Pins6PWM;
-use smartknob_rs::display::{BacklightHandles, BacklightTask, DisplayHandles};
-use smartknob_rs::signals::{KNOB_EVENTS_CHANNEL, KNOB_TILT_ANGLE};
-use smartknob_rs::{
-    cli::menu_handler, display::slint::spawn_display_tasks, knob_tilt::KnobTiltEvent,
-    motor_control::update_foc,
+use smartknob_esp32::{
+    display::{
+        BacklightHandles, BacklightTask, DisplayHandles, Orientation,
+        slint::{spawn_display_tasks, ui_task},
+    },
+    knob_tilt::KnobTiltEvent,
 };
+use smartknob_rs::signals::{KNOB_EVENTS_CHANNEL, KNOB_TILT_ANGLE};
+use smartknob_rs::{cli::menu_handler, motor_control::update_foc};
 use static_cell::StaticCell;
 
 esp_bootloader_esp_idf::esp_app_desc!();
@@ -157,6 +159,14 @@ pub async fn flash_task(
 ) {
     loop {
         flash_handler.run(store_signals).await;
+    }
+}
+
+#[embassy_executor::task]
+async fn brightness_task(handles: BacklightHandles, log_receiver: LogToggleReceiver) {
+    let mut bl = BacklightTask::new(handles, log_receiver);
+    loop {
+        bl.run().await;
     }
 }
 
@@ -321,13 +331,13 @@ async fn main(spawner: Spawner) {
     };
 
     let backlight_stuff = BacklightHandles {
-        adc_instance: peripherals.ADC1,
         backlight_output: Output::new(pin_lcd_bl, Level::Low, OutputConfig::default()),
         brightness_sensor: None,
         ledc: Ledc::new(peripherals.LEDC),
     };
-
     spawn_display_tasks(spawner, display_handles, log_toggles).unwrap();
+    // Spawn the taks which sets the actual UI state
+    spawner.must_spawn(ui_task());
     spawner.must_spawn(brightness_task(
         backlight_stuff,
         log_toggles
@@ -338,10 +348,4 @@ async fn main(spawner: Spawner) {
     info!("All tasks spawned");
     let stats = esp_alloc::HEAP.stats();
     info!("Current Heap stats: {}", stats);
-}
-
-#[embassy_executor::task]
-async fn brightness_task(handles: BacklightHandles, log_receiver: LogToggleReceiver) {
-    let mut bl = BacklightTask::new(handles, log_receiver);
-    bl.run().await;
 }

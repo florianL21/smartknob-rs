@@ -1,5 +1,5 @@
-use super::{BacklightHandles, DisplayHandles, DisplayTaskError};
-use crate::signals::DISPLAY_BRIGHTNESS_SIGNAL;
+use super::{DisplayHandles, DisplayTaskError};
+use crate::display::{DISPLAY_BRIGHTNESS_SIGNAL, UI_READY_SIGNAL};
 use alloc::ffi::CString;
 use embassy_embedded_hal::shared_bus::asynch::spi::SpiDevice;
 use embassy_executor::Spawner;
@@ -42,18 +42,21 @@ const FRAME_BUFFER_SIZE: usize = WIDTH * HEIGHT * 2;
 type FBType = [u8; FRAME_BUFFER_SIZE];
 const DISPLAY_SPI_DMA_BUFFER_SIZE: usize = FRAME_BUFFER_SIZE / 4;
 
-static LVGL_READY_SIGNAL: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 static FRAMEBUFFER_READY: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 
+/// This is the main function of this module.
+/// It should be called in the main function of the firmware if a display is present.
+/// This function will spawn any required tasks for rendering via the used UI framework
+/// and transferring the framebuffer to the display.
+///
+/// The actual management of the UI and its state happens in the [`ui_task`] which
+/// has to be spawned separately by the user as it is easily replicable
 pub fn spawn_display_tasks<M: RawMutex, const N: usize>(
     spawner: Spawner,
     display_handles: DisplayHandles,
     log_toggles: &'static LogToggleWatcher<M, N>,
 ) -> Result<(), DisplayTaskError> {
     let fb0 = init_fbs_heap();
-
-    let stats = esp_alloc::HEAP.stats();
-    info!("Current Heap stats: {}", stats);
 
     spawner.spawn(display_task(
         display_handles,
@@ -67,7 +70,6 @@ pub fn spawn_display_tasks<M: RawMutex, const N: usize>(
             .dyn_receiver()
             .ok_or(DisplayTaskError::LogReceiverOutOfCapacity)?,
     ))?;
-    spawner.spawn(ui_task())?;
     Ok(())
 }
 
@@ -90,7 +92,7 @@ fn init_fbs_heap() -> &'static mut FBType {
 }
 
 #[embassy_executor::task]
-pub async fn display_task(
+async fn display_task(
     display_handles: DisplayHandles,
     fb: &'static mut FBType,
     mut log_receiver: LogToggleReceiver,
@@ -142,7 +144,7 @@ pub async fn display_task(
         }
     });
 
-    LVGL_READY_SIGNAL.signal(());
+    UI_READY_SIGNAL.signal(());
 
     DISPLAY_BRIGHTNESS_SIGNAL.signal(INITIAL_DISPLAY_BRIGHTNESS);
 
@@ -163,7 +165,7 @@ pub async fn display_task(
 }
 
 #[embassy_executor::task]
-pub async fn render_task(mut log_receiver: LogToggleReceiver) {
+async fn render_task(mut log_receiver: LogToggleReceiver) {
     // UI setup
     let mut prev_time = Instant::now();
 
@@ -183,11 +185,16 @@ pub async fn render_task(mut log_receiver: LogToggleReceiver) {
     }
 }
 
+/// This task renders a predefined UI.
+/// If custom UI handling is desired a user should simply not spawn this task and just implement their own UI task.
+///
+/// Note for implementing your own UI task:
+/// You should wait() for the [`UI_READY_SIGNAL`] before doing any UI related work as otherwise the system may crash
 #[embassy_executor::task]
 pub async fn ui_task() {
     let mut _world = LvglWorld::default();
 
-    LVGL_READY_SIGNAL.wait().await;
+    UI_READY_SIGNAL.wait().await;
 
     // Add gradient background (dark blue to dark purple)
     unsafe {
