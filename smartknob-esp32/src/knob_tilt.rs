@@ -1,26 +1,17 @@
-use atomic_float::AtomicF32;
 use average::Mean;
 use embassy_embedded_hal::shared_bus::asynch::i2c::I2cDevice;
-use embassy_sync::{
-    blocking_mutex::raw::{CriticalSectionRawMutex, NoopRawMutex},
-    mutex::Mutex,
-    pubsub::PubSubChannel,
-};
+use embassy_sync::{blocking_mutex::raw::NoopRawMutex, mutex::Mutex, pubsub::DynPublisher};
 use embassy_time::{Duration, Timer};
 use esp_hal::gpio::Input;
 use ldc1x1x::{AutoScanSequence, Channel};
 use libm::sqrtf;
 use log::info;
 use nalgebra::{Rotation2, Vector2};
+use smartknob_core::knob_tilt::{
+    KNOB_TILT_ANGLE, KNOB_TILT_MAGNITUDE, KnobTiltEvent, TiltDirection,
+};
 
-type I2cBus1 = Mutex<NoopRawMutex, esp_hal::i2c::master::I2c<'static, esp_hal::Async>>;
-
-//TODO: make configurable from the outside
-pub static KNOB_EVENTS_CHANNEL: PubSubChannel<CriticalSectionRawMutex, KnobTiltEvent, 10, 4, 1> =
-    PubSubChannel::new();
-
-pub static KNOB_TILT_ANGLE: AtomicF32 = AtomicF32::new(0.0);
-pub static KNOB_TILT_MAGNITUDE: AtomicF32 = AtomicF32::new(0.0);
+pub type I2cBusLDC = Mutex<NoopRawMutex, esp_hal::i2c::master::I2c<'static, esp_hal::Async>>;
 
 const ORIGIN: Vector2<f32> = Vector2::new(0.0f32, -1.0f32);
 const CHANNELS: [Channel; 3] = [
@@ -34,23 +25,6 @@ pub struct TiltInfo {
     /// angle in radians from -PI to PI
     pub angle: f32,
     pub magnitude: u32,
-}
-
-#[derive(Debug, Clone)]
-pub enum TiltDirection {
-    Up,
-    Right,
-    Down,
-    Left,
-}
-
-#[derive(Debug, Clone)]
-pub enum KnobTiltEvent {
-    TiltStart(TiltDirection),
-    TiltAdjust,
-    TiltEnd,
-    PressStart,
-    PressEnd,
 }
 
 enum KnobTiltState {
@@ -213,8 +187,11 @@ async fn take_mean_measurement(
 }
 
 #[embassy_executor::task]
-pub async fn read_ldc_task(i2c: &'static I2cBus1, mut int_pin: Input<'static>) {
-    let sender = KNOB_EVENTS_CHANNEL.publisher().unwrap();
+pub async fn ldc_knob_tilt_task(
+    i2c: &'static I2cBusLDC,
+    mut int_pin: Input<'static>,
+    sender: DynPublisher<'static, KnobTiltEvent>,
+) -> ! {
     let i2c_device = I2cDevice::new(i2c);
     let mut ldc = ldc1x1x::Ldc::new(i2c_device, 0x2A);
     let mut init_ok = false;

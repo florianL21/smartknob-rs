@@ -1,12 +1,11 @@
 use super::{DisplayHandles, DisplayTaskError};
 use crate::display::{DISPLAY_BRIGHTNESS_SIGNAL, UI_READY_SIGNAL};
-use crate::knob_tilt::{KNOB_EVENTS_CHANNEL, KNOB_TILT_ANGLE, KNOB_TILT_MAGNITUDE, KnobTiltEvent};
 use alloc::boxed::Box;
 use alloc::rc::Rc;
 use embassy_embedded_hal::shared_bus::asynch::spi::SpiDevice;
 use embassy_executor::Spawner;
 use embassy_sync::blocking_mutex::raw::{CriticalSectionRawMutex, RawMutex};
-use embassy_sync::pubsub::WaitResult;
+use embassy_sync::pubsub::{DynSubscriber, PubSubChannel, WaitResult};
 use embassy_sync::signal::Signal;
 use embassy_sync::{blocking_mutex::raw::NoopRawMutex, mutex::Mutex};
 use embassy_time::{Delay, Duration, Instant, Ticker, Timer};
@@ -30,6 +29,9 @@ use slint::platform::Platform;
 use slint::platform::WindowEvent;
 use slint::platform::software_renderer::{MinimalSoftwareWindow, Rgb565Pixel};
 use smartknob_core::haptic_core::get_encoder_position;
+use smartknob_core::knob_tilt::{
+    KNOB_TILT_ANGLE, KNOB_TILT_MAGNITUDE, KnobTiltEvent, TiltDirection,
+};
 use smartknob_core::system_settings::log_toggles::{
     LogChannel, LogToggleReceiver, LogToggleWatcher, may_log,
 };
@@ -57,10 +59,18 @@ type FrameBufferExchange = Signal<CriticalSectionRawMutex, &'static mut FBType>;
 ///
 /// The actual management of the UI and its state happens in the [`ui_task`] which
 /// has to be spawned separately by the user as it is easily replicable
-pub fn spawn_display_tasks<M: RawMutex, const N: usize>(
+pub fn spawn_display_tasks<
+    M: RawMutex,
+    MK: RawMutex,
+    const N: usize,
+    const CAP: usize,
+    const SUBS: usize,
+    const PUBS: usize,
+>(
     spawner: Spawner,
     display_handles: DisplayHandles,
     log_toggles: &'static LogToggleWatcher<M, N>,
+    knob_tilt: &'static PubSubChannel<MK, KnobTiltEvent, CAP, SUBS, PUBS>,
 ) -> Result<(), DisplayTaskError> {
     static TX: FrameBufferExchange = FrameBufferExchange::new();
     static RX: FrameBufferExchange = FrameBufferExchange::new();
@@ -82,6 +92,9 @@ pub fn spawn_display_tasks<M: RawMutex, const N: usize>(
         log_toggles
             .dyn_receiver()
             .ok_or(DisplayTaskError::LogReceiverOutOfCapacity)?,
+        knob_tilt
+            .dyn_subscriber()
+            .map_err(|_| DisplayTaskError::KnobTiltSubscriberOutOfCapacity)?,
     ))?;
     Ok(())
 }
@@ -211,10 +224,8 @@ async fn render_task(
     tx: &'static FrameBufferExchange,
     mut fb: &'static mut FBType,
     mut log_receiver: LogToggleReceiver,
+    mut knob_tilt: DynSubscriber<'static, KnobTiltEvent>,
 ) {
-    let mut knob_tilt = KNOB_EVENTS_CHANNEL.subscriber().expect(
-        "Could not get knob event channel subscriber. Please increase number of maximal subs",
-    );
     // UI setup
     let window = MinimalSoftwareWindow::new(
         slint::platform::software_renderer::RepaintBufferType::ReusedBuffer,
@@ -255,19 +266,19 @@ async fn render_task(
                     }),
                     KnobTiltEvent::TiltStart(dir) => Some(WindowEvent::KeyPressed {
                         text: match dir {
-                            crate::knob_tilt::TiltDirection::Down => {
+                            TiltDirection::Down => {
                                 last_key = slint::platform::Key::DownArrow;
                                 last_key
                             }
-                            crate::knob_tilt::TiltDirection::Left => {
+                            TiltDirection::Left => {
                                 last_key = slint::platform::Key::LeftArrow;
                                 last_key
                             }
-                            crate::knob_tilt::TiltDirection::Right => {
+                            TiltDirection::Right => {
                                 last_key = slint::platform::Key::RightArrow;
                                 last_key
                             }
-                            crate::knob_tilt::TiltDirection::Up => {
+                            TiltDirection::Up => {
                                 last_key = slint::platform::Key::UpArrow;
                                 last_key
                             }

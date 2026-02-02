@@ -8,5 +8,7 @@ pub mod cli;
 pub mod display;
 pub mod flash;
 pub mod haptic_core;
+pub mod knob_tilt;
+pub mod led_ring;
 pub mod shutdown;
 pub mod system_settings;

@@ -11,7 +11,7 @@ pub static REQUEST_POWER_DOWN: Signal<CriticalSectionRawMutex, bool> = Signal::n
 ///
 /// The shutdown handler is to be called inside an embassy task.
 /// It will consume the [`REQUEST_POWER_DOWN`] signal.
-pub async fn shutdown_handler(mut power_off_pin: impl OutputPin, high_is_off: bool) {
+pub async fn shutdown_handler(mut power_off_pin: impl OutputPin, high_is_off: bool) -> ! {
     let _ = if high_is_off {
         power_off_pin.set_low()
     } else {

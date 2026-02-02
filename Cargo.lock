@@ -1613,9 +1613,10 @@ dependencies = [
 [[package]]
 name = "embedded-cli"
 version = "0.2.1"
+source = "git+https://github.com/florianL21/embedded-cli-rs.git?rev=12434bd4#12434bd465b7c108a48d3a6be91019872b67d84e"
 dependencies = [
  "bitflags 2.10.0",
- "embedded-cli-macros 0.2.1",
+ "embedded-cli-macros 0.2.1 (git+https://github.com/florianL21/embedded-cli-rs.git?rev=12434bd4)",
  "embedded-io 0.7.1",
  "ufmt",
 ]
@@ -1634,6 +1635,7 @@ dependencies = [
 [[package]]
 name = "embedded-cli-macros"
 version = "0.2.1"
+source = "git+https://github.com/florianL21/embedded-cli-rs.git?rev=12434bd4#12434bd465b7c108a48d3a6be91019872b67d84e"
 dependencies = [
  "convert_case 0.6.0",
  "darling 0.20.11",
@@ -5473,7 +5475,7 @@ dependencies = [
  "embassy-futures",
  "embassy-sync 0.7.2",
  "embassy-time",
- "embedded-cli 0.2.1",
+ "embedded-cli 0.2.1 (git+https://github.com/florianL21/embedded-cli-rs.git?rev=12434bd4)",
  "embedded-hal 1.0.0",
  "embedded-hal-async",
  "embedded-io 0.7.1",
@@ -5488,6 +5490,7 @@ dependencies = [
  "num-traits",
  "postcard",
  "serde",
+ "smart-leds",
  "thiserror 2.0.17",
  "ufmt",
 ]
@@ -5511,6 +5514,7 @@ dependencies = [
  "embedded-storage",
  "esp-bootloader-esp-idf",
  "esp-hal",
+ "esp-hal-smartled",
  "esp-storage",
  "lcd-async",
  "ldc1x1x",
@@ -5522,6 +5526,7 @@ dependencies = [
  "serde",
  "slint",
  "slint-build",
+ "smart-leds",
  "smartknob-core",
  "static_cell",
  "thiserror 2.0.17",
@@ -5545,7 +5550,6 @@ dependencies = [
  "esp-backtrace",
  "esp-bootloader-esp-idf",
  "esp-hal",
- "esp-hal-smartled",
  "esp-println",
  "esp-rtos",
  "esp-storage",
@@ -5556,7 +5560,6 @@ dependencies = [
  "log",
  "postcard",
  "serde",
- "smart-leds",
  "smartknob-core",
  "smartknob-esp32",
  "static_cell",

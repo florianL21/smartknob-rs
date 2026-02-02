@@ -5,8 +5,9 @@ extern crate alloc;
 
 use embassy_executor::Spawner;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
+use embassy_sync::pubsub::PubSubChannel;
 use embassy_sync::{blocking_mutex::raw::NoopRawMutex, mutex::Mutex};
-use embassy_time::{Duration, Timer};
+use embassy_time::Timer;
 use esp_backtrace as _;
 use esp_bootloader_esp_idf::partitions::{DataPartitionSubType, PartitionType};
 use esp_hal::interrupt::software::SoftwareInterruptControl;
@@ -17,7 +18,7 @@ use esp_hal::system::Stack;
 use esp_hal::timer::timg::TimerGroup;
 use esp_hal::{
     clock::CpuClock,
-    gpio::{AnyPin, Input, InputConfig, Level, Output, OutputConfig},
+    gpio::{Input, InputConfig, Level, Output, OutputConfig},
     i2c::master::{Config as I2cConfig, I2c},
     rmt::Rmt,
     spi::{
@@ -27,20 +28,17 @@ use esp_hal::{
     time::Rate,
     usb_serial_jtag::UsbSerialJtag,
 };
-use esp_hal_smartled::{SmartLedsAdapter, smart_led_buffer};
 use esp_rtos::embassy::Executor;
 use log::info;
-use smart_leds::{
-    SmartLedsWrite, brightness,
-    colors::{BLACK, BLUE, RED},
-    gamma,
-};
+use smartknob_core::knob_tilt::KnobTiltEvent;
 use smartknob_core::system_settings::{HapticSystemStoreSignal, StoreSignals};
 use smartknob_core::{
     flash::FlashHandling,
     haptic_core::get_encoder_position,
     system_settings::log_toggles::{LogChannel, LogToggleReceiver, LogToggleWatcher, may_log},
 };
+use smartknob_esp32::knob_tilt::{I2cBusLDC, ldc_knob_tilt_task};
+use smartknob_esp32::led_ring::led_ring_task;
 use smartknob_esp32::{
     cli::menu_handler,
     display::{
@@ -48,20 +46,16 @@ use smartknob_esp32::{
         slint::{spawn_display_tasks, ui_task},
     },
     flash::FlashHandler,
-    knob_tilt::{KnobTiltEvent, read_ldc_task},
     motor_driver::mcpwm::Pins6PWM,
     shutdown::shutdown_task,
 };
-use smartknob_rs::{
-    motor_control::update_foc,
-    signals::{KNOB_EVENTS_CHANNEL, KNOB_TILT_ANGLE},
-};
+use smartknob_rs::motor_control::update_foc;
 use static_cell::StaticCell;
 
 esp_bootloader_esp_idf::esp_app_desc!();
 
-type I2cBus1 = Mutex<NoopRawMutex, esp_hal::i2c::master::I2c<'static, esp_hal::Async>>;
 type LogWatcher = LogToggleWatcher<CriticalSectionRawMutex, 6>;
+type KnobTiltChannel = PubSubChannel<NoopRawMutex, KnobTiltEvent, 10, 4, 1>;
 
 #[embassy_executor::task]
 async fn log_rotations(mut log_receiver: LogToggleReceiver) {
@@ -73,89 +67,6 @@ async fn log_rotations(mut log_receiver: LogToggleReceiver) {
         })
         .await;
         Timer::after_millis(200).await;
-    }
-}
-
-fn map<
-    T: core::ops::Sub<Output = T>
-        + core::ops::Mul<Output = T>
-        + core::ops::Div<Output = T>
-        + core::ops::Add<Output = T>
-        + Copy,
->(
-    x: T,
-    in_min: T,
-    in_max: T,
-    out_min: T,
-    out_max: T,
-) -> T {
-    (x - in_min) * (out_max - out_min) / (in_max - in_min) + out_min
-}
-
-#[embassy_executor::task]
-async fn led_ring(
-    rmt_channel: esp_hal::rmt::ChannelCreator<'static, esp_hal::Blocking, 0>,
-    led_pin: AnyPin<'static>,
-    mut log_receiver: LogToggleReceiver,
-) {
-    const NUM_LEDS: usize = 24;
-    const _LED_OFFSET: usize = 1;
-
-    let mut tilt_receiver = KNOB_EVENTS_CHANNEL.subscriber()
-    .expect("No subscriber channels were left for the knob events channel. Consider increating tha number of subscribers");
-
-    let mut rmt_buffer = smart_led_buffer!(NUM_LEDS);
-    let mut led = SmartLedsAdapter::new(rmt_channel, led_pin, &mut rmt_buffer);
-
-    let mut data = [RED; NUM_LEDS];
-    let _step_size = (2.0f32 * core::f32::consts::PI) / NUM_LEDS as f32;
-
-    info!("LED init done!");
-    loop {
-        // Since this is only interested in displaying the current state we can ignore lag information
-        let tilt_event = tilt_receiver.next_message_pure().await;
-        may_log(&mut log_receiver, LogChannel::Push, || {
-            info!("Event: {:#?}", &tilt_event)
-        })
-        .await;
-        match tilt_event {
-            KnobTiltEvent::PressEnd | KnobTiltEvent::TiltEnd => {
-                for item in data.iter_mut() {
-                    *item = BLACK;
-                }
-            }
-            KnobTiltEvent::PressStart => {
-                for item in data.iter_mut() {
-                    *item = RED;
-                }
-            }
-            KnobTiltEvent::TiltStart(_) | KnobTiltEvent::TiltAdjust => {
-                let angle = KNOB_TILT_ANGLE.load(core::sync::atomic::Ordering::Relaxed);
-                let angle = if angle < 0.0 {
-                    angle + 2.0 * core::f32::consts::PI
-                } else {
-                    angle
-                };
-                let led_index = map(
-                    angle,
-                    2.0 * core::f32::consts::PI,
-                    0.0,
-                    0.0,
-                    NUM_LEDS as f32,
-                );
-                // not yet working
-                for (i, item) in data.iter_mut().enumerate() {
-                    if i == led_index as usize {
-                        *item = BLUE;
-                    } else {
-                        *item = BLACK;
-                    }
-                }
-            }
-        }
-        led.write(brightness(gamma(data.iter().cloned()), 10))
-            .unwrap();
-        Timer::after(Duration::from_millis(20)).await;
     }
 }
 
@@ -253,6 +164,8 @@ async fn main(spawner: Spawner) {
 
     static LOG_TOGGLES: StaticCell<LogWatcher> = StaticCell::new();
     let log_toggles = LOG_TOGGLES.init(LogToggleWatcher::new());
+    static KNOB_TILT_PUB_SUB: StaticCell<KnobTiltChannel> = StaticCell::new();
+    let knob_tilt = KNOB_TILT_PUB_SUB.init(PubSubChannel::new());
 
     // Encoder initialization
     let sw_int = SoftwareInterruptControl::new(peripherals.SW_INTERRUPT);
@@ -324,22 +237,31 @@ async fn main(spawner: Spawner) {
     .with_scl(pins_i2c_scl)
     .with_sda(pins_i2c_sda)
     .into_async();
-    static I2C_BUS: StaticCell<I2cBus1> = StaticCell::new();
+    static I2C_BUS: StaticCell<I2cBusLDC> = StaticCell::new();
     let i2c_bus = I2C_BUS.init(Mutex::new(i2c_bus));
 
     let ldc_int_pin = Input::new(pins_ldc_int_pin, InputConfig::default());
 
-    spawner.must_spawn(read_ldc_task(i2c_bus, ldc_int_pin));
+    spawner.must_spawn(ldc_knob_tilt_task(
+        i2c_bus,
+        ldc_int_pin,
+        knob_tilt
+            .dyn_publisher()
+            .expect("Could not create knob tilt subscriber, please increase capacity"),
+    ));
 
     // log encoder values
     spawner.must_spawn(log_rotations(log_toggles.dyn_receiver().unwrap()));
 
     // LED ring
     let rmt = Rmt::new(peripherals.RMT, Rate::from_mhz(80)).unwrap();
-    spawner.must_spawn(led_ring(
+    spawner.must_spawn(led_ring_task(
         rmt.channel0,
         pin_led_data.into(),
         log_toggles.dyn_receiver().unwrap(),
+        knob_tilt
+            .dyn_subscriber()
+            .expect("Could not create knob tilt subscriber, please increase capacity"),
     ));
 
     // Display
@@ -368,7 +290,7 @@ async fn main(spawner: Spawner) {
         ledc: Ledc::new(peripherals.LEDC),
     };
 
-    spawn_display_tasks(spawner, display_handles, log_toggles).unwrap();
+    spawn_display_tasks(spawner, display_handles, log_toggles, knob_tilt).unwrap();
     // Spawn the taks which sets the actual UI state
     spawner.must_spawn(ui_task());
     spawner.must_spawn(brightness_task(

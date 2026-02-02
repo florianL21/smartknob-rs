@@ -48,6 +48,8 @@ pub struct BacklightHandles {
 pub enum DisplayTaskError {
     #[error("Log receiver has no more capacity. Increase the max number of log receivers")]
     LogReceiverOutOfCapacity,
+    #[error("KnobTilt pubSubChannel has no more capacity. Increase the max number of subscribers")]
+    KnobTiltSubscriberOutOfCapacity,
     #[error("Failed to spawn at least one required task: {0}")]
     FailedToSpawnTask(#[from] SpawnError),
 }

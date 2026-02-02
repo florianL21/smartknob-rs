@@ -30,8 +30,9 @@ embassy-futures = "0.1.2"
 embedded-storage = "0.3.1"
 ufmt = "0.2.0"
 heapless = "0.9.2"
-embedded-cli = { path = "../../embedded-cli-rs/embedded-cli" } #{ git = "https://github.com/florianL21/embedded-cli-rs.git", rev = "6b47952f1f4672160e7dbca8b0cfeed4e2aa153d" }
+embedded-cli = { git = "https://github.com/florianL21/embedded-cli-rs.git", rev = "12434bd4" }
 embedded-io-async = "0.7.0"
 embedded-io = "0.7.1"
 embedded-hal = "1.0.0"
 embassy-executor = "0.9.1"
+smart-leds = "0.4.0"
