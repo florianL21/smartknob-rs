@@ -35,23 +35,27 @@ use smart_leds::{
     colors::{BLACK, BLUE, RED},
     gamma,
 };
-use smartknob_core::flash::FlashHandling;
-use smartknob_core::haptic_core::get_encoder_position;
-use smartknob_core::system_settings::log_toggles::{
-    LogChannel, LogToggleReceiver, LogToggleWatcher, may_log,
-};
 use smartknob_core::system_settings::{HapticSystemStoreSignal, StoreSignals};
-use smartknob_esp32::flash::FlashHandler;
-use smartknob_esp32::motor_driver::mcpwm::Pins6PWM;
+use smartknob_core::{
+    flash::FlashHandling,
+    haptic_core::get_encoder_position,
+    system_settings::log_toggles::{LogChannel, LogToggleReceiver, LogToggleWatcher, may_log},
+};
 use smartknob_esp32::{
+    cli::menu_handler,
     display::{
         BacklightHandles, BacklightTask, DisplayHandles, Orientation,
         slint::{spawn_display_tasks, ui_task},
     },
+    flash::FlashHandler,
     knob_tilt::{KnobTiltEvent, read_ldc_task},
+    motor_driver::mcpwm::Pins6PWM,
+    shutdown::shutdown_task,
 };
-use smartknob_rs::signals::{KNOB_EVENTS_CHANNEL, KNOB_TILT_ANGLE};
-use smartknob_rs::{cli::menu_handler, motor_control::update_foc, shutdown::shutdown_handler};
+use smartknob_rs::{
+    motor_control::update_foc,
+    signals::{KNOB_EVENTS_CHANNEL, KNOB_TILT_ANGLE},
+};
 use static_cell::StaticCell;
 
 esp_bootloader_esp_idf::esp_app_desc!();
@@ -375,7 +379,7 @@ async fn main(spawner: Spawner) {
     ));
 
     let power_off_pin = Output::new(power_off_pin, Level::High, OutputConfig::default());
-    spawner.must_spawn(shutdown_handler(power_off_pin));
+    spawner.must_spawn(shutdown_task(power_off_pin, true));
 
     info!("All tasks spawned");
     let stats = esp_alloc::HEAP.stats();

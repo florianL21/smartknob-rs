@@ -23,13 +23,11 @@ use esp_hal::{
 };
 use esp_rtos::embassy::Executor;
 use log::info;
-
 use smartknob_core::flash::FlashHandling;
 use smartknob_core::system_settings::log_toggles::LogToggleWatcher;
 use smartknob_core::system_settings::{HapticSystemStoreSignal, StoreSignals};
-use smartknob_esp32::flash::FlashHandler;
-use smartknob_esp32::motor_driver::mcpwm::Pins6PWM;
-use smartknob_rs::{cli::menu_handler, motor_control::update_foc};
+use smartknob_esp32::{cli::menu_handler, flash::FlashHandler, motor_driver::mcpwm::Pins6PWM};
+use smartknob_rs::motor_control::update_foc;
 use static_cell::StaticCell;
 
 esp_bootloader_esp_idf::esp_app_desc!();

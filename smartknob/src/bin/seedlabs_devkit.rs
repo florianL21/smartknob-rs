@@ -42,14 +42,15 @@ use smartknob_core::system_settings::{HapticSystemStoreSignal, StoreSignals};
 use smartknob_esp32::flash::FlashHandler;
 use smartknob_esp32::motor_driver::mcpwm::Pins6PWM;
 use smartknob_esp32::{
+    cli::menu_handler,
     display::{
         BacklightHandles, BacklightTask, DisplayHandles, Orientation,
         slint::{spawn_display_tasks, ui_task},
     },
     knob_tilt::KnobTiltEvent,
 };
+use smartknob_rs::motor_control::update_foc;
 use smartknob_rs::signals::{KNOB_EVENTS_CHANNEL, KNOB_TILT_ANGLE};
-use smartknob_rs::{cli::menu_handler, motor_control::update_foc};
 use static_cell::StaticCell;
 
 esp_bootloader_esp_idf::esp_app_desc!();

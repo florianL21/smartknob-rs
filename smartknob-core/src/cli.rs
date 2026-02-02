@@ -1,58 +1,42 @@
-use alloc::format;
-use core::{convert::Infallible, fmt::Debug, str::Utf8Error};
+use crate::display::DISPLAY_BRIGHTNESS_SIGNAL;
+use crate::flash::{FlashError, FlashHandling, FlashKeys};
+use crate::haptic_core::{MOTOR_COMMAND_SIGNAL, MotorCommand};
+use crate::shutdown::REQUEST_POWER_DOWN;
+use crate::system_settings::log_toggles::{
+    LogChannel, LogChannelToggles, LogToggleSender, LogToggles,
+};
+use core::fmt::Debug;
+use core::fmt::Write as _;
 use embassy_time::Duration;
 use embedded_cli::{Command, CommandGroup, cli::CliBuilder};
 use embedded_io_async::{Read, Write};
-use esp_backtrace as _;
-use esp_hal::{Async, usb_serial_jtag::UsbSerialJtag};
+use embedded_storage::nor_flash::NorFlash;
 use fixed::types::I16F16;
 use log::info;
 use postcard::experimental::max_size::MaxSize;
-use smartknob_core::flash::{FlashHandling, FlashKeys};
-use smartknob_core::haptic_core::MotorCommand;
-use smartknob_core::system_settings::log_toggles::{
-    ConfigError, LogChannelToggles, LogToggleSender, LogToggles,
-};
-use smartknob_esp32::flash::{ESPFlashError, FlashHandler};
 use thiserror::Error;
-use ufmt::{uDebug, uwrite};
-
-use crate::signals::{DISPLAY_BRIGHTNESS_SIGNAL, MOTOR_COMMAND_SIGNAL, REQUEST_POWER_DOWN};
+use ufmt::uwrite;
 
 #[derive(Error, Debug)]
-pub enum HandlerError {
+pub enum HandlerError<FE, IO: embedded_io::Error> {
     #[error("Flash read failed: {0:#?}")]
-    FlashError(#[from] ESPFlashError),
-    #[error("Infallible error")]
-    Infallible(#[from] Infallible),
-    #[error("Conversion to UTF-8 failed: {0:#?}")]
-    StringConversionError(#[from] Utf8Error),
-    #[error("Failed to set config {0}")]
-    InvalidConfigError(#[from] ConfigError),
+    FlashError(#[from] FlashError<FE>),
+    #[error("Failed to write to console {0:#?}")]
+    ConsoleWriteError(#[from] IO),
     #[error("Could not serialize LogToggles to postcard format")]
     PostcardLogToggleSerializationError,
-}
-
-impl uDebug for HandlerError {
-    fn fmt<W>(&self, f: &mut ufmt::Formatter<'_, W>) -> Result<(), W::Error>
-    where
-        W: ufmt::uWrite + ?Sized,
-    {
-        f.write_str(format!("{self:?}").as_str())
-    }
 }
 
 struct Context {
     sender: LogToggleSender,
     logging_config: LogToggles,
     interface_open: bool,
-    flash: &'static FlashHandler,
 }
 
 #[derive(CommandGroup)]
-enum RootGroup<'a> {
+enum RootGroup {
     Base(Base),
-    Logging(Logging<'a>),
+    Logging(Logging),
     Storage(Flash),
     Motor(Motor),
     Display(Display),
@@ -71,44 +55,45 @@ enum Base {
 #[allow(clippy::enum_variant_names)]
 #[derive(Command)]
 #[command(help_title = "Manage Logging output")]
-enum Logging<'a> {
+enum Logging {
     /// Enable printing of a certain log cannel
     LogEnable {
         /// Which logging channel to enable
-        channel: &'a str,
+        channel: LogChannel,
     },
     /// Disable printing of a certain log channel
     LogDisable {
         /// Which logging channel to disable
-        channel: &'a str,
+        channel: LogChannel,
     },
     /// List all available logging channels
     LogList,
 }
 
-async fn set_log(
+async fn set_log<F: NorFlash>(
     toggles: &mut LogChannelToggles,
-    flash: &FlashHandler,
-    channel: &str,
+    flash: &impl FlashHandling<F>,
+    channel: &LogChannel,
     state: bool,
-) -> Result<(), HandlerError> {
-    toggles.set_from_str(channel, state)?;
+) -> Result<(), FlashError<F::Error>> {
+    toggles.set(channel, state);
     flash
         .store::<_, { LogChannelToggles::POSTCARD_MAX_SIZE }>(&FlashKeys::LogChannels, toggles)
         .await?;
     Ok(())
 }
 
-impl Logging<'_> {
-    async fn handle(
+impl Logging {
+    async fn handle<TX: embedded_io::Write, F: FlashHandling<FT>, FT: NorFlash, FE>(
         &self,
-        cli: &mut embedded_cli::cli::CliHandle<
-            '_,
-            esp_hal::usb_serial_jtag::UsbSerialJtagTx<'static, Async>,
-            core::convert::Infallible,
-        >,
+        cli: &mut embedded_cli::cli::CliHandle<'_, TX, TX::Error>,
         context: &mut Context,
-    ) -> Result<(), HandlerError> {
+        flash: &F,
+    ) -> Result<(), HandlerError<FE, TX::Error>>
+    where
+        HandlerError<FE, <TX as embedded_io::ErrorType>::Error>:
+            From<FlashError<<FT as embedded_storage::nor_flash::ErrorType>::Error>>,
+    {
         match self {
             Logging::LogList => {
                 uwrite!(
@@ -118,24 +103,12 @@ impl Logging<'_> {
                 )?;
             }
             Logging::LogEnable { channel } => {
-                set_log(
-                    &mut context.logging_config.config,
-                    context.flash,
-                    channel,
-                    true,
-                )
-                .await?;
+                set_log(&mut context.logging_config.config, flash, channel, true).await?;
                 uwrite!(cli.writer(), "Enabled logging for channel {}", channel)?;
                 context.sender.send(context.logging_config.clone());
             }
             Logging::LogDisable { channel } => {
-                set_log(
-                    &mut context.logging_config.config,
-                    context.flash,
-                    channel,
-                    false,
-                )
-                .await?;
+                set_log(&mut context.logging_config.config, flash, channel, false).await?;
                 uwrite!(cli.writer(), "Disabled logging for channel {}", channel)?;
                 context.sender.send(context.logging_config.clone());
             }
@@ -152,18 +125,18 @@ enum Flash {
 }
 
 impl Flash {
-    async fn handle(
+    async fn handle<TX: embedded_io::Write, F: FlashHandling<FT>, FT: NorFlash, FE>(
         &self,
-        cli: &mut embedded_cli::cli::CliHandle<
-            '_,
-            esp_hal::usb_serial_jtag::UsbSerialJtagTx<'static, Async>,
-            core::convert::Infallible,
-        >,
-        context: &mut Context,
-    ) -> Result<(), HandlerError> {
+        cli: &mut embedded_cli::cli::CliHandle<'_, TX, TX::Error>,
+        flash: &F,
+    ) -> Result<(), HandlerError<FE, TX::Error>>
+    where
+        HandlerError<FE, <TX as embedded_io::ErrorType>::Error>:
+            From<FlashError<<FT as embedded_storage::nor_flash::ErrorType>::Error>>,
+    {
         match self {
             Flash::FlashFormat => {
-                context.flash.format().await?;
+                flash.format().await?;
                 uwrite!(cli.writer(), "Formatted flash")?;
             }
         }
@@ -204,15 +177,10 @@ enum Motor {
 }
 
 impl Motor {
-    async fn handle(
+    async fn handle<TX: embedded_io::Write, FE>(
         &self,
-        cli: &mut embedded_cli::cli::CliHandle<
-            '_,
-            esp_hal::usb_serial_jtag::UsbSerialJtagTx<'static, Async>,
-            core::convert::Infallible,
-        >,
-        _context: &mut Context,
-    ) -> Result<(), HandlerError> {
+        cli: &mut embedded_cli::cli::CliHandle<'_, TX, TX::Error>,
+    ) -> Result<(), HandlerError<FE, TX::Error>> {
         match self {
             Motor::Align => {
                 uwrite!(cli.writer(), "Starting motor alignment")?;
@@ -263,15 +231,10 @@ enum Display {
 }
 
 impl Display {
-    async fn handle(
+    async fn handle<TX: embedded_io::Write, FE>(
         &self,
-        cli: &mut embedded_cli::cli::CliHandle<
-            '_,
-            esp_hal::usb_serial_jtag::UsbSerialJtagTx<'static, Async>,
-            core::convert::Infallible,
-        >,
-        _context: &mut Context,
-    ) -> Result<(), HandlerError> {
+        cli: &mut embedded_cli::cli::CliHandle<'_, TX, TX::Error>,
+    ) -> Result<(), HandlerError<FE, TX::Error>> {
         match self {
             Display::Brightness { percent } => {
                 let percent = (*percent).clamp(0, 100);
@@ -283,82 +246,98 @@ impl Display {
     }
 }
 
-#[embassy_executor::task]
-pub async fn menu_handler(
-    serial: UsbSerialJtag<'static, Async>,
-    flash: &'static FlashHandler,
-    log_toggle_sender: LogToggleSender,
-) {
-    let mut buffer = [0u8; LogChannelToggles::POSTCARD_MAX_SIZE];
-    let initial_log_toggles =
-        if let Ok(Some(t)) = flash.load(FlashKeys::LogChannels, &mut buffer).await {
-            t
-        } else {
-            LogChannelToggles::default()
+pub struct CLIHandler<TX: Write + embedded_io::Write> {
+    context: Context,
+    cli: embedded_cli::cli::Cli<TX, TX::Error, [u8; 255], [u8; 255]>,
+}
+
+impl<TX: Write + embedded_io::Write> CLIHandler<TX> {
+    pub async fn new<F: NorFlash>(
+        flash: &'static impl FlashHandling<F>,
+        log_toggle_sender: LogToggleSender,
+        mut tx: TX,
+    ) -> Option<Self> {
+        let mut buffer = [0u8; LogChannelToggles::POSTCARD_MAX_SIZE];
+        let initial_log_toggles =
+            if let Ok(Some(t)) = flash.load(FlashKeys::LogChannels, &mut buffer).await {
+                t
+            } else {
+                LogChannelToggles::default()
+            };
+        let context = Context {
+            sender: log_toggle_sender,
+            logging_config: LogToggles {
+                active: true,
+                config: initial_log_toggles,
+            },
+            interface_open: false,
         };
-    let mut context = Context {
-        sender: log_toggle_sender,
-        logging_config: LogToggles {
-            active: true,
-            config: initial_log_toggles,
-        },
-        interface_open: false,
-        flash,
-    };
-    context.sender.send(context.logging_config.clone());
+        context.sender.send(context.logging_config.clone());
 
-    let command_buffer = [0u8; 255];
-    let history_buffer = [0u8; 255];
-    let (mut rx, mut tx) = serial.split();
+        let command_buffer = [0u8; 255];
+        let history_buffer = [0u8; 255];
 
-    // Very hacky workaround for the CliBuilder::build() function not being async.
-    // These lines will attempt to write and flush _something_.
-    // In theory this future should never complete in case no USB device is connected
-    Write::write(&mut tx, b"\0").await.ok();
-    Write::flush(&mut tx).await.ok();
-    let builder = CliBuilder::default()
-        .writer(tx)
-        .command_buffer(command_buffer)
-        .history_buffer(history_buffer)
-        .build();
-    let mut cli = match builder {
-        Ok(cli) => cli,
-        _ => {
-            return;
-        }
-    };
+        // Very hacky workaround for the CliBuilder::build() function not being async.
+        // These lines will attempt to write and flush _something_.
+        // In theory this future should never complete in case no USB device is connected
+        Write::write(&mut tx, b"\0").await.ok();
+        Write::flush(&mut tx).await.ok();
+        let builder = CliBuilder::default()
+            .writer(tx)
+            .command_buffer(command_buffer)
+            .history_buffer(history_buffer)
+            .build();
+        let cli = match builder {
+            Ok(cli) => cli,
+            _ => {
+                return None;
+            }
+        };
 
-    info!("CLI is ready and operational");
+        info!("CLI is ready and operational");
+        Some(Self { context, cli })
+    }
 
-    let mut buf: [u8; 1] = [0; 1];
-    loop {
+    pub async fn run<F: NorFlash, RX: Read>(
+        &mut self,
+        rx: &mut RX,
+        flash: &'static impl FlashHandling<F>,
+    ) {
+        let mut buf: [u8; 1] = [0; 1];
         // read byte from somewhere (for example, uart)
         let _ = rx.read(&mut buf).await;
 
         // if the interface is not open open it and skip processing the CLI
-        if !context.interface_open {
+        if !self.context.interface_open {
             if buf[0] != 13 {
-                continue;
+                return;
             }
-            context.interface_open = true;
-            context.logging_config.active = false;
-            context.sender.send(context.logging_config.clone());
+            self.context.interface_open = true;
+            self.context.logging_config.active = false;
+            self.context
+                .sender
+                .send(self.context.logging_config.clone());
         }
 
-        let _ = cli
+        let _ = self
+            .cli
             .process_byte::<RootGroup, _>(
                 buf[0],
                 &mut RootGroup::processor(async |cli, command| {
                     let res = match command {
-                        RootGroup::Logging(logging) => logging.handle(cli, &mut context).await,
-                        RootGroup::Storage(storage) => storage.handle(cli, &mut context).await,
-                        RootGroup::Motor(motor) => motor.handle(cli, &mut context).await,
-                        RootGroup::Display(display) => display.handle(cli, &mut context).await,
+                        RootGroup::Logging(logging) => {
+                            logging.handle(cli, &mut self.context, flash).await
+                        }
+                        RootGroup::Storage(storage) => storage.handle(cli, flash).await,
+                        RootGroup::Motor(motor) => motor.handle(cli).await,
+                        RootGroup::Display(display) => display.handle(cli).await,
                         RootGroup::Base(base) => match base {
                             Base::Exit => {
-                                context.interface_open = false;
-                                context.logging_config.active = true;
-                                context.sender.send(context.logging_config.clone());
+                                self.context.interface_open = false;
+                                self.context.logging_config.active = true;
+                                self.context
+                                    .sender
+                                    .send(self.context.logging_config.clone());
                                 Ok(())
                             }
                             Base::Shutdown => {
@@ -368,7 +347,7 @@ pub async fn menu_handler(
                         },
                     };
                     if let Err(e) = res {
-                        let _ = uwrite!(cli.writer(), "Failed to handle command: {:?}", e);
+                        let _ = write!(cli.writer(), "Failed to handle command: {}", e);
                     }
                     Ok(())
                 })

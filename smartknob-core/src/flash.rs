@@ -20,6 +20,7 @@ use crate::system_settings::StoreSignals;
 use crate::system_settings::log_toggles::LogChannelToggles;
 
 pub type FlashType<'a, Flash> = Database<PersistentStorage<Flash>, NoopRawMutex>;
+pub type FlashErrorType<Flash> = FlashError<<Flash as ErrorType>::Error>;
 
 const fn max(a: usize, b: usize) -> usize {
     [a, b][(a < b) as usize]
@@ -158,8 +159,7 @@ pub trait FlashHandling<Flash: NorFlash> {
         &self,
         key: FlashKeys,
         buffer: &'a mut [u8],
-    ) -> impl core::future::Future<Output = Result<Option<T>, FlashError<<Flash as ErrorType>::Error>>>
-    {
+    ) -> impl core::future::Future<Output = Result<Option<T>, FlashErrorType<Flash>>> {
         async move {
             let rt = self.get_flash().read_transaction().await;
             match rt.read(&key.key(), buffer).await {
@@ -178,8 +178,7 @@ pub trait FlashHandling<Flash: NorFlash> {
         &self,
         key: &FlashKeys,
         value: &T,
-    ) -> impl core::future::Future<Output = Result<(), FlashError<<Flash as ErrorType>::Error>>>
-    {
+    ) -> impl core::future::Future<Output = Result<(), FlashErrorType<Flash>>> {
         async {
             let mut wt = self.get_flash().write_transaction().await;
             let mut buffer = [0u8; M];
@@ -193,10 +192,7 @@ pub trait FlashHandling<Flash: NorFlash> {
         }
     }
 
-    fn format(
-        &self,
-    ) -> impl core::future::Future<Output = Result<(), FlashError<<Flash as ErrorType>::Error>>>
-    {
+    fn format(&self) -> impl core::future::Future<Output = Result<(), FlashErrorType<Flash>>> {
         async {
             self.get_flash().format().await?;
             Ok(())

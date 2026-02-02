@@ -1613,12 +1613,33 @@ dependencies = [
 [[package]]
 name = "embedded-cli"
 version = "0.2.1"
+dependencies = [
+ "bitflags 2.10.0",
+ "embedded-cli-macros 0.2.1",
+ "embedded-io 0.7.1",
+ "ufmt",
+]
+
+[[package]]
+name = "embedded-cli"
+version = "0.2.1"
 source = "git+https://github.com/florianL21/embedded-cli-rs.git?rev=6b47952f1f4672160e7dbca8b0cfeed4e2aa153d#6b47952f1f4672160e7dbca8b0cfeed4e2aa153d"
 dependencies = [
  "bitflags 2.10.0",
- "embedded-cli-macros",
+ "embedded-cli-macros 0.2.1 (git+https://github.com/florianL21/embedded-cli-rs.git?rev=6b47952f1f4672160e7dbca8b0cfeed4e2aa153d)",
  "embedded-io 0.6.1",
  "ufmt",
+]
+
+[[package]]
+name = "embedded-cli-macros"
+version = "0.2.1"
+dependencies = [
+ "convert_case 0.6.0",
+ "darling 0.20.11",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.114",
 ]
 
 [[package]]
@@ -5448,10 +5469,15 @@ dependencies = [
  "atomic_float",
  "cordic",
  "ekv",
+ "embassy-executor",
  "embassy-futures",
  "embassy-sync 0.7.2",
  "embassy-time",
+ "embedded-cli 0.2.1",
+ "embedded-hal 1.0.0",
  "embedded-hal-async",
+ "embedded-io 0.7.1",
+ "embedded-io-async 0.7.0",
  "embedded-storage",
  "enterpolation",
  "fixed",
@@ -5512,7 +5538,7 @@ dependencies = [
  "embassy-sync 0.7.2",
  "embassy-time",
  "embassy-usb",
- "embedded-cli",
+ "embedded-cli 0.2.1 (git+https://github.com/florianL21/embedded-cli-rs.git?rev=6b47952f1f4672160e7dbca8b0cfeed4e2aa153d)",
  "embedded-hal-async",
  "embedded-io-async 0.7.0",
  "esp-alloc",

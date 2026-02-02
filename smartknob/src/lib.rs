@@ -3,7 +3,5 @@
 
 extern crate alloc;
 
-pub mod cli;
 pub mod motor_control;
-pub mod shutdown;
 pub mod signals;
