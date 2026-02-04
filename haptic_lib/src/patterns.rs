@@ -111,7 +111,7 @@ impl SequenceComponent {
     /// - `repeat` defines how many times the pattern should be repeated.
     /// - `multiply` defines how many times each command should be repeated before moving to the next command.
     ///   This is effectively a time compensation factor.
-    pub fn pattern(commands: CommandVec, repeat: u16, multiply: u16, spill: f32) -> Self {
+    pub fn _pattern(commands: CommandVec, repeat: u16, multiply: u16, spill: f32) -> Self {
         Self::Pattern {
             spill: I16F16::from_num(spill),
             commands,
@@ -120,7 +120,7 @@ impl SequenceComponent {
         }
     }
 
-    pub fn play(&self, scale: f32) -> Option<impl Iterator<Item = Command>> {
+    pub fn _play(&self, scale: f32) -> Option<impl Iterator<Item = Command>> {
         match self {
             Self::Pattern {
                 commands,

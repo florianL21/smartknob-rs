@@ -1,3 +1,4 @@
+use average::{Estimate, Max};
 use cordic::sin;
 use embassy_time::{Duration, Instant, Timer};
 use enterpolation::Signal;
@@ -47,7 +48,7 @@ pub enum HapticSystemError<E: EncoderError> {
     #[error(
         "Non linearity correction was not goo enough. expected: <{MAX_ALLOWED_ENCODER_DEVIATION}; found {0}"
     )]
-    NonLinearityCorrectionTooImprecise(I16F16),
+    NonLinearityCorrectionTooImprecise(f32),
     #[error("System was not yet calibrated. This action requires an existing calibration")]
     NotYetCalibrated,
 }
@@ -70,24 +71,22 @@ fn electrical_angle(
 }
 
 #[derive(Debug, PartialEq, Copy, Clone, Deserialize, Serialize)]
-pub struct NonLinearityCorrection(EncoderCalibrationCurve);
+pub struct NonLinearityCorrection(Option<EncoderCalibrationCurve>);
 
 impl NonLinearityCorrection {
     fn compensate<E: EncoderError>(
         &self,
         measured_angle: I16F16,
     ) -> Result<I16F16, HapticSystemError<E>> {
-        Ok(I16F16::from_num(
-            self.0
-                .sample([measured_angle.to_num()])
-                .next()
-                .ok_or_else(|| HapticSystemError::InterpolationFailed)?,
-        ))
+        match self.0 {
+            None => Ok(measured_angle),
+            Some(ref curve) => Ok(I16F16::from_num(curve.eval(measured_angle.to_num()))),
+        }
     }
 }
 
 impl MaxSize for NonLinearityCorrection {
-    const POSTCARD_MAX_SIZE: usize = f32::POSTCARD_MAX_SIZE * CALIBRATION_NUM_POINTS * 2 + 2;
+    const POSTCARD_MAX_SIZE: usize = f32::POSTCARD_MAX_SIZE * CALIBRATION_NUM_POINTS * 2 + 4;
 }
 
 #[derive(Debug, PartialEq, Copy, Clone, Deserialize, Serialize)]
@@ -146,12 +145,6 @@ where
     last_activity: Instant,
     inactivity: InactivitySettings,
     phantom: core::marker::PhantomData<M>,
-}
-
-#[derive(Debug)]
-struct DeviationAtAngle {
-    angle: I16F16,
-    deviation: I16F16,
 }
 
 impl<
@@ -295,21 +288,8 @@ impl<
 
     async fn compensate_none_linearity(
         &mut self,
-    ) -> Result<EncoderCalibrationCurve, HapticSystemError<E::Error>> {
+    ) -> Result<Option<EncoderCalibrationCurve>, HapticSystemError<E::Error>> {
         let offset = self.go_to_encoder_zero().await?;
-
-        let mut min_deviation = DeviationAtAngle {
-            angle: I16F16::ZERO,
-            deviation: I16F16::ZERO,
-        };
-        let mut max_deviation = DeviationAtAngle {
-            angle: I16F16::ZERO,
-            deviation: I16F16::ZERO,
-        };
-        let mut closest_to_expected = DeviationAtAngle {
-            angle: I16F16::ZERO,
-            deviation: I16F16::ONE,
-        };
 
         let mut expected = [0.0; CALIBRATION_NUM_POINTS];
         let mut real = [0.0; CALIBRATION_NUM_POINTS];
@@ -319,28 +299,13 @@ impl<
         let mut expected_angle = I16F16::ZERO;
         let mut current_electrical_angle = offset;
 
+        let mut error: Max = Max::new();
         let mut measurement = self.encoder.update().await?.angle;
         while measurement <= I16F16::TAU - ZERO_ANGLE_TOLERANCE {
             Timer::after(ALIGN_DELAY).await;
             expected_angle = (current_electrical_angle - offset) / self.pole_pairs;
             let diff = measurement - expected_angle;
-            if diff.is_negative() {
-                if diff.abs() > min_deviation.deviation {
-                    min_deviation.deviation = diff.abs();
-                    min_deviation.angle = expected_angle;
-                }
-            } else if diff > max_deviation.deviation {
-                max_deviation.deviation = diff;
-                max_deviation.angle = expected_angle;
-            }
-            // Cut off the start and the end of the curve as we want to catch the deviation at the curves mid point
-            if expected_angle > I16F16::ONE
-                && expected_angle < I16F16::TAU - I16F16::ONE
-                && diff.abs() < closest_to_expected.deviation
-            {
-                closest_to_expected.deviation = diff.abs();
-                closest_to_expected.angle = expected_angle;
-            }
+            error.add(diff.abs().to_num());
             if expected_angle - last_measurement > measure_step {
                 last_measurement = expected_angle;
                 expected[count] = expected_angle.to_num();
@@ -356,16 +321,20 @@ impl<
             expected[count] = expected_angle.to_num();
             real[count] = measurement.to_num();
         }
-        info!(
-            "Before compensation:\nMin deviation: {min_deviation:#?}\nMax deviation: {max_deviation:#?}\nMidpoint zero crossing: {closest_to_expected:#?}"
-        );
+
+        let max_deviation = error.max();
+        info!("Max deviation: {max_deviation:#?}");
+        if max_deviation < MAX_ALLOWED_ENCODER_DEVIATION {
+            info!("Linearity compensation not needed");
+            return Ok(None);
+        }
         let interp = Linear::builder()
             .elements(expected)
             .knots(real)
             .build()
             .map_err(HapticSystemError::InterpolationError)?;
 
-        Ok(interp)
+        Ok(Some(interp))
     }
 
     pub async fn validate_encoder(&mut self) -> Result<(), HapticSystemError<E::Error>> {
@@ -381,20 +350,13 @@ impl<
     /// Measure the encoder non-linearity with the given correction curve and return a result of how well the correction works
     async fn validate_non_linearity_correction(
         &mut self,
-        correction_curve: EncoderCalibrationCurve,
+        correction_curve: Option<EncoderCalibrationCurve>,
     ) -> Result<NonLinearityCorrection, HapticSystemError<E::Error>> {
         let correction_curve = NonLinearityCorrection(correction_curve);
         info!("Measuring encoder error. Do not touch the motor!");
         let offset = self.go_to_encoder_zero().await?;
 
-        let mut min_deviation = DeviationAtAngle {
-            angle: I16F16::ZERO,
-            deviation: I16F16::ZERO,
-        };
-        let mut max_deviation = DeviationAtAngle {
-            angle: I16F16::ZERO,
-            deviation: I16F16::ZERO,
-        };
+        let mut error: Max = Max::new();
         let mut current_electrical_angle = offset;
         let mut measurement = self.encoder.update().await?.angle;
         while measurement <= I16F16::TAU - ZERO_ANGLE_TOLERANCE {
@@ -402,30 +364,17 @@ impl<
             let expected_angle = (current_electrical_angle - offset) / self.pole_pairs;
             let corrected = correction_curve.compensate(measurement)?;
             let diff = corrected - expected_angle;
-            if diff.is_negative() {
-                if diff.abs() > min_deviation.deviation {
-                    min_deviation.deviation = diff.abs();
-                    min_deviation.angle = expected_angle;
-                }
-            } else if diff > max_deviation.deviation {
-                max_deviation.deviation = diff;
-                max_deviation.angle = expected_angle;
-            }
+            error.add(diff.abs().to_num());
             self.drive_phases_alignment(current_electrical_angle);
             current_electrical_angle += SEARCH_STEP_SIZE;
             measurement = self.encoder.update().await?.angle;
         }
-        info!(
-            "With correction: \nMin deviation: {min_deviation:#?}\nMax deviation: {max_deviation:#?}"
-        );
+        let max_deviation = error.max();
+        info!("Max deviation: {max_deviation:.3}");
 
-        if min_deviation.deviation > MAX_ALLOWED_ENCODER_DEVIATION {
+        if max_deviation > MAX_ALLOWED_ENCODER_DEVIATION {
             return Err(HapticSystemError::NonLinearityCorrectionTooImprecise(
-                -min_deviation.deviation,
-            ));
-        } else if max_deviation.deviation > MAX_ALLOWED_ENCODER_DEVIATION {
-            return Err(HapticSystemError::NonLinearityCorrectionTooImprecise(
-                max_deviation.deviation,
+                max_deviation as f32,
             ));
         }
 
@@ -474,7 +423,11 @@ impl<
     pub async fn align(&mut self) -> Result<&CalibrationData, HapticSystemError<E::Error>> {
         let sensor_dir = self.set_sensor_direction().await?;
         let cal_curve = self.compensate_none_linearity().await?;
-        let cal_curve = self.validate_non_linearity_correction(cal_curve).await?;
+        let cal_curve = if cal_curve.is_some() {
+            self.validate_non_linearity_correction(cal_curve).await?
+        } else {
+            NonLinearityCorrection(None)
+        };
         let electrical_angle_offset = self.find_electrical_angle_offset(&cal_curve).await?;
 
         self.calibration = Some(CalibrationData {

@@ -5,6 +5,7 @@ use crate::curve::components::{
     BezierComponent, ConstComponent, CurveComponentInstance, LinearComponent,
 };
 use crate::{Angle, Value};
+use core::ops::Deref;
 use core::slice::Iter;
 
 use alloc::boxed::Box;
@@ -16,6 +17,9 @@ use enterpolation::{
 use heapless::Vec;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
+
+type BezierInterpolation<const N: usize> =
+    TransformInput<Bezier<f32, [f32; N], enterpolation::ConstSpace<f32, N>>, f32, f32>;
 
 #[derive(Error, Debug)]
 pub enum InterpolationBuilderError {
@@ -95,10 +99,7 @@ pub enum CurveComponent {
 fn make_bezier<const N: usize>(
     width: f32,
     points: [f32; N],
-) -> Result<
-    TransformInput<Bezier<f32, [f32; N], enterpolation::ConstSpace<f32, N>>, f32, f32>,
-    InterpolationBuilderError,
-> {
+) -> Result<BezierInterpolation<N>, InterpolationBuilderError> {
     Bezier::builder()
         .elements(points)
         .domain(0.0, width)
@@ -139,7 +140,7 @@ impl CurveComponent {
         let sample_step = self.width() / 20.0;
         for i in 0..20 {
             let sample = curve.sample(i as f32 * sample_step);
-            if sample < -1.0 || sample > 1.0 {
+            if !(-1.0..=1.0).contains(&sample) {
                 return Err(InterpolationBuilderError::ValueOutOfRange);
             }
         }
@@ -223,7 +224,7 @@ impl<const N: usize> CurveInstance<N> {
 
 #[derive(Debug)]
 pub(crate) struct ComponentView<'a> {
-    pub(crate) component: &'a Box<dyn CurveComponentInstance>,
+    pub(crate) component: &'a dyn CurveComponentInstance,
     pub(crate) start_angle: f32,
     pub(crate) end_angle: f32,
 }
@@ -251,7 +252,7 @@ impl<'a> Iterator for CurveIter<'a> {
         let end_angle = start_angle + current.width();
         self.curr_angle = end_angle;
         Some(ComponentView {
-            component: current,
+            component: current.deref(),
             start_angle,
             end_angle,
         })
@@ -295,17 +296,14 @@ impl<const N: usize> CurveBuilder<N> {
     /// Add a segment to the curve during which the output value remains constant.
     /// `value` must be in the range of -1.0 to 1.0
     pub fn add_const(self, width: f32, value: f32) -> Self {
-        self.add_component(CurveComponent::Const {
-            width: width,
-            value: value,
-        })
+        self.add_component(CurveComponent::Const { width, value })
     }
 
     /// Add a segment to the curve during which the output value linearly transitions from `start_value` to `end_value`.
     /// `start_value` and `end_value` must be in the range of -1.0 to 1.0
     pub fn add_linear(self, width: f32, start_value: f32, end_value: f32) -> Self {
         self.add_component(CurveComponent::Linear {
-            width: width,
+            width,
             start: start_value,
             end: end_value,
         })
@@ -315,10 +313,7 @@ impl<const N: usize> CurveBuilder<N> {
     /// During playback it will interpolate smoothly
     /// The control points given via `points` must produce a curve which is always in the range of -1.0 to 1.0
     pub fn add_bezier3(self, width: f32, points: [f32; 3]) -> Self {
-        self.add_component(CurveComponent::Bezier3 {
-            width: width,
-            points,
-        })
+        self.add_component(CurveComponent::Bezier3 { width, points })
     }
 
     /// Finalize the curve building process and return the constructed curve

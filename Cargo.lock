@@ -5469,6 +5469,7 @@ name = "smartknob-core"
 version = "0.1.0"
 dependencies = [
  "atomic_float",
+ "average",
  "cordic",
  "ekv",
  "embassy-executor",

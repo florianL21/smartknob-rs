@@ -21,7 +21,7 @@ impl ScaledPattern<'_> {
 }
 
 impl<'a> ScaledPattern<'a> {
-    fn new(pattern: &'a HapticPattern, scale: f32) -> Self {
+    fn _new(pattern: &'a HapticPattern, scale: f32) -> Self {
         Self { pattern, scale }
     }
 }
