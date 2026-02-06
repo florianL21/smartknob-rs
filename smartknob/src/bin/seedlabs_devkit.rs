@@ -104,7 +104,8 @@ async fn main(spawner: Spawner) {
     esp_alloc::heap_allocator!(size: 72 * 1024);
     esp_alloc::psram_allocator!(peripherals.PSRAM, esp_hal::psram);
 
-    esp_rtos::start(timg0.timer0);
+    let sw_int = SoftwareInterruptControl::new(peripherals.SW_INTERRUPT);
+    esp_rtos::start(timg0.timer0, sw_int.software_interrupt0);
     info!("Embassy initialized!");
 
     let f = FlashHandler::new(
@@ -155,7 +156,6 @@ async fn main(spawner: Spawner) {
     let log_toggles = LOG_TOGGLES.init(LogToggleWatcher::new());
 
     // Encoder initialization
-    let sw_int = SoftwareInterruptControl::new(peripherals.SW_INTERRUPT);
     static APP_CORE_STACK: StaticCell<Stack<32768>> = StaticCell::new();
     let app_core_stack = APP_CORE_STACK.init(Stack::new());
 
@@ -169,7 +169,6 @@ async fn main(spawner: Spawner) {
 
     esp_rtos::start_second_core(
         peripherals.CPU_CTRL,
-        sw_int.software_interrupt0,
         sw_int.software_interrupt1,
         app_core_stack,
         move || {

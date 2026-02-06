@@ -22,3 +22,7 @@ incremental = false
 lto = 'fat'
 opt-level = 's'
 overflow-checks = false
+
+
+[patch.crates-io]
+esp-hal = { git = "https://github.com/esp-rs/esp-hal.git", rev = "8ac7d97" }
