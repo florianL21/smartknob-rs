@@ -1,5 +1,6 @@
 #![no_std]
 
+mod builder;
 mod curve;
 mod patterns;
 mod player;
@@ -7,7 +8,8 @@ mod player;
 pub use patterns::{Command, HapticPattern};
 pub use player::{HapticPlayer, Playback};
 
-pub use curve::{CurveBuilder, CurveError, CurveInstance, HapticCurve};
+pub use builder::{CurveBuilder, HapticCurve};
+pub use curve::{CurveError, CurveInstance};
 
 pub type Angle = f32;
 pub type Value = f32;

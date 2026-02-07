@@ -5,19 +5,25 @@ use enterpolation::{
 use crate::{Angle, Value};
 
 pub(crate) trait CurveComponentInstance: core::fmt::Debug {
+    /// Sample the interpolation curve at the given angle. The angle should be between 0.0 and self.width()
     fn sample(&self, at: Angle) -> Value;
+
+    /// Returns the start and end angles of the curve
     fn domain(&self) -> [Angle; 2];
 
+    /// Returns the value of the component at its start
     fn start(&self) -> Value {
         let t = self.domain();
         self.sample(t[0])
     }
 
+    /// Returns the value of the component at its end
     fn end(&self) -> Value {
         let t = self.domain();
         self.sample(t[1])
     }
 
+    /// Returns the width of the component
     fn width(&self) -> Angle {
         let domain = self.domain();
         domain[1] - domain[0]
