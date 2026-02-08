@@ -2692,6 +2692,7 @@ dependencies = [
  "fixed",
  "heapless 0.9.2",
  "log",
+ "matches",
  "postcard",
  "serde",
  "thiserror 2.0.17",
@@ -3727,6 +3728,12 @@ dependencies = [
  "lyon_geom 1.0.18 (git+https://github.com/florianL21/lyon.git?rev=ace8944)",
  "num-traits",
 ]
+
+[[package]]
+name = "matches"
+version = "0.1.10"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2532096657941c2fea9c289d370a250971c689d4f143798ff67113ec042024a5"
 
 [[package]]
 name = "maybe-rayon"

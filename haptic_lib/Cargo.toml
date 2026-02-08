@@ -20,3 +20,6 @@ enterpolation = { version = "0.3.0", default-features = false, features = [
     "serde",
 ] }
 log = "0.4.29"
+
+[dev-dependencies]
+matches = "0.1.10"

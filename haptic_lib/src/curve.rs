@@ -77,6 +77,40 @@ pub struct CurveInstance<'a> {
 }
 
 impl<'a> CurveInstance<'a> {
+    pub fn new(
+        segments: Vec<SegmentInstance>,
+        curve: Vec<SegmentReference>,
+        start_angle: Angle,
+    ) -> Self {
+        let mut total_width: Angle = 0.0;
+        for segment_ref in curve.iter() {
+            for index in 0..segment_ref.len(&segments) {
+                total_width += segment_ref
+                    .get(&segments, index)
+                    .map(|s| s.0.width())
+                    .unwrap_or_default();
+            }
+        }
+        let end_value = curve
+            .last()
+            .and_then(|sr| sr.get(&segments, sr.len(&segments) - 1))
+            .map(|ci| ci.0.end())
+            .unwrap_or_default();
+        let start_value = curve
+            .first()
+            .and_then(|sr| sr.get(&segments, 0))
+            .map(|ci| ci.0.start())
+            .unwrap_or_default();
+        Self {
+            segments,
+            curve,
+            start_angle,
+            total_width,
+            end_value,
+            start_value,
+        }
+    }
+
     /// Get a curve component by absolute curve index
     fn get(&self, index: usize) -> Option<(&dyn CurveComponentInstance, f32)> {
         let mut ind = index;
@@ -110,14 +144,14 @@ struct CurveIterator<'a> {
     underflow: bool,
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 enum IteratorPosition<'a> {
     Below,
     Above,
     Within(CurveIterView<'a>),
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 struct CurveIterView<'a> {
     comp: &'a dyn CurveComponentInstance,
     start_angle: Angle,

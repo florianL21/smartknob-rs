@@ -96,7 +96,9 @@ fn make_bezier<const N: usize>(
 }
 
 impl CurveComponent {
-    fn build(self) -> Result<Box<dyn CurveComponentInstance>, InterpolationBuilderError> {
+    pub(crate) fn build(
+        self,
+    ) -> Result<Box<dyn CurveComponentInstance>, InterpolationBuilderError> {
         let curve: Box<dyn CurveComponentInstance> = match self {
             CurveComponent::Bezier3 { width, points } => Box::new(BezierComponent {
                 curve: make_bezier(width, points)?,
