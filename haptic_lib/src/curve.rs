@@ -24,18 +24,18 @@ pub enum CurveError {
 pub struct SegmentInstance {
     /// List of components in this segment
     pub(crate) components: Vec<Box<dyn CurveComponentInstance>>,
-    /// Calculated width of this segment for a fast lookup
-    pub(crate) width: Angle,
+    // /// Calculated width of this segment for a fast lookup
+    // pub(crate) width: Angle,
 }
 
 #[derive(Debug)]
-pub struct SegmentReference<'a> {
-    /// Reference to a the actual used segment
-    pub(crate) segment: &'a SegmentInstance,
-    /// Calculated start angle of this reference within the full curve
-    pub(crate) start_angle: Angle,
-    /// Calculated end angle of this reference within the full curve
-    pub(crate) end_angle: Angle,
+pub struct SegmentReference {
+    /// Reference to an index in the segments vec of the curve instance
+    pub(crate) segment_index: usize,
+    // /// Calculated start angle of this reference within the full curve
+    // pub(crate) start_angle: Angle,
+    // /// Calculated end angle of this reference within the full curve
+    // pub(crate) end_angle: Angle,
     /// Repeat this exact reference a given amount of times in the full curve
     pub(crate) repeat: u16,
     /// Scale all values returned by the referenced segment by this amount.
@@ -43,29 +43,39 @@ pub struct SegmentReference<'a> {
     pub(crate) scale: Value,
 }
 
-impl<'a> SegmentReference<'a> {
-    fn get(&'a self, index: usize) -> Option<(&'a dyn CurveComponentInstance, Value)> {
-        let num_comps = self.segment.components.len();
+impl SegmentReference {
+    fn get<'a>(
+        &'a self,
+        segments: &'a Vec<SegmentInstance>,
+        index: usize,
+    ) -> Option<(&'a dyn CurveComponentInstance, Value)> {
+        let segment = self.segment(segments);
+        let num_comps = segment.components.len();
         if index > num_comps * self.repeat as usize {
             return None;
         }
-        self.segment
+        segment
             .components
             .get(index % self.repeat as usize)
             .map(|i| (i.as_ref(), self.scale))
     }
 
-    fn len(&self) -> usize {
-        self.segment.components.len() * self.repeat as usize
+    fn segment<'a>(&'a self, segments: &'a Vec<SegmentInstance>) -> &'a SegmentInstance {
+        // here we assume that the definition of the curve itself is correct. so this unwrap should never fail
+        segments.get(self.segment_index).unwrap()
+    }
+
+    fn len(&self, segments: &Vec<SegmentInstance>) -> usize {
+        self.segment(segments).components.len() * self.repeat as usize
     }
 }
 
 #[derive(Debug)]
-pub struct CurveInstance<'a> {
+pub struct CurveInstance {
     /// List of components in this curve
     pub(crate) segments: Vec<SegmentInstance>,
     /// Actual curve definition referring to segments
-    pub(crate) curve: Vec<SegmentReference<'a>>,
+    pub(crate) curve: Vec<SegmentReference>,
     /// Offset from zero which defines where the curve starts at
     pub(crate) start_angle: Angle,
     /// Total width of all elements in the curve
@@ -76,7 +86,7 @@ pub struct CurveInstance<'a> {
     pub(crate) end_value: Value,
 }
 
-impl<'a> CurveInstance<'a> {
+impl CurveInstance {
     pub fn new(
         segments: Vec<SegmentInstance>,
         curve: Vec<SegmentReference>,
@@ -115,11 +125,11 @@ impl<'a> CurveInstance<'a> {
     fn get(&self, index: usize) -> Option<(&dyn CurveComponentInstance, f32)> {
         let mut ind = index;
         for seg in self.curve.iter() {
-            let seg_len = seg.len();
+            let seg_len = seg.len(&self.segments);
             if ind > seg_len {
                 ind -= seg_len;
             } else {
-                return seg.get(ind);
+                return seg.get(&self.segments, ind);
             }
         }
         None
@@ -127,17 +137,17 @@ impl<'a> CurveInstance<'a> {
 
     /// Returns the number of indexes in this curve
     fn len(&self) -> usize {
-        self.curve.iter().map(|i| i.len()).sum()
+        self.curve.iter().map(|i| i.len(&self.segments)).sum()
     }
 
-    fn iter(&'a self) -> CurveIterator<'a> {
+    fn iter<'a>(&'a self) -> CurveIterator<'a> {
         CurveIterator::new(self, self.start_angle)
     }
 }
 
 struct CurveIterator<'a> {
     index: usize,
-    curve_inst: &'a CurveInstance<'a>,
+    curve_inst: &'a CurveInstance,
     // current: Option<CurveIterView<'a>>,
     prev_stop_angle: Angle,
     current: IteratorPosition<'a>,
@@ -189,7 +199,7 @@ impl<'a> CurveIterator<'a> {
             .curve
             .first()
             .and_then(|sr| {
-                sr.segment
+                sr.segment(&curve.segments)
                     .components
                     .first()
                     .map(|c| (c.as_ref(), sr.scale))
@@ -260,10 +270,10 @@ impl<'a> DoubleEndedIterator for CurveIterator<'a> {
     }
 }
 
-pub struct CurveState<'a>(CurveIterator<'a>, &'a CurveInstance<'a>);
+pub struct CurveState<'a>(CurveIterator<'a>, &'a CurveInstance);
 
 impl<'a> CurveState<'a> {
-    pub fn new(curve: &'a CurveInstance<'a>) -> Self {
+    pub fn new(curve: &'a CurveInstance) -> Self {
         Self(curve.iter(), curve)
     }
 
@@ -300,5 +310,79 @@ impl<'a> CurveState<'a> {
             IteratorPosition::Above => self.search_backward(angle),
             IteratorPosition::Below => self.search_forward(angle),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::builder::CurveComponent;
+
+    use super::*;
+    extern crate std;
+    use alloc::vec;
+    use matches::assert_matches;
+
+    fn basic_test_curve() -> CurveInstance {
+        let segments = vec![SegmentInstance {
+            components: vec![
+                CurveComponent::Const {
+                    width: 1.0,
+                    value: 0.5,
+                }
+                .build()
+                .unwrap(),
+                CurveComponent::Const {
+                    width: 1.0,
+                    value: 0.0,
+                }
+                .build()
+                .unwrap(),
+            ],
+        }];
+        CurveInstance::new(
+            segments,
+            vec![
+                SegmentReference {
+                    segment_index: 0,
+                    repeat: 1,
+                    scale: 1.0,
+                },
+                SegmentReference {
+                    segment_index: 0,
+                    repeat: 2,
+                    scale: 0.5,
+                },
+            ],
+            0.0,
+        )
+    }
+
+    #[test]
+    fn test_curve_iter_initial_current_item_is_first_component() {
+        let curve = basic_test_curve();
+        let mut curve_iter = curve.iter();
+        assert!(matches!(
+            curve_iter.current(),
+            IteratorPosition::Within(CurveIterView {
+                start_angle: 0.0,
+                stop_angle: 1.0,
+                ..
+            })
+        ));
+        assert_eq!(curve_iter.prev_stop_angle, 0.0);
+    }
+
+    #[test]
+    fn test_curve_iter_next_yields_second_component() {
+        let curve = basic_test_curve();
+        let mut curve_iter = curve.iter();
+        assert_matches!(
+            curve_iter.next(),
+            Some(CurveIterView {
+                start_angle: 1.0,
+                stop_angle: 2.0,
+                ..
+            })
+        );
     }
 }
