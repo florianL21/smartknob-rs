@@ -51,12 +51,12 @@ impl SegmentReference {
     ) -> Option<(&'a dyn CurveComponentInstance, Value)> {
         let segment = self.segment(segments);
         let num_comps = segment.components.len();
-        if index > num_comps * self.repeat as usize {
+        if index >= num_comps * self.repeat as usize {
             return None;
         }
         segment
             .components
-            .get(index % self.repeat as usize)
+            .get(index % num_comps as usize)
             .map(|i| (i.as_ref(), self.scale))
     }
 
@@ -103,13 +103,13 @@ impl CurveInstance {
         }
         let end_value = curve
             .last()
-            .and_then(|sr| sr.get(&segments, sr.len(&segments) - 1))
-            .map(|ci| ci.0.end())
+            .and_then(|sr| sr.get(&segments, sr.len(&segments).saturating_sub(1)))
+            .map(|(ci, scale)| ci.end() * scale)
             .unwrap_or_default();
         let start_value = curve
             .first()
             .and_then(|sr| sr.get(&segments, 0))
-            .map(|ci| ci.0.start())
+            .map(|(ci, scale)| ci.start() * scale)
             .unwrap_or_default();
         Self {
             segments,
@@ -126,7 +126,7 @@ impl CurveInstance {
         let mut ind = index;
         for seg in self.curve.iter() {
             let seg_len = seg.len(&self.segments);
-            if ind > seg_len {
+            if ind >= seg_len {
                 ind -= seg_len;
             } else {
                 return seg.get(&self.segments, ind);
@@ -259,7 +259,6 @@ impl<'a> DoubleEndedIterator for CurveIterator<'a> {
             self.prev_stop_angle = view.start_angle;
             self.current = IteratorPosition::Within(view.clone());
             if self.index == 0 {
-                // TODO: mark next iterator return as None
                 self.underflow = true;
             }
             self.index -= 1;
@@ -327,13 +326,13 @@ mod tests {
             components: vec![
                 CurveComponent::Const {
                     width: 1.0,
-                    value: 0.5,
+                    value: 0.1,
                 }
                 .build()
                 .unwrap(),
                 CurveComponent::Const {
                     width: 1.0,
-                    value: 0.0,
+                    value: 0.2,
                 }
                 .build()
                 .unwrap(),
@@ -358,9 +357,47 @@ mod tests {
     }
 
     #[test]
-    fn test_curve_iter_initial_current_item_is_first_component() {
+    fn test_segment_ref_get_function() {
+        let curve = vec![SegmentInstance {
+            components: vec![
+                CurveComponent::Const {
+                    width: 1.0,
+                    value: 0.1,
+                }
+                .build()
+                .unwrap(),
+                CurveComponent::Const {
+                    width: 1.0,
+                    value: 0.2,
+                }
+                .build()
+                .unwrap(),
+                CurveComponent::Const {
+                    width: 1.0,
+                    value: 0.3,
+                }
+                .build()
+                .unwrap(),
+            ],
+        }];
+        let seg_ref = SegmentReference {
+            repeat: 2,
+            segment_index: 0,
+            scale: 1.0,
+        };
+        assert_eq!(seg_ref.get(&curve, 0).unwrap().0.start(), 0.1);
+        assert_eq!(seg_ref.get(&curve, 1).unwrap().0.start(), 0.2);
+        assert_eq!(seg_ref.get(&curve, 2).unwrap().0.start(), 0.3);
+        assert_eq!(seg_ref.get(&curve, 3).unwrap().0.start(), 0.1);
+        assert_eq!(seg_ref.get(&curve, 4).unwrap().0.start(), 0.2);
+        assert_eq!(seg_ref.get(&curve, 5).unwrap().0.start(), 0.3);
+        assert!(seg_ref.get(&curve, 6).is_none());
+    }
+
+    #[test]
+    fn test_curve_iter_initial_current_item_angles_are_that_of_first_component() {
         let curve = basic_test_curve();
-        let mut curve_iter = curve.iter();
+        let curve_iter = curve.iter();
         assert!(matches!(
             curve_iter.current(),
             IteratorPosition::Within(CurveIterView {
@@ -373,9 +410,11 @@ mod tests {
     }
 
     #[test]
-    fn test_curve_iter_next_yields_second_component() {
+    fn test_curve_iter_next2_component_angles_are_added_to_initial_ones() {
         let curve = basic_test_curve();
         let mut curve_iter = curve.iter();
+        // consumes the first element
+        let _ = curve_iter.next();
         assert_matches!(
             curve_iter.next(),
             Some(CurveIterView {
@@ -384,5 +423,56 @@ mod tests {
                 ..
             })
         );
+    }
+
+    #[test]
+    fn test_curve_sampling_tests() {
+        let curve = basic_test_curve();
+        let mut state = CurveState::new(&curve);
+        // sample well below the curve; should respect the 1.0 scale
+        assert_eq!(state.sample(-2.0), 0.1);
+        // 1st segment
+        assert_eq!(state.sample(0.01), 0.1);
+        assert_eq!(state.sample(0.99), 0.1);
+        assert_eq!(state.sample(1.01), 0.2);
+        assert_eq!(state.sample(1.99), 0.2);
+        // 2nd segment iter 1; has 0.5 scale
+        assert_eq!(state.sample(2.01), 0.05);
+        assert_eq!(state.sample(2.99), 0.05);
+        assert_eq!(state.sample(3.01), 0.1);
+        assert_eq!(state.sample(3.99), 0.1);
+        // 2nd segment iter 2; has 0.5 scale
+        assert_eq!(state.sample(4.01), 0.05);
+        assert_eq!(state.sample(4.99), 0.05);
+        assert_eq!(state.sample(5.01), 0.1);
+        assert_eq!(state.sample(5.99), 0.1);
+
+        // sample well above the curve; should respect the 0.5 scale
+        assert_eq!(state.sample(10.0), 0.1);
+    }
+
+    #[test]
+    fn test_curve_instance_get_tests() {
+        let curve = basic_test_curve();
+        assert_eq!(curve.get(0).unwrap().0.start(), 0.1);
+        assert_eq!(curve.get(1).unwrap().0.start(), 0.2);
+        // 2nd ref 1st iteration
+        assert_eq!(curve.get(2).unwrap().0.start(), 0.1);
+        assert_eq!(curve.get(3).unwrap().0.start(), 0.2);
+        // 2nd ref 2nd iteration
+        assert_eq!(curve.get(4).unwrap().0.start(), 0.1);
+        assert_eq!(curve.get(5).unwrap().0.start(), 0.2);
+        assert!(curve.get(6).is_none());
+    }
+
+    #[test]
+    fn test_curve_iter_next2_yields_second_component() {
+        let curve = basic_test_curve();
+        let mut curve_iter = curve.iter();
+        let _ = curve_iter.next();
+        match curve_iter.next() {
+            Some(cv) => assert_eq!(cv.comp.sample(0.0), 0.2),
+            _ => panic!("Initial result should return an iterator position within the curve"),
+        }
     }
 }
