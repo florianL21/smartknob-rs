@@ -3,6 +3,7 @@ extern crate alloc;
 use crate::curve::components::{
     BezierComponent, ConstComponent, CurveComponentInstance, LinearComponent,
 };
+use crate::curve::{SegmentInstance, SegmentReference};
 use crate::{Angle, CurveError, CurveInstance, Value};
 
 use alloc::boxed::Box;
@@ -152,108 +153,16 @@ impl CurveComponent {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CurveSegment {
     pub(crate) components: Vec<CurveComponent>,
-    pub(crate) width: Angle,
 }
 
 impl CurveSegment {
-    fn new(components: Vec<CurveComponent>) -> Self {
-        let width = components.iter().map(|c| c.width()).sum();
-        Self { components, width }
-    }
-
-    fn width(&self) -> Angle {
-        self.width
-    }
-}
-
-/// Reference to a segment. Intentionally uses indexes and not actual refs as this need to be serializable
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct SegmentRef {
-    /// Index of the segment in the segments array
-    index: usize,
-    /// Relative scale of the referenced segment for this instance
-    scale: Value,
-    /// Repeats the referenced segment the given amount of times in the final curve
-    repeat: u16,
-}
-
-/// Curves always start at negative infinity. They always go left to right (increasing angle values).
-/// The angle value after the last curve component is considered to be positive infinity.
-/// Because of this the last curve components value at the very end of its width is taken as the value returned up until positive infinity.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct HapticCurve {
-    /// Reusable segments of this curve
-    pub(crate) segments: Vec<CurveSegment>,
-    /// A list of indexes of these reusable segments
-    pub(crate) curve: Vec<SegmentRef>,
-    /// The start angle can be used to shift the curve left and right relative to the zero point
-    pub(crate) start_angle: Angle,
-}
-
-impl HapticCurve {
-    /// Make a curve description into a playable instance.
-    // pub fn instantiate(self) -> Result<CurveInstance, CurveError> {
-    //     let total_width = self.curve.iter().map(|c| c.width()).sum();
-    //     let mut components = Vec::new();
-    //     for (i, comp) in self
-    //         .curve
-    //         .into_iter()
-    //         .flat_map(|i| i.components)
-    //         .into_iter()
-    //         .enumerate()
-    //     {
-    //         components.push(comp.build().map_err(|e| {
-    //             if matches!(e, InterpolationBuilderError::ValueOutOfRange) {
-    //                 CurveError::ValueOutOfRange(i)
-    //             } else {
-    //                 e.into()
-    //             }
-    //         })?);
-    //     }
-    //     let start_value = components.first().ok_or(CurveError::EmptyCurve)?.start();
-    //     let end_value = components.last().ok_or(CurveError::EmptyCurve)?.end();
-    //     Ok(CurveInstance {
-    //         start_angle: self.start_angle,
-    //         total_width,
-    //         components,
-    //         start_value,
-    //         end_value,
-    //     })
-    // }
-
-    pub fn start_angle(&self) -> Angle {
-        self.start_angle
-    }
-}
-
-/// Builder for constructing haptic curves
-pub struct CurveBuilder {
-    components: Vec<CurveComponent>,
-    over_capacity: usize,
-    range_error: Option<CurveError>,
-}
-
-impl Default for CurveBuilder {
-    fn default() -> Self {
-        CurveBuilder {
-            components: Vec::new(),
-            over_capacity: 0,
-            range_error: None,
-        }
-    }
-}
-
-impl<'a> CurveBuilder {
-    /// Start constructing a new haptic curve
     pub fn new() -> Self {
-        Self::default()
+        Self {
+            components: Vec::new(),
+        }
     }
 
     fn add_component(mut self, component: CurveComponent) -> Self {
-        if self.over_capacity > 0 {
-            self.over_capacity += 1;
-            return self;
-        }
         self.components.push(component);
         self
     }
@@ -281,22 +190,192 @@ impl<'a> CurveBuilder {
         self.add_component(CurveComponent::Bezier3 { width, points })
     }
 
-    // /// Finalize the curve building process and return the constructed curve
-    // /// By specifying `start_angle` you may shift where the start point of the curve is located at as an absolute position.
-    // /// When a curve starts playing the initial angle will be zero
-    // pub fn build(self, start_angle: Angle) -> Result<HapticCurve, CurveError> {
-    //     if let Some(e) = self.range_error {
-    //         return Err(e);
-    //     }
-    //     if self.components.is_empty() {
-    //         return Err(CurveError::EmptyCurve);
-    //     }
-    //     if self.over_capacity > 0 {
-    //         return Err(CurveError::NotEnoughCapacity(self.over_capacity));
-    //     }
-    //     Ok(HapticCurve {
-    //         components: self.components,
-    //         start_angle,
-    //     })
-    // }
+    /// Add a segment to the curve which is defined via the given control points
+    /// During playback it will interpolate smoothly
+    /// The control points given via `points` must produce a curve which is always in the range of -1.0 to 1.0
+    pub fn add_bezier4(self, width: f32, points: [f32; 4]) -> Self {
+        self.add_component(CurveComponent::Bezier4 { width, points })
+    }
+
+    /// Add a segment to the curve which is defined via the given control points
+    /// During playback it will interpolate smoothly
+    /// The control points given via `points` must produce a curve which is always in the range of -1.0 to 1.0
+    pub fn add_bezier5(self, width: f32, points: [f32; 5]) -> Self {
+        self.add_component(CurveComponent::Bezier5 { width, points })
+    }
+
+    /// Add a segment to the curve which is defined via the given control points
+    /// During playback it will interpolate smoothly
+    /// The control points given via `points` must produce a curve which is always in the range of -1.0 to 1.0
+    pub fn add_bezier6(self, width: f32, points: [f32; 6]) -> Self {
+        self.add_component(CurveComponent::Bezier6 { width, points })
+    }
+
+    fn width(&self) -> Angle {
+        self.components.iter().map(|c| c.width()).sum()
+    }
+}
+
+/// Curves always start at negative infinity. They always go left to right (increasing angle values).
+/// The angle value after the last curve component is considered to be positive infinity.
+/// Because of this the last curve components value at the very end of its width is taken as the value returned up until positive infinity.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HapticCurve {
+    /// Reusable segments of this curve
+    pub(crate) segments: Vec<CurveSegment>,
+    /// A list of indexes of these reusable segments
+    pub(crate) curve: Vec<SegmentReference>,
+    /// The start angle can be used to shift the curve left and right relative to the zero point
+    pub(crate) start_angle: Angle,
+}
+
+impl HapticCurve {
+    /// Make a curve description into a playable instance.
+    pub fn instantiate(self) -> Result<CurveInstance, CurveError> {
+        let total_width = self
+            .curve
+            .iter()
+            .map(|c| self.segments[c.reference].width() * c.repeat as Angle)
+            .sum();
+        let mut segments = Vec::new();
+        for (i, segment) in self.segments.into_iter().enumerate() {
+            let components = segment
+                .components
+                .into_iter()
+                .enumerate()
+                .map(|(j, comp)| {
+                    comp.build().map_err(|e| {
+                        if matches!(e, InterpolationBuilderError::ValueOutOfRange) {
+                            CurveError::ValueOutOfRange(i, j)
+                        } else {
+                            e.into()
+                        }
+                    })
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            let seg = SegmentInstance { components };
+            segments.push(seg);
+        }
+        // TODO: Check all Segment refs for index consistency.
+        // TODO: Check all segment refs for scale over/underflow
+
+        let start_value = segments[self.curve.first().ok_or(CurveError::EmptyCurve)?.reference]
+            .components
+            .first()
+            .ok_or(CurveError::EmptyCurve)?
+            .start();
+        let end_value = segments[self.curve.last().ok_or(CurveError::EmptyCurve)?.reference]
+            .components
+            .first()
+            .ok_or(CurveError::EmptyCurve)?
+            .end();
+        Ok(CurveInstance {
+            start_angle: self.start_angle,
+            total_width,
+            segments,
+            curve: self.curve,
+            start_value,
+            end_value,
+        })
+    }
+
+    pub fn start_angle(&self) -> Angle {
+        self.start_angle
+    }
+}
+
+/// Builder for constructing haptic curves
+pub struct CurveBuilder {
+    segments: Vec<CurveSegment>,
+    curve: Vec<SegmentReference>,
+}
+
+impl Default for CurveBuilder {
+    fn default() -> Self {
+        CurveBuilder {
+            segments: Vec::new(),
+            curve: Vec::new(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct SegmentBuilderRef(usize);
+
+impl<'a> CurveBuilder {
+    /// Start constructing a new haptic curve
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Create a new segment in the curve.
+    /// This does not yet make it do anything. For that you will need to call any of the push
+    /// method with the reference returned from this function
+    pub fn new_segment(&mut self, segment: CurveSegment) -> SegmentBuilderRef {
+        let index = self.segments.len();
+        self.segments.push(segment);
+        SegmentBuilderRef(index)
+    }
+
+    /// Push a segment to be part of the curve, scale will be unchanged, no repeats
+    pub fn push(mut self, segment_ref: SegmentBuilderRef) -> Self {
+        self.curve.push(SegmentReference {
+            reference: segment_ref.0,
+            scale: 1.0,
+            repeat: 1,
+        });
+        self
+    }
+
+    /// Push a segment with a given scale to be part of the curve
+    pub fn push_scaled(mut self, segment_ref: SegmentBuilderRef, scale: Value) -> Self {
+        self.curve.push(SegmentReference {
+            reference: segment_ref.0,
+            scale,
+            repeat: 1,
+        });
+        self
+    }
+
+    /// Repeat a segment a given amount of times
+    pub fn push_repeated(mut self, segment_ref: SegmentBuilderRef, repeat: u16) -> Self {
+        self.curve.push(SegmentReference {
+            reference: segment_ref.0,
+            scale: 1.0,
+            repeat,
+        });
+        self
+    }
+
+    /// Repeat a segment a given amount of times
+    pub fn push_repeated_scaled(
+        mut self,
+        segment_ref: SegmentBuilderRef,
+        repeat: u16,
+        scale: Value,
+    ) -> Self {
+        self.curve.push(SegmentReference {
+            reference: segment_ref.0,
+            scale,
+            repeat,
+        });
+        self
+    }
+
+    /// Crate the final completed curve.
+    /// This can be used to create an object which can be serialized, but cannot yet be played back.
+    pub fn finish(self, start_angle: Angle) -> HapticCurve {
+        HapticCurve {
+            segments: self.segments,
+            curve: self.curve,
+            start_angle,
+        }
+    }
+
+    /// Finalize the curve building process and return the constructed curve
+    /// By specifying `start_angle` you may shift where the start point of the curve is located at as an absolute position.
+    /// When a curve starts playing the initial angle will be zero
+    pub fn build(self, start_angle: Angle) -> Result<CurveInstance, CurveError> {
+        self.finish(start_angle).instantiate()
+    }
 }

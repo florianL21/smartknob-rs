@@ -12,7 +12,7 @@ use esp_hal::{
     time::Rate,
 };
 use foc::pwm::SpaceVector;
-use haptic_lib::CurveBuilder;
+use haptic_lib::{CurveBuilder, CurveSegment};
 use log::info;
 use smartknob_core::{
     haptic_core::{CalibrationData, DetailedSettings, SmartknobHapticCore, encoder::MT6701Spi},
@@ -74,70 +74,14 @@ pub async fn update_foc(
     // Create a curve with 25 identical detents for encoder positions 0-10
     // Each detent = 0.4 encoder units (10 / 25 = 0.4)
     // Gauge value = detent * 4 (0, 4, 8, ... 100)
-    let detent_curve = CurveBuilder::<52>::new()
-        // 25 detents, each with 2 segments (0.2 + 0.2 = 0.4 width)
-        // All identical: 0.7 torque, cubic easing
-        // Detents 1-5
-        .add_bezier3(0.2, [0.0, 0.0, -0.7])
-        .add_bezier3(0.2, [0.7, 0.7, 0.0])
-        .add_bezier3(0.2, [0.0, 0.0, -0.7])
-        .add_bezier3(0.2, [0.7, 0.7, 0.0])
-        .add_bezier3(0.2, [0.0, 0.0, -0.7])
-        .add_bezier3(0.2, [0.7, 0.7, 0.0])
-        .add_bezier3(0.2, [0.0, 0.0, -0.7])
-        .add_bezier3(0.2, [0.7, 0.7, 0.0])
-        .add_bezier3(0.2, [0.0, 0.0, -0.7])
-        .add_bezier3(0.2, [0.7, 0.7, 0.0])
-        // Detents 6-10
-        .add_bezier3(0.2, [0.0, 0.0, -0.7])
-        .add_bezier3(0.2, [0.7, 0.7, 0.0])
-        .add_bezier3(0.2, [0.0, 0.0, -0.7])
-        .add_bezier3(0.2, [0.7, 0.7, 0.0])
-        .add_bezier3(0.2, [0.0, 0.0, -0.7])
-        .add_bezier3(0.2, [0.7, 0.7, 0.0])
-        .add_bezier3(0.2, [0.0, 0.0, -0.7])
-        .add_bezier3(0.2, [0.7, 0.7, 0.0])
-        .add_bezier3(0.2, [0.0, 0.0, -0.7])
-        .add_bezier3(0.2, [0.7, 0.7, 0.0])
-        // Detents 11-15
-        .add_bezier3(0.2, [0.0, 0.0, -0.7])
-        .add_bezier3(0.2, [0.7, 0.7, 0.0])
-        .add_bezier3(0.2, [0.0, 0.0, -0.7])
-        .add_bezier3(0.2, [0.7, 0.7, 0.0])
-        .add_bezier3(0.2, [0.0, 0.0, -0.7])
-        .add_bezier3(0.2, [0.7, 0.7, 0.0])
-        .add_bezier3(0.2, [0.0, 0.0, -0.7])
-        .add_bezier3(0.2, [0.7, 0.7, 0.0])
-        .add_bezier3(0.2, [0.0, 0.0, -0.7])
-        .add_bezier3(0.2, [0.7, 0.7, 0.0])
-        // Detents 16-20
-        .add_bezier3(0.2, [0.0, 0.0, -0.7])
-        .add_bezier3(0.2, [0.7, 0.7, 0.0])
-        .add_bezier3(0.2, [0.0, 0.0, -0.7])
-        .add_bezier3(0.2, [0.7, 0.7, 0.0])
-        .add_bezier3(0.2, [0.0, 0.0, -0.7])
-        .add_bezier3(0.2, [0.7, 0.7, 0.0])
-        .add_bezier3(0.2, [0.0, 0.0, -0.7])
-        .add_bezier3(0.2, [0.7, 0.7, 0.0])
-        .add_bezier3(0.2, [0.0, 0.0, -0.7])
-        .add_bezier3(0.2, [0.7, 0.7, 0.0])
-        // Detents 21-25
-        .add_bezier3(0.2, [0.0, 0.0, -0.7])
-        .add_bezier3(0.2, [0.7, 0.7, 0.0])
-        .add_bezier3(0.2, [0.0, 0.0, -0.7])
-        .add_bezier3(0.2, [0.7, 0.7, 0.0])
-        .add_bezier3(0.2, [0.0, 0.0, -0.7])
-        .add_bezier3(0.2, [0.7, 0.7, 0.0])
-        .add_bezier3(0.2, [0.0, 0.0, -0.7])
-        .add_bezier3(0.2, [0.7, 0.7, 0.0])
-        .add_bezier3(0.2, [0.0, 0.0, -0.7])
-        .add_bezier3(0.2, [0.7, 0.7, 0.0])
-        // 25 detents done - extend with no resistance
-        .add_const(10.0, 0.0)
-        .build(0.0)
-        .unwrap()
-        .instantiate()
-        .unwrap();
+    let mut curve_builder = CurveBuilder::new();
+    // 2 segments (0.2 + 0.2 = 0.4 width)
+    let detent = curve_builder.new_segment(
+        CurveSegment::new()
+            .add_bezier3(0.2, [0.0, 0.0, -0.7])
+            .add_bezier3(0.2, [0.7, 0.7, 0.0]),
+    );
+    let detent_curve = curve_builder.push_repeated(detent, 25).build(0.0).unwrap();
     let _ = haptic_core.set_curve(&detent_curve, 0.7).await;
     loop {
         haptic_core.run(settings_store_signals).await;

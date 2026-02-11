@@ -8,7 +8,7 @@ mod player;
 pub use patterns::{Command, HapticPattern};
 pub use player::{HapticPlayer, Playback};
 
-pub use builder::{CurveBuilder, HapticCurve};
+pub use builder::{CurveBuilder, CurveSegment, HapticCurve};
 pub use curve::{CurveError, CurveInstance};
 
 pub type Angle = f32;

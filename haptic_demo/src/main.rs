@@ -1,22 +1,22 @@
 extern crate std;
 
 use charming::{
+    Chart, HtmlRenderer,
     component::{
         Axis, DataZoom, DataZoomType, Feature, Restore, SaveAsImage, Title, Toolbox,
         ToolboxDataZoom,
     },
     element::{AxisType, Tooltip},
     series::Line,
-    Chart, HtmlRenderer,
 };
-use haptic_lib::{CurveBuilder, HapticCurve, HapticPlayer, Playback};
+use haptic_lib::{CurveBuilder, CurveSegment, HapticCurve, HapticPlayer, Playback};
 
-fn create_graph<const N: usize>(start: f32, curve: HapticCurve<N>, sample_step: f32) -> Chart {
+fn create_graph(start: f32, curve: HapticCurve, sample_step: f32) -> Chart {
     let curve_start_angle = curve.start_angle();
-    let absolut_curve = curve.instantiate().unwrap();
-    println!("{absolut_curve:#?}");
-    let mut player = HapticPlayer::new(start, &absolut_curve);
-    let width = player.curve_width();
+    let curve_inst = curve.instantiate().unwrap();
+    let width = curve_inst.width();
+    println!("{curve_inst:#?}");
+    let mut player = HapticPlayer::new(start, &curve_inst);
     let start_angle = start + curve_start_angle - 1.0;
     let end_anlge = start_angle + width + 2.0;
 
@@ -61,13 +61,20 @@ fn create_graph<const N: usize>(start: f32, curve: HapticCurve<N>, sample_step: 
 
 fn main() {
     env_logger::init();
-    let test_curve = CurveBuilder::<6>::new()
-        .add_bezier3(0.3, [1.0, 0.0, 0.0])
-        .add_bezier3(0.5, [0.0, -0.1, -1.0])
-        .add_bezier3(0.5, [1.0, 0.1, 0.0])
-        .add_bezier3(0.3, [0.0, 0.0, -1.0])
-        .build(-0.3)
-        .unwrap();
+    let mut curve_builder = CurveBuilder::new();
+
+    let seg1 = curve_builder.new_segment(
+        CurveSegment::new()
+            .add_bezier3(0.5, [0.0, -0.1, -1.0])
+            .add_bezier3(0.5, [1.0, 0.1, 0.0]),
+    );
+    let endstop_left = curve_builder.new_segment(CurveSegment::new().add_linear(0.8, 1.0, 0.0));
+    let endstop_right = curve_builder.new_segment(CurveSegment::new().add_linear(0.8, 0.0, -1.0));
+    let test_curve = curve_builder
+        .push(endstop_left)
+        .push_repeated(seg1, 3)
+        .push(endstop_right)
+        .finish(-0.3);
 
     let chart = create_graph(0.0, test_curve, 0.01);
 

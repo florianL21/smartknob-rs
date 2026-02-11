@@ -157,7 +157,7 @@ pub struct SmartknobHapticCore<
     const MAX_CURVE_ELEM: usize,
 > {
     haptics: HapticSystem<E, D, M, PWM_RESOLUTION>,
-    player: Option<HapticPlayer<'a, MAX_CURVE_ELEM>>,
+    player: Option<HapticPlayer<'a>>,
     curve_scale: f32,
     /// Optional ticker for throttling the FOC loop
     ticker: Option<Ticker>,
@@ -242,7 +242,7 @@ impl<
     /// If no modification of the curve is desired this should be set to 1.0
     pub async fn set_curve(
         &mut self,
-        curve: &'a CurveInstance<MAX_CURVE_ELEM>,
+        curve: &'a CurveInstance,
         curve_scale: f32,
     ) -> Result<(), HapticSystemError<E::Error>> {
         let meas = self.haptics.update_encoder().await?;

@@ -2,10 +2,12 @@ extern crate alloc;
 
 pub mod components;
 
+use crate::builder::InterpolationBuilderError;
 use crate::curve::components::CurveComponentInstance;
 use crate::{Angle, Value};
 use alloc::boxed::Box;
 use alloc::vec::Vec;
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 #[derive(Error, Debug)]
@@ -16,8 +18,12 @@ pub enum CurveError {
         "Not enough capacity for holding all curve components. Increase the curve capacity by {0} elements"
     )]
     NotEnoughCapacity(usize),
-    #[error("Value must be in range of -1.0 to 1.0, but `value` was out of range at index {0:?}")]
-    ValueOutOfRange(usize),
+    #[error(
+        "Value must be in range of -1.0 to 1.0, but `value` of segment {0} out of range at index {0:?}"
+    )]
+    ValueOutOfRange(usize, usize),
+    #[error("Builder error")]
+    BuilderError(#[from] InterpolationBuilderError),
 }
 
 #[derive(Debug)]
@@ -28,14 +34,11 @@ pub struct SegmentInstance {
     // pub(crate) width: Angle,
 }
 
-#[derive(Debug)]
+/// Reference to a segment. Intentionally uses indexes and not actual refs as this need to be serializable
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct SegmentReference {
     /// Reference to an index in the segments vec of the curve instance
-    pub(crate) segment_index: usize,
-    // /// Calculated start angle of this reference within the full curve
-    // pub(crate) start_angle: Angle,
-    // /// Calculated end angle of this reference within the full curve
-    // pub(crate) end_angle: Angle,
+    pub(crate) reference: usize,
     /// Repeat this exact reference a given amount of times in the full curve
     pub(crate) repeat: u16,
     /// Scale all values returned by the referenced segment by this amount.
@@ -62,7 +65,7 @@ impl SegmentReference {
 
     fn segment<'a>(&'a self, segments: &'a Vec<SegmentInstance>) -> &'a SegmentInstance {
         // here we assume that the definition of the curve itself is correct. so this unwrap should never fail
-        segments.get(self.segment_index).unwrap()
+        segments.get(self.reference).unwrap()
     }
 
     fn len(&self, segments: &Vec<SegmentInstance>) -> usize {
@@ -135,9 +138,8 @@ impl CurveInstance {
         None
     }
 
-    /// Returns the number of indexes in this curve
-    fn len(&self) -> usize {
-        self.curve.iter().map(|i| i.len(&self.segments)).sum()
+    pub fn width(&self) -> Angle {
+        self.total_width
     }
 
     fn iter<'a>(&'a self) -> CurveIterator<'a> {
@@ -148,7 +150,6 @@ impl CurveInstance {
 struct CurveIterator<'a> {
     index: usize,
     curve_inst: &'a CurveInstance,
-    // current: Option<CurveIterView<'a>>,
     prev_stop_angle: Angle,
     current: IteratorPosition<'a>,
     underflow: bool,
@@ -342,12 +343,12 @@ mod tests {
             segments,
             vec![
                 SegmentReference {
-                    segment_index: 0,
+                    reference: 0,
                     repeat: 1,
                     scale: 1.0,
                 },
                 SegmentReference {
-                    segment_index: 0,
+                    reference: 0,
                     repeat: 2,
                     scale: 0.5,
                 },
@@ -382,7 +383,7 @@ mod tests {
         }];
         let seg_ref = SegmentReference {
             repeat: 2,
-            segment_index: 0,
+            reference: 0,
             scale: 1.0,
         };
         assert_eq!(seg_ref.get(&curve, 0).unwrap().0.start(), 0.1);
@@ -474,5 +475,11 @@ mod tests {
             Some(cv) => assert_eq!(cv.comp.sample(0.0), 0.2),
             _ => panic!("Initial result should return an iterator position within the curve"),
         }
+    }
+
+    #[test]
+    fn test_curve_width() {
+        let curve = basic_test_curve();
+        assert_eq!(curve.width(), 6.0);
     }
 }

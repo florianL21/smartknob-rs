@@ -4,7 +4,7 @@ use crate::{
 };
 
 /// This struct holds the state for playing back a haptic curve and it is the main interface for playing back haptic curves
-pub struct HapticPlayer<'a, const N: usize> {
+pub struct HapticPlayer<'a> {
     curve: CurveState<'a>,
     start_offset: Angle,
     scale: Value,
@@ -34,7 +34,7 @@ pub enum Playback<'a> {
     Sequence(ScaledPattern<'a>),
 }
 
-impl<'a, const N: usize> HapticPlayer<'a, N> {
+impl<'a> HapticPlayer<'a> {
     /// Create a new player state for plying back a specific curve
     /// `start_offset` defines the angle where the curve playback will start
     pub fn new(start_offset: Angle, curve: &'a CurveInstance) -> Self {
