@@ -79,9 +79,14 @@ pub async fn update_foc(
     let detent = curve_builder.new_segment(
         CurveSegment::new()
             .add_bezier3(0.2, [0.0, 0.0, -0.7])
-            .add_bezier3(0.2, [0.7, 0.7, 0.0]),
+            .add_bezier3(0.2, [0.7, 0.0, 0.0]),
     );
-    let detent_curve = curve_builder.push_repeated(detent, 25).build(0.0).unwrap();
+    let zero = curve_builder.new_segment(CurveSegment::new().add_const(1.0, 0.0));
+    let detent_curve = curve_builder
+        .push_repeated(detent, 25)
+        .push(zero)
+        .build(0.0)
+        .unwrap();
     let _ = haptic_core.set_curve(&detent_curve, 0.7).await;
     loop {
         haptic_core.run(settings_store_signals).await;

@@ -232,11 +232,6 @@ pub struct HapticCurve {
 impl HapticCurve {
     /// Make a curve description into a playable instance.
     pub fn instantiate(self) -> Result<CurveInstance, CurveError> {
-        let total_width = self
-            .curve
-            .iter()
-            .map(|c| self.segments[c.reference].width() * c.repeat as Angle)
-            .sum();
         let mut segments = Vec::new();
         for (i, segment) in self.segments.into_iter().enumerate() {
             let components = segment
@@ -259,24 +254,7 @@ impl HapticCurve {
         // TODO: Check all Segment refs for index consistency.
         // TODO: Check all segment refs for scale over/underflow
 
-        let start_value = segments[self.curve.first().ok_or(CurveError::EmptyCurve)?.reference]
-            .components
-            .first()
-            .ok_or(CurveError::EmptyCurve)?
-            .start();
-        let end_value = segments[self.curve.last().ok_or(CurveError::EmptyCurve)?.reference]
-            .components
-            .first()
-            .ok_or(CurveError::EmptyCurve)?
-            .end();
-        Ok(CurveInstance {
-            start_angle: self.start_angle,
-            total_width,
-            segments,
-            curve: self.curve,
-            start_value,
-            end_value,
-        })
+        CurveInstance::new(segments, self.curve, self.start_angle)
     }
 
     pub fn start_angle(&self) -> Angle {
