@@ -1,18 +1,20 @@
 {
   "rust-analyzer.cargo.allTargets": false,
-  "rust-analyzer.cargo.target": "xtensa-esp32s3-none-elf",
-  "rust-analyzer.server.extraEnv": {
-    "RUSTUP_TOOLCHAIN": "stable"
-  },
-  "rust-analyzer.cargo.extraEnv": {
-    "RUSTUP_TOOLCHAIN": "esp"
-  },
   "editor.formatOnSave": true,
   "cSpell.words": [
     "Smartknob"
   ],
-  "rust-analyzer.cargo.features": [
-    "slint",
-    // "lvgl"
-  ]
+  // Enable for working on on-target crates
+  "rust-analyzer.cargo.target": "xtensa-esp32s3-none-elf",
+  "rust-analyzer.cargo.extraEnv": {
+    "RUSTUP_TOOLCHAIN": "esp"
+  },
+  // "rust-analyzer.cargo.features": [
+  //   "slint",
+  //   // "lvgl"
+  // ],
+  "rust-analyzer.linkedProjects": [
+    "generic/Cargo.toml",
+    "embedded/Cargo.toml"
+  ],
 }
