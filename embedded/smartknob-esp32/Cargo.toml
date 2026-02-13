@@ -5,7 +5,7 @@ version = "0.1.0"
 
 [dependencies]
 esp-hal = { version = "1.0.0", features = ["esp32s3", "log-04", "unstable"] }
-smartknob-core = { path = "../smartknob-core" }
+smartknob-core = { path = "../../generic/smartknob-core" }
 ekv = { git = "https://github.com/embassy-rs/ekv.git", rev = "b68fd9a9369ab1b7f6181e8f7fc97aa99012a1e3" }
 embassy-futures = "0.1.2"
 embassy-sync = "0.7.2"
@@ -40,7 +40,7 @@ slint = { git = "https://github.com/florianL21/slint", rev = "d3a47ed", default-
     "renderer-software",
 ], optional = true }
 bytemuck = "1.25.0"
-ldc1x1x = { path = "../ldc1x1x" }
+ldc1x1x = { path = "../../generic/ldc1x1x" }
 nalgebra = { version = "0.34.1", default-features = false, features = [
     "macros",
     "nalgebra-macros",

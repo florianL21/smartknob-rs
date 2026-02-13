@@ -1,24 +1,23 @@
 {
   "rust-analyzer.cargo.allTargets": false,
-  "rust-analyzer.server.extraEnv": {
-    "RUSTUP_TOOLCHAIN": "stable"
-  },
   "editor.formatOnSave": true,
   "cSpell.words": [
     "Smartknob"
   ],
-  // Enable for working on on-target crates
-  // "rust-analyzer.cargo.target": "xtensa-esp32s3-none-elf",
-  // "rust-analyzer.cargo.extraEnv": {
-  //   "RUSTUP_TOOLCHAIN": "esp"
+  // "rust-analyzer.server.extraEnv": {
+  //   "RUSTUP_TOOLCHAIN": "stable"
   // },
-  // "rust-analyzer.cargo.features": [
-  //   "slint",
-  //   // "lvgl"
-  // ],
+  // Enable for working on on-target crates
+  "rust-analyzer.cargo.target": "xtensa-esp32s3-none-elf",
+  "rust-analyzer.cargo.extraEnv": {
+    "RUSTUP_TOOLCHAIN": "esp"
+  },
+  "rust-analyzer.cargo.features": [
+    "slint",
+    // "lvgl"
+  ],
   "rust-analyzer.linkedProjects": [
-    "./haptic_lib/Cargo.toml",
-    "./haptic_demo/Cargo.toml",
-    "./smartknob-core/Cargo.toml",
+    // "generic/Cargo.toml",
+    "embedded/Cargo.toml"
   ],
 }

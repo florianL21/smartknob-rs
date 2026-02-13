@@ -60,9 +60,9 @@ embedded-cli = { git = "https://github.com/florianL21/embedded-cli-rs.git", rev 
 thiserror = { version = "2.0.17", default-features = false }
 serde = { version = "1.0.228", default-features = false, features = ["derive"] }
 postcard = { version = "1.1.3", features = ["experimental-derive"] }
-haptic_lib = { path = "../haptic_lib" }
+haptic_lib = { path = "../../generic/haptic_lib" }
 embedded-hal-async = "1.0.0"
-smartknob-core = { path = "../smartknob-core" }
+smartknob-core = { path = "../../generic/smartknob-core" }
 smartknob-esp32 = { path = "../smartknob-esp32" }
 
 [features]

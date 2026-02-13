@@ -13,7 +13,7 @@ use esp_hal::{
     spi,
     time::Rate,
 };
-use log::{error, info, warn};
+use log::{info, warn};
 use smartknob_core::system_settings::log_toggles::{LogChannel, LogToggleReceiver, may_log};
 use static_cell::StaticCell;
 use thiserror::Error;

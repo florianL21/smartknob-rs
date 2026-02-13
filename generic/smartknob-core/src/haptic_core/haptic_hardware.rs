@@ -386,8 +386,8 @@ impl<
         cal_curve: &NonLinearityCorrection,
     ) -> Result<I16F16, HapticSystemError<E::Error>> {
         const _3PI_2: I16F16 = I16F16::PI
-            .unwrapped_mul(I16F16::lit("3.0"))
-            .unwrapped_div(I16F16::lit("2.0"));
+            .strict_mul(I16F16::lit("3.0"))
+            .strict_div(I16F16::lit("2.0"));
         for i in 0..500 {
             let angle = _3PI_2 + I16F16::TAU * I16F16::from_num(i) / I16F16::from_num(500.0);
             self.drive_phases_alignment(angle);
