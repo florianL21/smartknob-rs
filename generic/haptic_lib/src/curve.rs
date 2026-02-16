@@ -1,12 +1,13 @@
 extern crate alloc;
 
+pub mod builder;
 pub mod components;
 
-use crate::builder::InterpolationBuilderError;
 use crate::curve::components::CurveComponentInstance;
 use crate::{Angle, Value};
 use alloc::boxed::Box;
 use alloc::vec::Vec;
+use builder::InterpolationBuilderError;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -343,7 +344,7 @@ impl<'a> CurveState<'a> {
 
 #[cfg(test)]
 mod tests {
-    use crate::builder::CurveComponent;
+    use builder::CurveComponent;
 
     use super::*;
     extern crate std;
@@ -504,17 +505,19 @@ mod tests {
         scale: Value,
         comp_start_value: Value,
     ) {
-        assert_matches!(
-            view,
-            Some(CurveIterView {
-                start_angle: start_angle,
-                stop_angle: stop_angle,
-                scale: scale,
-                ..
-            })
-        );
-        if let Some(CurveIterView { comp, .. }) = view {
-            assert_eq!(comp.start(), comp_start_value)
+        if let Some(CurveIterView {
+            comp,
+            scale: s,
+            start_angle: start_a,
+            stop_angle: stop_a,
+        }) = view
+        {
+            assert_eq!(comp.start(), comp_start_value);
+            assert_eq!(s, scale);
+            assert_eq!(start_a, start_angle);
+            assert_eq!(stop_a, stop_angle);
+        } else {
+            panic!("Expected a view which was not None but got: {view:?}");
         }
     }
 

@@ -210,10 +210,6 @@ impl CurveSegment {
     pub fn add_bezier6(self, width: f32, points: [f32; 6]) -> Self {
         self.add_component(CurveComponent::Bezier6 { width, points })
     }
-
-    fn width(&self) -> Angle {
-        self.components.iter().map(|c| c.width()).sum()
-    }
 }
 
 /// Curves always start at negative infinity. They always go left to right (increasing angle values).
