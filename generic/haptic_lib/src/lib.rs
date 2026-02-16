@@ -5,7 +5,7 @@ mod curve;
 mod patterns;
 mod player;
 
-pub use patterns::{Command, HapticPattern};
+pub use patterns::{Command, HapticPattern, PatternLayer};
 pub use player::{HapticPlayer, Playback};
 
 pub use builder::{CurveBuilder, CurveSegment, HapticCurve};
