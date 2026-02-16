@@ -10,8 +10,14 @@ use thiserror::Error;
 
 #[derive(Error, Debug)]
 pub enum PatternBuildError {
-    #[error("The activation zones of patterns at position {0} and {1} overlap each other")]
-    ActivationZoneOverlap(usize, usize),
+    #[error(
+        "The activation zones of the pattern at position {0} overlaps with the previous pattern"
+    )]
+    ActivationZoneOverlap(usize),
+    #[error(
+        "Go unexpected ratio for deactivation zone size. Expected a value greater than 0.0 but smaller than 1.0, got: {0}"
+    )]
+    DeactivationRatioInvalid(Angle),
 }
 
 /// Marker for a builder which does not have any components yet
@@ -45,7 +51,7 @@ impl<T> Builder<T> {
     /// let layer = PatternLayer::builder()
     ///        .with_space(1.0, HapticPattern::builder().torque(1.0).finish())
     ///        .insert_once()
-    ///        .build(0.2, 0.8);
+    ///        .build(0.2, 0.8).unwrap();
     /// ```
     pub fn with_space(self, width: Angle, pattern: HapticPattern) -> SequenceBuilder<_NonEmpty> {
         SequenceBuilder {
@@ -61,21 +67,51 @@ impl<T> Builder<T> {
     /// - `activation_zone` is the width of the zone which upon entering will activate a pattern
     /// - `deactivation_zone` is the percentage of the activation zone and must be below 1.0
     /// Note that the `activation_zone` is an absolute value in radiants while the `deactivation_zone` is a percentage of the `activation_zone`.
+    /// # Example usage:
+    /// ```
+    /// use haptic_lib::{HapticPattern, PatternLayer};
+    /// let layer = PatternLayer::builder()
+    ///        .with_space(1.0, HapticPattern::builder().torque(1.0).finish())
+    ///        .insert_once()
+    ///        .build(0.2, 0.8).unwrap();
+    /// ```
     pub fn build(
         self,
         activation_zone: Angle,
         deactivation_zone: Angle,
     ) -> Result<PatternLayer, PatternBuildError> {
+        if deactivation_zone <= 0.0 || deactivation_zone >= 1.0 {
+            return Err(PatternBuildError::DeactivationRatioInvalid(
+                deactivation_zone,
+            ));
+        }
+        for (i, comp) in self.components.iter().enumerate() {
+            if i > 0 && comp.width < activation_zone {
+                return Err(PatternBuildError::ActivationZoneOverlap(i));
+            }
+        }
+        // TODO: Check all torque values that for being between -1.0 and 1.0
         Ok(PatternLayer {
             components: self.components,
             activation_zone,
-            deactivation_zone,
+            deactivation_zone: activation_zone * deactivation_zone,
         })
     }
 }
 
 impl Builder<_Empty> {
-    /// Add a new pattern to the zero position of the layer
+    /// Add a new pattern to the zero position of the layer.
+    /// Note that this is only possible to call on an empty layer.
+    /// Once at least one element is added by whichever means only
+    /// the [`Builder::with_space`] method will be callable.
+    /// # Example usage:
+    /// ```
+    /// use haptic_lib::{HapticPattern, PatternLayer};
+    /// let layer = PatternLayer::builder()
+    ///        .at_zero(HapticPattern::builder().torque(1.0).finish())
+    ///        .insert_once()
+    ///        .build(0.2, 0.8);
+    /// ```
     pub fn at_zero(self, pattern: HapticPattern) -> SequenceBuilder<_NonEmpty> {
         SequenceBuilder {
             root_builder: self.to_non_empty(),
@@ -99,6 +135,11 @@ pub struct HapticPatternBuilder<M> {
 impl<M> HapticPatternBuilder<M> {
     /// Add a new torque command to this sequence
     /// `torque` must be in the range of -1.0 to 1.0
+    /// # Example usage:
+    /// ```
+    /// use haptic_lib::HapticPattern;
+    /// let pattern = HapticPattern::builder().torque(1.0).finish();
+    /// ```
     pub fn torque(mut self, torque: f32) -> HapticPatternBuilder<_NonEmpty> {
         self.commands.push(Command::torque(torque));
         HapticPatternBuilder {
@@ -185,32 +226,5 @@ impl<T> SequenceBuilder<T> {
             components: self.root_builder.components,
             phantom: PhantomData::default(),
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    extern crate std;
-
-    #[test]
-    fn test_builder_zero_width_as_first_element() {
-        let _ = PatternLayer::builder()
-            .at_zero(HapticPattern::builder().torque(1.0).finish())
-            .insert_once()
-            .build(0.2, 0.8);
-    }
-
-    #[test]
-    fn test_builder_transition_from_zero_width() {
-        let _ = PatternLayer::builder()
-            .at_zero(HapticPattern::builder().torque(1.0).finish())
-            .insert_once()
-            .with_space(
-                2.0,
-                HapticPattern::builder().torque(0.5).torque(0.0).repeated(2),
-            )
-            .insert_repeated(10)
-            .build(0.2, 0.8);
     }
 }

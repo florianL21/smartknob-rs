@@ -111,7 +111,7 @@ pub struct PatternLayer {
     pub(crate) components: Vec<SequenceComponent>,
     /// Width of the zone which upon entering will activate a pattern
     activation_zone: Angle,
-    /// percentage of the activation zone < 1.0
+    /// Width of the activation zone
     deactivation_zone: Angle,
 }
 
