@@ -59,6 +59,7 @@ impl<T> Builder<T> {
             sequence: SequenceComponent {
                 width: width,
                 pattern,
+                repeat: 1,
             },
         }
     }
@@ -118,6 +119,7 @@ impl Builder<_Empty> {
             sequence: SequenceComponent {
                 width: 0.0,
                 pattern,
+                repeat: 1,
             },
         }
     }
@@ -153,6 +155,12 @@ impl<M> HapticPatternBuilder<M> {
 impl HapticPatternBuilder<_NonEmpty> {
     /// Add a new delay command to this sequence
     /// The given duration will delay the execution of the next torque command by the given `duration`
+    /// # Example usage:
+    /// ```
+    /// use haptic_lib::HapticPattern;
+    /// use core::time::Duration;
+    /// let pattern = HapticPattern::builder().torque(1.0).delay(Duration::from_millis(10)).finish();
+    /// ```
     pub fn delay(mut self, duration: Duration) -> HapticPatternBuilder<_NonEmpty> {
         self.commands.push(Command::delay(duration));
         HapticPatternBuilder {
@@ -163,6 +171,11 @@ impl HapticPatternBuilder<_NonEmpty> {
     }
 
     /// This function finalizes the current pattern and repeats it `n` times
+    /// # Example usage:
+    /// ```
+    /// use haptic_lib::HapticPattern;
+    /// let pattern = HapticPattern::builder().torque(1.0).torque(-1.0).repeated(3);
+    /// ```
     pub fn repeated(self, n: u16) -> HapticPattern {
         HapticPattern {
             commands: self.commands,
@@ -173,6 +186,11 @@ impl HapticPatternBuilder<_NonEmpty> {
 
     /// This function finalizes the current pattern and duplicated every item within it `n` times in place.
     /// This can be used to "stretch" a pattern.
+    /// # Example usage:
+    /// ```
+    /// use haptic_lib::HapticPattern;
+    /// let pattern = HapticPattern::builder().torque(1.0).torque(-1.0).multiplied(2);
+    /// ```
     pub fn multiplied(self, n: u16) -> HapticPattern {
         HapticPattern {
             commands: self.commands,
@@ -183,6 +201,11 @@ impl HapticPatternBuilder<_NonEmpty> {
 
     /// This function finalizes the current pattern and applies both multiply and repeat modifiers.
     /// Check out [`Self::repeated`] and [`Self::multiplied`] for more information
+    /// # Example usage:
+    /// ```
+    /// use haptic_lib::HapticPattern;
+    /// let pattern = HapticPattern::builder().torque(1.0).torque(-1.0).multiplied_and_repeated(3, 2);
+    /// ```
     pub fn multiplied_and_repeated(self, repeat: u16, multiply: u16) -> HapticPattern {
         HapticPattern {
             commands: self.commands,
@@ -192,6 +215,11 @@ impl HapticPatternBuilder<_NonEmpty> {
     }
 
     /// Finish building this command sequence "as-is" without applying an additional modifiers to it
+    /// # Example usage:
+    /// ```
+    /// use haptic_lib::HapticPattern;
+    /// let pattern = HapticPattern::builder().torque(1.0).finish();
+    /// ```
     pub fn finish(self) -> HapticPattern {
         HapticPattern {
             commands: self.commands,
@@ -210,21 +238,63 @@ pub struct SequenceBuilder<T> {
 impl SequenceBuilder<_NonEmpty> {
     /// Repeat the whole component which was just constructed `n` times.
     /// This repeats everything, including the space before the pattern as well.
+    /// # Example usage:
+    /// ```
+    /// use haptic_lib::{HapticPattern, PatternLayer};
+    /// let layer = PatternLayer::builder()
+    ///        .at_zero(HapticPattern::builder().torque(1.0).finish())
+    ///        .insert_repeated(2)
+    ///        .build(0.2, 0.8);
+    /// ```
     pub fn insert_repeated(mut self, n: usize) -> Builder<_NonEmpty> {
-        for _ in 0..n {
-            self.root_builder.components.push(self.sequence.clone());
-        }
+        self.sequence.repeat = n;
+        self.root_builder.components.push(self.sequence);
         self.root_builder
     }
 }
 
 impl<T> SequenceBuilder<T> {
     /// Insert the just constructed component once into the layer
+    /// # Example usage:
+    /// ```
+    /// use haptic_lib::{HapticPattern, PatternLayer};
+    /// let layer = PatternLayer::builder()
+    ///        .at_zero(HapticPattern::builder().torque(1.0).finish())
+    ///        .insert_once()
+    ///        .build(0.2, 0.8);
+    /// ```
     pub fn insert_once(mut self) -> Builder<_NonEmpty> {
         self.root_builder.components.push(self.sequence);
         Builder {
             components: self.root_builder.components,
             phantom: PhantomData::default(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    extern crate std;
+
+    #[test]
+    fn test_builder_zero_width_as_first_element() {
+        let _ = PatternLayer::builder()
+            .at_zero(HapticPattern::builder().torque(1.0).finish())
+            .insert_once()
+            .build(0.2, 0.8);
+    }
+
+    #[test]
+    fn test_builder_transition_from_zero_width() {
+        let _ = PatternLayer::builder()
+            .at_zero(HapticPattern::builder().torque(1.0).finish())
+            .insert_once()
+            .with_space(
+                2.0,
+                HapticPattern::builder().torque(0.5).torque(0.0).repeated(2),
+            )
+            .insert_repeated(10)
+            .build(0.2, 0.8);
     }
 }

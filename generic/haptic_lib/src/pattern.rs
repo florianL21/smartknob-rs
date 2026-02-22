@@ -88,6 +88,7 @@ impl HapticPattern {
 pub struct SequenceComponent {
     width: Angle,
     pattern: HapticPattern,
+    repeat: usize,
 }
 
 impl SequenceComponent {
