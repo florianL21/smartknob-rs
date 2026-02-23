@@ -285,4 +285,15 @@ mod tests {
             Err(PatternLayerError::DeactivationRatioInvalid(0.4, 0.2))
         );
     }
+
+    #[test]
+    fn test_builder_fails_with_activation_zone_overlap() {
+        let res = PatternLayer::builder()
+            .at_zero(HapticPattern::builder().torque(1.0).finish())
+            .insert_once()
+            .with_space(0.1, HapticPattern::builder().torque(1.0).finish())
+            .insert_once()
+            .build(0.2, 0.8);
+        assert_matches!(res, Err(PatternLayerError::ActivationZoneOverlap(1)));
+    }
 }

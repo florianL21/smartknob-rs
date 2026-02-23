@@ -3,7 +3,7 @@ extern crate alloc;
 pub mod builder;
 
 use crate::{
-    Angle,
+    Angle, Value,
     pattern::builder::{_Empty, Builder, HapticPatternBuilder},
 };
 use alloc::vec::Vec;
@@ -172,5 +172,78 @@ impl PatternLayer {
             }
         }
         Ok(self)
+    }
+
+    fn iter<'a>(&'a self) -> PatternIterator<'a> {
+        PatternIterator::new()
+    }
+}
+
+struct PatternIterator<'a> {
+    prev: Option<&'a HapticPattern>,
+    index: usize,
+}
+
+impl<'a> PatternIterator<'a> {
+    fn new() -> Self {
+        PatternIterator {
+            prev: None,
+            index: 0,
+        }
+    }
+}
+
+struct PatternIterView<'a> {
+    prev: Option<&'a HapticPattern>,
+    curr: &'a HapticPattern,
+    start_angle: Angle,
+    stop_angle: Angle,
+}
+
+impl<'a> Iterator for PatternIterator<'a> {
+    type Item = PatternIterView<'a>;
+    fn next(&mut self) -> Option<Self::Item> {
+        None
+    }
+}
+
+pub struct PatternLayerState<'a>(PatternIterator<'a>, &'a PatternLayer);
+
+impl<'a> PatternLayerState<'a> {
+    pub fn new(pattern_layer: &'a PatternLayer) -> Self {
+        PatternLayerState(pattern_layer.iter(), pattern_layer)
+    }
+
+    pub fn sample(&self, angle: Angle) -> Option<HapticPattern> {
+        None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use matches::assert_matches;
+
+    use super::*;
+    extern crate std;
+    use crate::pattern::tests::alloc::vec;
+
+    #[test]
+    fn test_pattern_sampling_basics() {
+        let layer = PatternLayer {
+            activation_zone: 0.2,
+            deactivation_zone: 0.15,
+            components: vec![SequenceComponent {
+                pattern: HapticPattern {
+                    commands: vec![Command::Torque(1.1)],
+                    multiply: 1,
+                    repeat: 1,
+                },
+                width: 1.5,
+                repeat: 1,
+            }],
+        };
+        let state = PatternLayerState::new(&layer);
+        assert_matches!(state.sample(1.25), None);
+        assert_matches!(state.sample(1.35), Some(_));
     }
 }
