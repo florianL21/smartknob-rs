@@ -1,3 +1,5 @@
+use core::f32;
+
 use enterpolation::{
     Curve, Equidistant, Identity, Signal, TransformInput, bezier::Bezier, linear::Linear,
 };
@@ -27,6 +29,22 @@ pub(crate) trait CurveComponentInstance: core::fmt::Debug {
     fn width(&self) -> Angle {
         let domain = self.domain();
         domain[1] - domain[0]
+    }
+
+    fn min_max(&self) -> (f32, f32) {
+        let sample_step = self.width() / 20.0;
+        let mut min = f32::MAX;
+        let mut max = f32::MIN;
+        for i in 0..20 {
+            let sample = self.sample(i as f32 * sample_step);
+            if sample < min {
+                min = sample;
+            }
+            if sample > max {
+                max = sample;
+            }
+        }
+        (min, max)
     }
 }
 

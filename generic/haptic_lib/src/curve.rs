@@ -3,6 +3,8 @@ extern crate alloc;
 pub mod builder;
 pub mod components;
 
+use core::cmp::Ordering;
+
 use crate::curve::components::CurveComponentInstance;
 use crate::{Angle, Value};
 use alloc::boxed::Box;
@@ -27,6 +29,10 @@ pub enum CurveError {
     BuilderError(#[from] InterpolationBuilderError),
     #[error("Reference to curve segment {0} is invalid as this index does not exist")]
     ReferenceIndexInvalid(usize),
+    #[error(
+        "Scale value must be in range of 0.0 to 1.0, but `scale` of segmentReference at index {0} is outside of this range"
+    )]
+    ScaleOutOfBounds(usize),
 }
 
 #[derive(Debug)]
@@ -35,6 +41,24 @@ pub struct SegmentInstance {
     pub(crate) components: Vec<Box<dyn CurveComponentInstance>>,
     // /// Calculated width of this segment for a fast lookup
     // pub(crate) width: Angle,
+}
+
+impl SegmentInstance {
+    fn min_max(&self) -> (f32, f32) {
+        let min_max = self.components.iter().map(|c| c.min_max());
+        let min = min_max
+            .clone()
+            .min_by(|(a, _), (b, _)| a.partial_cmp(b).unwrap_or(Ordering::Equal))
+            .unwrap_or((0.0, 0.0))
+            .0;
+        let max = min_max
+            .clone()
+            .max_by(|(a, _), (b, _)| a.partial_cmp(b).unwrap_or(Ordering::Equal))
+            .unwrap_or((0.0, 0.0))
+            .0;
+
+        (min, max)
+    }
 }
 
 /// Reference to a segment. Intentionally uses indexes and not actual refs as this need to be serializable
@@ -109,22 +133,24 @@ impl CurveInstance {
                     .unwrap_or_default();
             }
         }
-        let start_index = curve.first().ok_or(CurveError::EmptyCurve)?.reference;
+        let first_ref = curve.first().ok_or(CurveError::EmptyCurve)?;
         let start_value = segments
-            .get(start_index)
-            .ok_or(CurveError::ReferenceIndexInvalid(start_index))?
+            .get(first_ref.reference)
+            .ok_or(CurveError::ReferenceIndexInvalid(first_ref.reference))?
             .components
             .first()
             .ok_or(CurveError::EmptyCurve)?
-            .start();
-        let end_index = curve.last().ok_or(CurveError::EmptyCurve)?.reference;
+            .start()
+            * first_ref.scale;
+        let last_ref = curve.last().ok_or(CurveError::EmptyCurve)?;
         let end_value = segments
-            .get(end_index)
-            .ok_or(CurveError::ReferenceIndexInvalid(end_index))?
+            .get(last_ref.reference)
+            .ok_or(CurveError::ReferenceIndexInvalid(last_ref.reference))?
             .components
             .first()
             .ok_or(CurveError::EmptyCurve)?
-            .end();
+            .end()
+            * last_ref.scale;
         let mut max_index: usize = curve.iter().map(|i| i.len(&segments)).sum();
         max_index = max_index.saturating_sub(1);
         Ok(Self {

@@ -7,10 +7,27 @@ use crate::{
     pattern::builder::{_Empty, Builder, HapticPatternBuilder},
 };
 use alloc::vec::Vec;
-use core::{iter, time::Duration};
+use core::{cmp::Ordering, iter, time::Duration};
 use serde::{Deserialize, Serialize};
+use thiserror::Error;
 
 type CommandVec = Vec<Command>;
+
+#[derive(Error, Debug)]
+pub enum PatternLayerError {
+    #[error(
+        "The activation zones of the pattern at position {0} overlaps with the previous pattern"
+    )]
+    ActivationZoneOverlap(usize),
+    #[error(
+        "Got unexpected ratio for deactivation zone size. Deactivation zone ({0}) must be above 0.0 and smaller than activation zone ({1})"
+    )]
+    DeactivationRatioInvalid(Angle, Angle),
+    #[error(
+        "Torque command had value out of bounds (allowed range is -1.0 to 1.0) in pattern at position {0}"
+    )]
+    TorqueOutOfBounds(usize),
+}
 
 /// A single command in a command sequence
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -82,6 +99,22 @@ impl HapticPattern {
             .take(num)
             .map(move |c| c.scale(scale))
     }
+
+    /// Check if all commands within this pattern are within the range of -1.0 to 1.0
+    fn bounds_valid(&self) -> bool {
+        let torque_values = self.commands.iter().filter_map(|c| match c {
+            Command::Torque(t) => Some(*t),
+            Command::Delay(_) => None,
+        });
+        let max = torque_values
+            .clone()
+            .max_by(|x, y| x.partial_cmp(y).unwrap_or(Ordering::Equal)) // This should be fine as this check is only used for checking if values are between -1.0 and 1.0, if something is infinity it's not a valid value anyway
+            .unwrap_or(0.0);
+        let min = torque_values
+            .min_by(|x, y| x.partial_cmp(y).unwrap_or(Ordering::Equal)) // This should be fine as this check is only used for checking if values are between -1.0 and 1.0, if something is infinity it's not a valid value anyway
+            .unwrap_or(0.0);
+        min >= -1.0 && max <= 1.0
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -120,5 +153,24 @@ impl PatternLayer {
     /// Start building a new pattern layer definition
     pub fn builder() -> Builder<_Empty> {
         Builder::default()
+    }
+
+    /// Check the curve for validity. This makes sense to call in case of a newly deserialized curve, to ensure that it is consistent within itself.
+    pub fn validate(self) -> Result<Self, PatternLayerError> {
+        if self.deactivation_zone <= 0.0 || self.deactivation_zone >= self.activation_zone {
+            return Err(PatternLayerError::DeactivationRatioInvalid(
+                self.deactivation_zone,
+                self.activation_zone,
+            ));
+        }
+        for (i, comp) in self.components.iter().enumerate() {
+            if i > 0 && comp.width < self.activation_zone {
+                return Err(PatternLayerError::ActivationZoneOverlap(i));
+            }
+            if !comp.pattern.bounds_valid() {
+                return Err(PatternLayerError::TorqueOutOfBounds(i));
+            }
+        }
+        Ok(self)
     }
 }

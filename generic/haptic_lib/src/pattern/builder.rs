@@ -2,23 +2,10 @@ extern crate alloc;
 
 use crate::{
     Angle, Command, HapticPattern, PatternLayer,
-    pattern::{CommandVec, SequenceComponent},
+    pattern::{CommandVec, PatternLayerError, SequenceComponent},
 };
 use alloc::vec::Vec;
 use core::{marker::PhantomData, time::Duration};
-use thiserror::Error;
-
-#[derive(Error, Debug)]
-pub enum PatternBuildError {
-    #[error(
-        "The activation zones of the pattern at position {0} overlaps with the previous pattern"
-    )]
-    ActivationZoneOverlap(usize),
-    #[error(
-        "Go unexpected ratio for deactivation zone size. Expected a value greater than 0.0 but smaller than 1.0, got: {0}"
-    )]
-    DeactivationRatioInvalid(Angle),
-}
 
 /// Marker for a builder which does not have any components yet
 #[derive(Default)]
@@ -80,23 +67,13 @@ impl<T> Builder<T> {
         self,
         activation_zone: Angle,
         deactivation_zone: Angle,
-    ) -> Result<PatternLayer, PatternBuildError> {
-        if deactivation_zone <= 0.0 || deactivation_zone >= 1.0 {
-            return Err(PatternBuildError::DeactivationRatioInvalid(
-                deactivation_zone,
-            ));
-        }
-        for (i, comp) in self.components.iter().enumerate() {
-            if i > 0 && comp.width < activation_zone {
-                return Err(PatternBuildError::ActivationZoneOverlap(i));
-            }
-        }
-        // TODO: Check all torque values that for being between -1.0 and 1.0
-        Ok(PatternLayer {
+    ) -> Result<PatternLayer, PatternLayerError> {
+        let layer = PatternLayer {
             components: self.components,
             activation_zone,
             deactivation_zone: activation_zone * deactivation_zone,
-        })
+        };
+        Ok(layer.validate()?)
     }
 }
 
@@ -274,27 +251,38 @@ impl<T> SequenceBuilder<T> {
 
 #[cfg(test)]
 mod tests {
+    use matches::assert_matches;
+
     use super::*;
     extern crate std;
 
     #[test]
-    fn test_builder_zero_width_as_first_element() {
-        let _ = PatternLayer::builder()
-            .at_zero(HapticPattern::builder().torque(1.0).finish())
+    fn test_builder_fails_with_torque_too_high() {
+        let res = PatternLayer::builder()
+            .at_zero(HapticPattern::builder().torque(1.1).finish())
             .insert_once()
             .build(0.2, 0.8);
+        assert_matches!(res, Err(PatternLayerError::TorqueOutOfBounds(0)));
     }
 
     #[test]
-    fn test_builder_transition_from_zero_width() {
-        let _ = PatternLayer::builder()
+    fn test_builder_fails_with_torque_too_low() {
+        let res = PatternLayer::builder()
+            .at_zero(HapticPattern::builder().torque(-1.1).finish())
+            .insert_once()
+            .build(0.2, 0.8);
+        assert_matches!(res, Err(PatternLayerError::TorqueOutOfBounds(0)));
+    }
+
+    #[test]
+    fn test_builder_fails_with_invalid_deactivation_zone() {
+        let res = PatternLayer::builder()
             .at_zero(HapticPattern::builder().torque(1.0).finish())
             .insert_once()
-            .with_space(
-                2.0,
-                HapticPattern::builder().torque(0.5).torque(0.0).repeated(2),
-            )
-            .insert_repeated(10)
-            .build(0.2, 0.8);
+            .build(0.2, 2.0);
+        assert_matches!(
+            res,
+            Err(PatternLayerError::DeactivationRatioInvalid(0.4, 0.2))
+        );
     }
 }
