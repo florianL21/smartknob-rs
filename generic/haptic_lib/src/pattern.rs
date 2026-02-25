@@ -7,7 +7,11 @@ use crate::{
     pattern::builder::{_Empty, Builder, HapticPatternBuilder},
 };
 use alloc::vec::Vec;
-use core::{cmp::Ordering, iter, time::Duration};
+use core::{
+    cmp::Ordering,
+    iter::{self, once},
+    time::Duration,
+};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -124,19 +128,7 @@ pub struct SequenceComponent {
     repeat: usize,
 }
 
-impl SequenceComponent {
-    pub fn play(&self, scale: f32) -> impl Iterator<Item = Command> {
-        let num = (self.pattern.repeat * self.pattern.multiply) as usize;
-        let mult = self.pattern.multiply as usize;
-        self.pattern
-            .commands
-            .iter()
-            .cycle()
-            .flat_map(move |item| iter::repeat_n(item, mult))
-            .take(num)
-            .map(move |c| c.scale(scale))
-    }
-}
+impl SequenceComponent {}
 
 /// A sequence of patterns
 #[derive(Serialize, Deserialize, Debug)]
@@ -174,49 +166,137 @@ impl PatternLayer {
         Ok(self)
     }
 
-    fn iter<'a>(&'a self) -> PatternIterator<'a> {
-        PatternIterator::new()
+    fn make_state<'a>(&'a self) -> PatternLayerState<'a> {
+        PatternLayerState::new(self)
+    }
+
+    fn get<'a>(&'a self, index: usize) -> Option<&'a SequenceComponent> {
+        let mut remaining_index = index;
+        for comp in self.components.iter() {
+            if remaining_index > comp.repeat {
+                remaining_index -= comp.repeat;
+            } else {
+                return Some(comp);
+            }
+        }
+        None
+    }
+
+    fn len(&self) -> usize {
+        self.components.iter().map(|c| c.repeat).sum()
+    }
+
+    fn iter(&self) -> impl Iterator<Item = &SequenceComponent> {
+        self.components
+            .iter()
+            .flat_map(|c| once(c).cycle().take(c.repeat))
+    }
+
+    fn rev_iter(&self) -> impl Iterator<Item = &SequenceComponent> {
+        self.components
+            .iter()
+            .rev()
+            .flat_map(|c| once(c).cycle().take(c.repeat))
     }
 }
 
-struct PatternIterator<'a> {
+struct PatternLayerState<'a> {
     prev: Option<&'a HapticPattern>,
+    curr: &'a SequenceComponent,
     index: usize,
+    layer_len: usize,
+    start_angle: Angle,
 }
 
-impl<'a> PatternIterator<'a> {
-    fn new() -> Self {
-        PatternIterator {
+fn check_within<'a>(
+    angle: Angle,
+    comp: &'a SequenceComponent,
+    prev: Option<&'a HapticPattern>,
+    start_angle: Angle,
+    stop_angle: Angle,
+) -> Option<PatternIterView<'a>> {
+    if angle >= start_angle && angle <= stop_angle {
+        return Some(PatternIterView {
+            curr: &comp.pattern,
+            prev,
+            start_angle,
+            stop_angle,
+        });
+    }
+    None
+}
+
+impl<'a> PatternLayerState<'a> {
+    fn new(layer: &'a PatternLayer) -> Self {
+        // TODO: Think about what happens if array is empty. Probably should be disallowed by the builder
+        PatternLayerState {
             prev: None,
+            curr: &layer.components[0],
+            layer_len: layer.len(),
             index: 0,
+            start_angle: 0.0,
         }
     }
+
+    fn find(&mut self, layer: &'a PatternLayer, angle: Angle) -> Option<PatternIterView<'a>> {
+        let curr = layer.get(self.index)?;
+        let stop_angle = self.start_angle + curr.width;
+        if let Some(curr) = check_within(angle, curr, self.prev, self.start_angle, stop_angle) {
+            // No need to do anything. We are already on the correct component
+            return Some(curr);
+        } else if angle > stop_angle {
+            // Need to search forward
+            self.index += 1;
+            for comp in layer.iter().skip(self.index) {
+                self.start_angle += comp.width;
+                self.prev = layer.get(self.index - 1).map(|c| &c.pattern);
+                self.curr = comp;
+                let stop_angle = self.start_angle + comp.width;
+                if let Some(curr) =
+                    check_within(angle, curr, self.prev, self.start_angle, stop_angle)
+                {
+                    return Some(curr);
+                }
+            }
+        } else if angle < self.start_angle {
+            // Need to search backwards
+            if self.index == 0 {
+                // the current index is already at zero, it would underflow
+                return None;
+            }
+            self.index -= 1;
+            for comp in layer.rev_iter().skip(self.layer_len - self.index) {
+                self.start_angle -= comp.width;
+                self.prev = if self.index == 0 {
+                    None
+                } else {
+                    layer.get(self.index - 1).map(|c| &c.pattern)
+                };
+                self.curr = comp;
+                let stop_angle = self.start_angle + comp.width;
+                if let Some(curr) =
+                    check_within(angle, curr, self.prev, self.start_angle, stop_angle)
+                {
+                    return Some(curr);
+                }
+            }
+        }
+
+        None
+    }
+
+    pub fn sample(&mut self, layer: &'a PatternLayer, angle: Angle) -> Option<HapticPattern> {
+        let comp = self.find(layer, angle);
+        None
+    }
 }
 
+#[derive(Debug)]
 struct PatternIterView<'a> {
     prev: Option<&'a HapticPattern>,
     curr: &'a HapticPattern,
     start_angle: Angle,
     stop_angle: Angle,
-}
-
-impl<'a> Iterator for PatternIterator<'a> {
-    type Item = PatternIterView<'a>;
-    fn next(&mut self) -> Option<Self::Item> {
-        None
-    }
-}
-
-pub struct PatternLayerState<'a>(PatternIterator<'a>, &'a PatternLayer);
-
-impl<'a> PatternLayerState<'a> {
-    pub fn new(pattern_layer: &'a PatternLayer) -> Self {
-        PatternLayerState(pattern_layer.iter(), pattern_layer)
-    }
-
-    pub fn sample(&self, angle: Angle) -> Option<HapticPattern> {
-        None
-    }
 }
 
 #[cfg(test)]
@@ -226,6 +306,57 @@ mod tests {
     use super::*;
     extern crate std;
     use crate::pattern::tests::alloc::vec;
+
+    #[test]
+    fn test_pattern_find() {
+        let layer = PatternLayer {
+            activation_zone: 0.2,
+            deactivation_zone: 0.15,
+            components: vec![SequenceComponent {
+                pattern: HapticPattern {
+                    commands: vec![Command::Torque(1.1)],
+                    multiply: 1,
+                    repeat: 1,
+                },
+                width: 1.5,
+                repeat: 2,
+            }],
+        };
+        let mut state = layer.make_state();
+        assert_matches!(
+            state.find(&layer, 0.0),
+            Some(PatternIterView {
+                start_angle: 0.0,
+                stop_angle: 1.5,
+                ..
+            })
+        );
+        assert_matches!(
+            state.find(&layer, 1.5),
+            Some(PatternIterView {
+                start_angle: 0.0,
+                stop_angle: 1.5,
+                ..
+            })
+        );
+        assert_matches!(
+            state.find(&layer, 2.0),
+            Some(PatternIterView {
+                start_angle: 1.5,
+                stop_angle: 3.0,
+                ..
+            })
+        );
+        assert_matches!(state.find(&layer, 3.5), None);
+        assert_matches!(
+            state.find(&layer, 1.0),
+            Some(PatternIterView {
+                start_angle: 0.0,
+                stop_angle: 1.5,
+                ..
+            })
+        );
+    }
 
     #[test]
     fn test_pattern_sampling_basics() {
@@ -242,8 +373,8 @@ mod tests {
                 repeat: 1,
             }],
         };
-        let state = PatternLayerState::new(&layer);
-        assert_matches!(state.sample(1.25), None);
-        assert_matches!(state.sample(1.35), Some(_));
+        let mut state = layer.make_state();
+        assert_matches!(state.sample(&layer, 1.25), None);
+        assert_matches!(state.sample(&layer, 1.35), Some(_));
     }
 }
