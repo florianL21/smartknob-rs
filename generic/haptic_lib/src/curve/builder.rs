@@ -567,7 +567,7 @@ mod tests {
 
     #[test]
     fn test_curve_instantiate_invalid_segment_ref_error() {
-        let mut builder = CurveBuilder::new();
+        let builder = CurveBuilder::new();
         let segment = SegmentBuilderRef(5);
         let curve = builder.push(segment).finish(0.0);
 

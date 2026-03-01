@@ -34,7 +34,7 @@ pub enum PatternLayerError {
 }
 
 /// A single command in a command sequence
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub enum Command {
     /// Apply torque
     Torque(f32),
@@ -200,12 +200,20 @@ impl PatternLayer {
     }
 }
 
-struct PatternLayerState<'a> {
+#[derive(PartialEq)]
+enum ActiveZone {
+    Upper,
+    Lower,
+    None,
+}
+
+pub struct PatternLayerState<'a> {
     prev: Option<&'a HapticPattern>,
     curr: &'a SequenceComponent,
     index: usize,
     layer_len: usize,
     start_angle: Angle,
+    active_zone: ActiveZone,
 }
 
 fn check_within<'a>(
@@ -235,28 +243,30 @@ impl<'a> PatternLayerState<'a> {
             layer_len: layer.len(),
             index: 0,
             start_angle: 0.0,
+            active_zone: ActiveZone::None,
         }
     }
 
     fn find(&mut self, layer: &'a PatternLayer, angle: Angle) -> Option<PatternIterView<'a>> {
-        let curr = layer.get(self.index)?;
-        let stop_angle = self.start_angle + curr.width;
-        if let Some(curr) = check_within(angle, curr, self.prev, self.start_angle, stop_angle) {
+        let stop_angle = self.start_angle + self.curr.width;
+        if let Some(curr) = check_within(angle, self.curr, self.prev, self.start_angle, stop_angle)
+        {
             // No need to do anything. We are already on the correct component
             return Some(curr);
         } else if angle > stop_angle {
             // Need to search forward
             self.index += 1;
+            self.start_angle = stop_angle;
             for comp in layer.iter().skip(self.index) {
-                self.start_angle += comp.width;
                 self.prev = layer.get(self.index - 1).map(|c| &c.pattern);
                 self.curr = comp;
                 let stop_angle = self.start_angle + comp.width;
                 if let Some(curr) =
-                    check_within(angle, curr, self.prev, self.start_angle, stop_angle)
+                    check_within(angle, self.curr, self.prev, self.start_angle, stop_angle)
                 {
                     return Some(curr);
                 }
+                self.start_angle += stop_angle;
             }
         } else if angle < self.start_angle {
             // Need to search backwards
@@ -265,7 +275,8 @@ impl<'a> PatternLayerState<'a> {
                 return None;
             }
             self.index -= 1;
-            for comp in layer.rev_iter().skip(self.layer_len - self.index) {
+            self.start_angle -= self.curr.width;
+            for comp in layer.rev_iter().skip(self.layer_len - 1 - self.index) {
                 self.start_angle -= comp.width;
                 self.prev = if self.index == 0 {
                     None
@@ -275,7 +286,7 @@ impl<'a> PatternLayerState<'a> {
                 self.curr = comp;
                 let stop_angle = self.start_angle + comp.width;
                 if let Some(curr) =
-                    check_within(angle, curr, self.prev, self.start_angle, stop_angle)
+                    check_within(angle, self.curr, self.prev, self.start_angle, stop_angle)
                 {
                     return Some(curr);
                 }
@@ -285,8 +296,45 @@ impl<'a> PatternLayerState<'a> {
         None
     }
 
-    pub fn sample(&mut self, layer: &'a PatternLayer, angle: Angle) -> Option<HapticPattern> {
-        let comp = self.find(layer, angle);
+    pub fn sample(&mut self, layer: &'a PatternLayer, angle: Angle) -> Option<&HapticPattern> {
+        if let Some(comp) = self.find(layer, angle) {
+            // First drop out of any active zone
+            match self.active_zone {
+                ActiveZone::Lower => {
+                    let lower_deactivation_zone = comp.start_angle + layer.deactivation_zone / 2.0;
+                    if angle > lower_deactivation_zone {
+                        self.active_zone = ActiveZone::None;
+                    }
+                }
+                ActiveZone::Upper => {
+                    let upper_deactivation_zone = comp.stop_angle - layer.deactivation_zone / 2.0;
+                    if angle < upper_deactivation_zone {
+                        self.active_zone = ActiveZone::None;
+                    }
+                }
+                _ => {}
+            }
+            match self.active_zone {
+                ActiveZone::None => {
+                    let lower_activation_zone = comp.start_angle + layer.activation_zone / 2.0;
+                    if angle < lower_activation_zone {
+                        self.active_zone = ActiveZone::Lower;
+                        return comp.prev;
+                    }
+                    let upper_activation_zone = comp.stop_angle - layer.activation_zone / 2.0;
+                    if angle > upper_activation_zone {
+                        self.active_zone = ActiveZone::Upper;
+                        return Some(comp.curr);
+                    }
+                }
+                ActiveZone::Lower => {
+                    return None;
+                }
+                ActiveZone::Upper => {
+                    return None;
+                }
+            }
+        }
         None
     }
 }
@@ -306,6 +354,14 @@ mod tests {
     use super::*;
     extern crate std;
     use crate::pattern::tests::alloc::vec;
+
+    macro_rules! assert_haptic_pattern {
+        ($expression:expr, $($pattern:tt)+) => {
+            let v = $expression;
+            assert_matches!(v, Some(_));
+            assert_matches!(v.unwrap().commands[..], $($pattern)+);
+        };
+    }
 
     #[test]
     fn test_pattern_find() {
@@ -359,10 +415,50 @@ mod tests {
     }
 
     #[test]
-    fn test_pattern_sampling_basics() {
+    fn test_pattern_find_previous() {
         let layer = PatternLayer {
             activation_zone: 0.2,
             deactivation_zone: 0.15,
+            components: vec![
+                SequenceComponent {
+                    pattern: HapticPattern {
+                        commands: vec![Command::Torque(1.5)],
+                        multiply: 1,
+                        repeat: 1,
+                    },
+                    width: 0.0,
+                    repeat: 1,
+                },
+                SequenceComponent {
+                    pattern: HapticPattern {
+                        commands: vec![Command::Torque(1.1)],
+                        multiply: 1,
+                        repeat: 1,
+                    },
+                    width: 1.5,
+                    repeat: 2,
+                },
+            ],
+        };
+        let mut state = layer.make_state();
+        let res = state.find(&layer, 0.1);
+        assert_matches!(
+            res,
+            Some(PatternIterView {
+                start_angle: 0.0,
+                stop_angle: 1.5,
+                prev: Some(_),
+                ..
+            })
+        );
+        assert_haptic_pattern!(res.as_ref().unwrap().prev, [Command::Torque(1.5)]);
+    }
+
+    #[test]
+    fn test_pattern_sampling_basics() {
+        let layer = PatternLayer {
+            activation_zone: 0.15,
+            deactivation_zone: 0.2,
             components: vec![SequenceComponent {
                 pattern: HapticPattern {
                     commands: vec![Command::Torque(1.1)],
@@ -374,7 +470,101 @@ mod tests {
             }],
         };
         let mut state = layer.make_state();
-        assert_matches!(state.sample(&layer, 1.25), None);
-        assert_matches!(state.sample(&layer, 1.35), Some(_));
+        // |<------- 1.5 ------->|
+        // **#-----------------#**
+        //    |<---- 1.3 ---->|
+        // |<------- 1.4 ---->|
+        assert_matches!(state.sample(&layer, 1.4), None);
+        assert_matches!(state.sample(&layer, 1.46), Some(_));
+    }
+
+    #[test]
+    fn test_pattern_with_nothing_at_lower_bound() {
+        let layer = PatternLayer {
+            activation_zone: 0.15,
+            deactivation_zone: 0.2,
+            components: vec![SequenceComponent {
+                pattern: HapticPattern {
+                    commands: vec![Command::Torque(1.1)],
+                    multiply: 1,
+                    repeat: 1,
+                },
+                width: 1.5,
+                repeat: 1,
+            }],
+        };
+        let mut state = layer.make_state();
+        assert_matches!(state.sample(&layer, 0.06), None);
+    }
+
+    #[test]
+    fn test_pattern_with_zero_width_first_element() {
+        let layer = PatternLayer {
+            activation_zone: 0.15,
+            deactivation_zone: 0.2,
+            components: vec![
+                SequenceComponent {
+                    pattern: HapticPattern {
+                        commands: vec![Command::Torque(1.5)],
+                        multiply: 1,
+                        repeat: 1,
+                    },
+                    width: 0.0,
+                    repeat: 1,
+                },
+                SequenceComponent {
+                    pattern: HapticPattern {
+                        commands: vec![Command::Torque(1.1)],
+                        multiply: 1,
+                        repeat: 1,
+                    },
+                    width: 1.5,
+                    repeat: 1,
+                },
+            ],
+        };
+        let mut state = layer.make_state();
+        assert_haptic_pattern!(state.sample(&layer, 0.06), [Command::Torque(1.5)]);
+    }
+
+    #[test]
+    fn test_pattern_activation_deactivation_mechanic() {
+        let layer = PatternLayer {
+            activation_zone: 0.15,
+            deactivation_zone: 0.2,
+            components: vec![
+                SequenceComponent {
+                    pattern: HapticPattern {
+                        commands: vec![Command::Torque(1.5)],
+                        multiply: 1,
+                        repeat: 1,
+                    },
+                    width: 0.0,
+                    repeat: 1,
+                },
+                SequenceComponent {
+                    pattern: HapticPattern {
+                        commands: vec![Command::Torque(1.1)],
+                        multiply: 1,
+                        repeat: 1,
+                    },
+                    width: 1.5,
+                    repeat: 1,
+                },
+            ],
+        };
+        let mut state = layer.make_state();
+        // State starts off as being outside any zone
+        assert_matches!(state.sample(&layer, 0.4), None);
+        // entering into the activation zone for the first time will yield the pattern
+        assert_haptic_pattern!(state.sample(&layer, 0.06), [Command::Torque(1.5)]);
+        // moving within a zone will not yield the pattern again
+        assert_matches!(state.sample(&layer, 0.05), None);
+        // Leaving the zone
+        assert_matches!(state.sample(&layer, 0.3), None);
+        // Entering the zone again will yield a pattern
+        assert_haptic_pattern!(state.sample(&layer, 0.06), [Command::Torque(1.5)]);
+        // Entering a one zone while being in a different zone will also yield its pattern
+        assert_haptic_pattern!(state.sample(&layer, 1.45), [Command::Torque(1.1)]);
     }
 }

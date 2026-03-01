@@ -52,9 +52,11 @@ impl<T> Builder<T> {
     }
 
     /// Finally build the new layer.
-    /// - `activation_zone` is the width of the zone which upon entering will activate a pattern
-    /// - `deactivation_zone` is the percentage of the activation zone and must be below 1.0
-    /// Note that the `activation_zone` is an absolute value in radiants while the `deactivation_zone` is a percentage of the `activation_zone`.
+    /// - `zone` is the width of the zone within which a haptic pattern playback may be triggered
+    /// - `activation_percent` is a the percentage of the `zone` and must be below 1.0.
+    /// The end result will be 2 overlapping zones, the smaller of them is the `activation zone` and the lager one the `deactivation zone`.
+    /// They overlap and the `activation zone` will be centered within the `deactivation zone`.
+    /// This is done to "de-bounce" the triggering of a haptic pattern playback.
     /// # Example usage:
     /// ```
     /// use haptic_lib::{HapticPattern, PatternLayer};
@@ -65,13 +67,13 @@ impl<T> Builder<T> {
     /// ```
     pub fn build(
         self,
-        activation_zone: Angle,
-        deactivation_zone: Angle,
+        zone: Angle,
+        activation_percent: Angle,
     ) -> Result<PatternLayer, PatternLayerError> {
         let layer = PatternLayer {
             components: self.components,
-            activation_zone,
-            deactivation_zone: activation_zone * deactivation_zone,
+            activation_zone: zone * activation_percent,
+            deactivation_zone: zone,
         };
         Ok(layer.validate()?)
     }
