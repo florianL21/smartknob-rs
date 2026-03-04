@@ -30,7 +30,7 @@ use embassy_sync::{
 use embassy_time::{Duration, Instant, Ticker, Timer};
 use fixed::types::I16F16;
 use foc::pwm::Modulation;
-use haptic_lib::{Command, CurveInstance, HapticPlayer, Playback};
+use haptic_lib::{Command, HapticInstances, HapticPlayer, Playback};
 use log::{error, info, warn};
 
 use crate::{
@@ -242,12 +242,12 @@ impl<
     /// If no modification of the curve is desired this should be set to 1.0
     pub async fn set_curve(
         &mut self,
-        curve: &'a CurveInstance,
+        haptic_config: &'a HapticInstances,
         curve_scale: f32,
     ) -> Result<(), HapticSystemError<E::Error>> {
         let meas = self.haptics.update_encoder().await?;
         self.player = Some(
-            HapticPlayer::new(meas.position.to_num(), curve)
+            HapticPlayer::new(meas.position.to_num(), haptic_config)
                 .with_scale(self.curve_scale * curve_scale),
         );
         Ok(())

@@ -4,7 +4,7 @@ use crate::curve::components::{
     BezierComponent, ConstComponent, CurveComponentInstance, LinearComponent,
 };
 use crate::curve::{SegmentInstance, SegmentReference};
-use crate::{Angle, CurveError, CurveInstance, Value};
+use crate::{Angle, CurveError, CurveInstance, HapticCurveConfig, Value};
 
 use alloc::boxed::Box;
 use alloc::vec::Vec;
@@ -133,23 +133,17 @@ impl CurveComponent {
         }
         Ok(curve)
     }
-
-    /// Get the width of this curve component
-    pub(crate) fn width(&self) -> &f32 {
-        match self {
-            CurveComponent::Const { width, .. } => width,
-            CurveComponent::Bezier3 { width, .. } => width,
-            CurveComponent::Bezier4 { width, .. } => width,
-            CurveComponent::Bezier5 { width, .. } => width,
-            CurveComponent::Bezier6 { width, .. } => width,
-            CurveComponent::Linear { width, .. } => width,
-        }
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CurveSegment {
     pub(crate) components: Vec<CurveComponent>,
+}
+
+impl Default for CurveSegment {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl CurveSegment {
@@ -162,7 +156,7 @@ impl CurveSegment {
     ///
     /// let mut builder = HapticCurve::builder();
     /// let segment = builder.new_segment(CurveSegment::new());
-    /// let curve = builder.push(segment).build(0.0);
+    /// let curve = builder.push(segment).finish(0.0);
     /// ```
     pub fn new() -> Self {
         Self {
@@ -184,7 +178,7 @@ impl CurveSegment {
     ///
     /// let mut builder = HapticCurve::builder();
     /// let segment = builder.new_segment(CurveSegment::new().add_const(5.0, 0.5));
-    /// let curve = builder.push(segment).build(0.0);
+    /// let curve = builder.push(segment).finish(0.0);
     /// ```
     pub fn add_const(self, width: f32, value: f32) -> Self {
         self.add_component(CurveComponent::Const { width, value })
@@ -199,7 +193,7 @@ impl CurveSegment {
     ///
     /// let mut builder = HapticCurve::builder();
     /// let segment = builder.new_segment(CurveSegment::new().add_linear(5.0, 0.0, 0.5));
-    /// let curve = builder.push(segment).build(0.0);
+    /// let curve = builder.push(segment).finish(0.0);
     /// ```
     pub fn add_linear(self, width: f32, start_value: f32, end_value: f32) -> Self {
         self.add_component(CurveComponent::Linear {
@@ -219,7 +213,7 @@ impl CurveSegment {
     ///
     /// let mut builder = HapticCurve::builder();
     /// let segment = builder.new_segment(CurveSegment::new().add_bezier3(5.0, [0.0, 0.0, 1.0]));
-    /// let curve = builder.push(segment).build(0.0);
+    /// let curve = builder.push(segment).finish(0.0);
     /// ```
     pub fn add_bezier3(self, width: f32, points: [f32; 3]) -> Self {
         self.add_component(CurveComponent::Bezier3 { width, points })
@@ -235,7 +229,7 @@ impl CurveSegment {
     ///
     /// let mut builder = HapticCurve::builder();
     /// let segment = builder.new_segment(CurveSegment::new().add_bezier4(5.0, [0.0, 0.0, 1.0, 1.0]));
-    /// let curve = builder.push(segment).build(0.0);
+    /// let curve = builder.push(segment).finish(0.0);
     /// ```
     pub fn add_bezier4(self, width: f32, points: [f32; 4]) -> Self {
         self.add_component(CurveComponent::Bezier4 { width, points })
@@ -251,7 +245,7 @@ impl CurveSegment {
     ///
     /// let mut builder = HapticCurve::builder();
     /// let segment = builder.new_segment(CurveSegment::new().add_bezier5(5.0, [0.0, 0.0, 0.2, 1.0, 1.0]));
-    /// let curve = builder.push(segment).build(0.0);
+    /// let curve = builder.push(segment).finish(0.0);
     /// ```
     pub fn add_bezier5(self, width: f32, points: [f32; 5]) -> Self {
         self.add_component(CurveComponent::Bezier5 { width, points })
@@ -267,7 +261,7 @@ impl CurveSegment {
     ///
     /// let mut builder = HapticCurve::builder();
     /// let segment = builder.new_segment(CurveSegment::new().add_bezier6(5.0, [0.0, 0.0, 0.1, 0.9, 1.0, 1.0]));
-    /// let curve = builder.push(segment).build(0.0);
+    /// let curve = builder.push(segment).finish(0.0);
     /// ```
     pub fn add_bezier6(self, width: f32, points: [f32; 6]) -> Self {
         self.add_component(CurveComponent::Bezier6 { width, points })
@@ -308,7 +302,7 @@ impl HapticCurve {
     ///
     /// let mut builder = HapticCurve::builder();
     /// let segment = builder.new_segment(CurveSegment::new().add_const(5.0, 0.5));
-    /// let curve = builder.push(segment).finish(0.0);
+    /// let curve = builder.push(segment).finish(0.0).without_pattern_layer();
     /// assert!(curve.instantiate().is_ok());
     /// ```
     pub fn instantiate(self) -> Result<CurveInstance, CurveError> {
@@ -346,42 +340,19 @@ impl HapticCurve {
 
         CurveInstance::new(segments, self.curve, self.start_angle)
     }
-
-    /// Get the start angle of the curve
-    ///
-    /// # Example usage:
-    /// ```
-    /// use haptic_lib::{HapticCurve, CurveSegment};
-    ///
-    /// let mut builder = HapticCurve::builder();
-    /// let segment = builder.new_segment(CurveSegment::new().add_const(5.0, 0.5));
-    /// let curve = builder.push(segment).finish(1.2);
-    /// assert_eq!(curve.start_angle(), 1.2);
-    /// ```
-    pub fn start_angle(&self) -> Angle {
-        self.start_angle
-    }
 }
 
 /// Builder for constructing haptic curves
+#[derive(Default)]
 pub struct CurveBuilder {
     segments: Vec<CurveSegment>,
     curve: Vec<SegmentReference>,
 }
 
-impl Default for CurveBuilder {
-    fn default() -> Self {
-        CurveBuilder {
-            segments: Vec::new(),
-            curve: Vec::new(),
-        }
-    }
-}
-
 #[derive(Debug, Clone, Copy)]
 pub struct SegmentBuilderRef(usize);
 
-impl<'a> CurveBuilder {
+impl CurveBuilder {
     /// Start constructing a new haptic curve
     ///
     /// # Example usage:
@@ -390,7 +361,7 @@ impl<'a> CurveBuilder {
     ///
     /// let mut builder = CurveBuilder::new();
     /// let segment = builder.new_segment(CurveSegment::new());
-    /// let curve = builder.push(segment).build(0.0);
+    /// let curve = builder.push(segment).finish(0.0);
     /// ```
     pub fn new() -> Self {
         Self::default()
@@ -422,7 +393,12 @@ impl<'a> CurveBuilder {
     ///
     /// let mut builder = CurveBuilder::new();
     /// let segment = builder.new_segment(CurveSegment::new().add_const(5.0, 0.5));
-    /// let curve = builder.push(segment).build(0.0).unwrap();
+    /// let curve = builder
+    ///     .push(segment)
+    ///     .finish(0.0)
+    ///     .without_pattern_layer()
+    ///     .instantiate()
+    ///     .unwrap();
     ///
     /// assert_matches!(HapticPlayer::new(0.0, &curve).play(2.0), Playback::Torque(0.5));
     /// ```
@@ -444,7 +420,12 @@ impl<'a> CurveBuilder {
     ///
     /// let mut builder = CurveBuilder::new();
     /// let segment = builder.new_segment(CurveSegment::new().add_const(5.0, 0.5));
-    /// let curve = builder.push_scaled(segment, 2.0).build(0.0).unwrap();
+    /// let curve = builder
+    ///     .push_scaled(segment, 2.0)
+    ///     .finish(0.0)
+    ///     .without_pattern_layer()
+    ///     .instantiate()
+    ///     .unwrap();
     ///
     /// assert_matches!(HapticPlayer::new(0.0, &curve).play(3.0), Playback::Torque(1.0));
     /// ```
@@ -466,7 +447,12 @@ impl<'a> CurveBuilder {
     ///
     /// let mut builder = CurveBuilder::new();
     /// let segment = builder.new_segment(CurveSegment::new().add_const(1.0, 0.5));
-    /// let curve = builder.push_repeated(segment, 3).build(0.0).unwrap();
+    /// let curve = builder
+    ///     .push_repeated(segment, 3)
+    ///     .finish(0.0)
+    ///     .without_pattern_layer()
+    ///     .instantiate()
+    ///     .unwrap();
     ///
     /// assert_matches!(HapticPlayer::new(0.0, &curve).play(2.5), Playback::Torque(0.5));
     /// ```
@@ -488,7 +474,12 @@ impl<'a> CurveBuilder {
     ///
     /// let mut builder = CurveBuilder::new();
     /// let segment = builder.new_segment(CurveSegment::new().add_const(1.0, 0.5));
-    /// let curve = builder.push_repeated_scaled(segment, 3, 2.0).build(0.0).unwrap();
+    /// let curve = builder
+    ///     .push_repeated_scaled(segment, 3, 2.0)
+    ///     .finish(0.0)
+    ///     .without_pattern_layer()
+    ///     .instantiate()
+    ///     .unwrap();
     ///
     /// assert_matches!(HapticPlayer::new(0.0, &curve).play(1.5), Playback::Torque(1.0));
     /// ```
@@ -506,9 +497,7 @@ impl<'a> CurveBuilder {
         self
     }
 
-    /// Crate the final completed curve.
-    /// This can be used to create an object which can be serialized, but cannot yet be played back.
-    pub fn finish(self, start_angle: Angle) -> HapticCurve {
+    fn into_haptic_curve(self, start_angle: Angle) -> HapticCurve {
         HapticCurve {
             segments: self.segments,
             curve: self.curve,
@@ -516,11 +505,10 @@ impl<'a> CurveBuilder {
         }
     }
 
-    /// Finalize the curve building process and return the constructed curve
-    /// By specifying `start_angle` you may shift where the start point of the curve is located at as an absolute position.
-    /// When a curve starts playing the initial angle will be zero
-    pub fn build(self, start_angle: Angle) -> Result<CurveInstance, CurveError> {
-        self.finish(start_angle).instantiate()
+    /// Crate the final completed curve.
+    /// This can be used to create an object which can be serialized, but cannot yet be played back.
+    pub fn finish(self, start_angle: Angle) -> HapticCurveConfig {
+        HapticCurveConfig::new(self.into_haptic_curve(start_angle))
     }
 }
 
@@ -528,39 +516,16 @@ impl<'a> CurveBuilder {
 mod tests {
     use matches::assert_matches;
 
-    use crate::{HapticPlayer, Playback};
+    use crate::Playback;
 
     use super::*;
     extern crate std;
 
     #[test]
-    fn test_builder_push_scaled_repeated_sampling_overshoot() {
-        let mut builder = CurveBuilder::new();
-        let segment = builder.new_segment(CurveSegment::new().add_const(1.0, 0.5));
-        let curve = builder
-            .push_repeated_scaled(segment, 3, 2.0)
-            .build(0.0)
-            .unwrap();
-
-        let mut player = HapticPlayer::new(0.0, &curve);
-        assert_matches!(player.play(5.0), Playback::Torque(1.0));
-    }
-
-    #[test]
-    fn test_builder_push_scaled_sampling_undershoot() {
-        let mut builder = CurveBuilder::new();
-        let segment = builder.new_segment(CurveSegment::new().add_const(1.0, 0.5));
-        let curve = builder.push_scaled(segment, 2.0).build(0.0).unwrap();
-
-        let mut player = HapticPlayer::new(0.0, &curve);
-        assert_matches!(player.play(-1.0), Playback::Torque(1.0));
-    }
-
-    #[test]
     fn test_curve_instantiate_value_out_of_range_error() {
         let mut builder = CurveBuilder::new();
         let segment = builder.new_segment(CurveSegment::new().add_const(1.0, 1.5));
-        let curve = builder.push(segment).finish(0.0);
+        let curve = builder.push(segment).into_haptic_curve(0.0);
 
         assert_matches!(curve.instantiate(), Err(CurveError::ValueOutOfRange(0, 0)));
     }
@@ -569,7 +534,7 @@ mod tests {
     fn test_curve_instantiate_invalid_segment_ref_error() {
         let builder = CurveBuilder::new();
         let segment = SegmentBuilderRef(5);
-        let curve = builder.push(segment).finish(0.0);
+        let curve = builder.push(segment).into_haptic_curve(0.0);
 
         assert_matches!(
             curve.instantiate(),
@@ -581,7 +546,7 @@ mod tests {
     fn test_curve_instantiate_scaled_value_out_of_bounds_error() {
         let mut builder = CurveBuilder::new();
         let segment = builder.new_segment(CurveSegment::new().add_const(1.0, 1.0));
-        let curve = builder.push_scaled(segment, 2.0).finish(0.0);
+        let curve = builder.push_scaled(segment, 2.0).into_haptic_curve(0.0);
 
         assert_matches!(curve.instantiate(), Err(CurveError::ScaleOutOfBounds(0)));
     }

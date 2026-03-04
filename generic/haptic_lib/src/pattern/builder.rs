@@ -11,6 +11,8 @@ use core::{marker::PhantomData, time::Duration};
 #[derive(Default)]
 pub struct _Empty {}
 /// Marker for a builder which has at least one component
+pub struct _NonRepeatable {}
+/// Marker for a builder which has at least one component
 pub struct _NonEmpty {}
 
 /// A builder for creating a haptic pattern lr definition
@@ -22,10 +24,10 @@ pub struct Builder<T> {
 }
 
 impl<T> Builder<T> {
-    fn to_non_empty(self) -> Builder<_NonEmpty> {
+    fn into_non_empty(self) -> Builder<_NonEmpty> {
         Builder {
             components: self.components,
-            phantom: PhantomData::default(),
+            phantom: PhantomData,
         }
     }
     /// Add some space before the given `pattern`.
@@ -38,13 +40,13 @@ impl<T> Builder<T> {
     /// let layer = PatternLayer::builder()
     ///        .with_space(1.0, HapticPattern::builder().torque(1.0).finish())
     ///        .insert_once()
-    ///        .build(0.2, 0.8).unwrap();
+    ///        .build(0.2, 0.1).unwrap();
     /// ```
     pub fn with_space(self, width: Angle, pattern: HapticPattern) -> SequenceBuilder<_NonEmpty> {
         SequenceBuilder {
-            root_builder: self.to_non_empty(),
+            root_builder: self.into_non_empty(),
             sequence: SequenceComponent {
-                width: width,
+                width,
                 pattern,
                 repeat: 1,
             },
@@ -52,30 +54,41 @@ impl<T> Builder<T> {
     }
 
     /// Finally build the new layer.
-    /// - `zone` is the width of the zone within which a haptic pattern playback may be triggered
-    /// - `activation_percent` is a the percentage of the `zone` and must be below 1.0.
+    /// - `activation_zone` is the width of the zone which, upon entering, will trigger the playback of a haptic pattern
+    /// - `deactivation_overspill` is how much extra to add at each end of the activation zone to "debounce" activations.
+    ///
     /// The end result will be 2 overlapping zones, the smaller of them is the `activation zone` and the lager one the `deactivation zone`.
     /// They overlap and the `activation zone` will be centered within the `deactivation zone`.
     /// This is done to "de-bounce" the triggering of a haptic pattern playback.
+    /// Consider the following visualization:
+    ///
+    /// ```text
+    /// deactivation_overspill
+    ///       |<->||<-- activation_zone -->|
+    /// ------+++++#########################+++++------
+    ///       |    |<-- activation zone -->|    |
+    ///       |<------ deactivation zone ------>|
+    /// ```
+    ///
     /// # Example usage:
     /// ```
     /// use haptic_lib::{HapticPattern, PatternLayer};
     /// let layer = PatternLayer::builder()
     ///        .with_space(1.0, HapticPattern::builder().torque(1.0).finish())
     ///        .insert_once()
-    ///        .build(0.2, 0.8).unwrap();
+    ///        .build(0.2, 0.1).unwrap();
     /// ```
     pub fn build(
         self,
-        zone: Angle,
-        activation_percent: Angle,
+        activation_zone: Angle,
+        deactivation_overspill: Angle,
     ) -> Result<PatternLayer, PatternLayerError> {
         let layer = PatternLayer {
             components: self.components,
-            activation_zone: zone * activation_percent,
-            deactivation_zone: zone,
+            activation_zone,
+            deactivation_zone: activation_zone + deactivation_overspill * 2.0,
         };
-        Ok(layer.validate()?)
+        layer.validate()
     }
 }
 
@@ -90,11 +103,14 @@ impl Builder<_Empty> {
     /// let layer = PatternLayer::builder()
     ///        .at_zero(HapticPattern::builder().torque(1.0).finish())
     ///        .insert_once()
-    ///        .build(0.2, 0.8);
+    ///        .build(0.2, 0.1);
     /// ```
-    pub fn at_zero(self, pattern: HapticPattern) -> SequenceBuilder<_NonEmpty> {
+    pub fn at_zero(self, pattern: HapticPattern) -> SequenceBuilder<_NonRepeatable> {
         SequenceBuilder {
-            root_builder: self.to_non_empty(),
+            root_builder: Builder {
+                components: self.components,
+                phantom: PhantomData,
+            },
             sequence: SequenceComponent {
                 width: 0.0,
                 pattern,
@@ -126,7 +142,7 @@ impl<M> HapticPatternBuilder<M> {
         HapticPatternBuilder {
             commands: self.commands,
             width: self.width,
-            phantom: PhantomData::default(),
+            phantom: PhantomData,
         }
     }
 }
@@ -145,7 +161,7 @@ impl HapticPatternBuilder<_NonEmpty> {
         HapticPatternBuilder {
             commands: self.commands,
             width: self.width,
-            phantom: PhantomData::default(),
+            phantom: PhantomData,
         }
     }
 
@@ -221,9 +237,9 @@ impl SequenceBuilder<_NonEmpty> {
     /// ```
     /// use haptic_lib::{HapticPattern, PatternLayer};
     /// let layer = PatternLayer::builder()
-    ///        .at_zero(HapticPattern::builder().torque(1.0).finish())
+    ///        .with_space(0.2, HapticPattern::builder().torque(1.0).finish())
     ///        .insert_repeated(2)
-    ///        .build(0.2, 0.8);
+    ///        .build(0.2, 0.1);
     /// ```
     pub fn insert_repeated(mut self, n: usize) -> Builder<_NonEmpty> {
         self.sequence.repeat = n;
@@ -240,13 +256,13 @@ impl<T> SequenceBuilder<T> {
     /// let layer = PatternLayer::builder()
     ///        .at_zero(HapticPattern::builder().torque(1.0).finish())
     ///        .insert_once()
-    ///        .build(0.2, 0.8);
+    ///        .build(0.2, 0.1);
     /// ```
     pub fn insert_once(mut self) -> Builder<_NonEmpty> {
         self.root_builder.components.push(self.sequence);
         Builder {
             components: self.root_builder.components,
-            phantom: PhantomData::default(),
+            phantom: PhantomData,
         }
     }
 }
@@ -263,7 +279,7 @@ mod tests {
         let res = PatternLayer::builder()
             .at_zero(HapticPattern::builder().torque(1.1).finish())
             .insert_once()
-            .build(0.2, 0.8);
+            .build(0.2, 0.1);
         assert_matches!(res, Err(PatternLayerError::TorqueOutOfBounds(0)));
     }
 
@@ -272,7 +288,7 @@ mod tests {
         let res = PatternLayer::builder()
             .at_zero(HapticPattern::builder().torque(-1.1).finish())
             .insert_once()
-            .build(0.2, 0.8);
+            .build(0.2, 0.1);
         assert_matches!(res, Err(PatternLayerError::TorqueOutOfBounds(0)));
     }
 
@@ -281,10 +297,10 @@ mod tests {
         let res = PatternLayer::builder()
             .at_zero(HapticPattern::builder().torque(1.0).finish())
             .insert_once()
-            .build(0.2, 2.0);
+            .build(0.2, 0.0);
         assert_matches!(
             res,
-            Err(PatternLayerError::DeactivationRatioInvalid(0.4, 0.2))
+            Err(PatternLayerError::DeactivationRatioInvalid(0.2, 0.2))
         );
     }
 
@@ -295,7 +311,7 @@ mod tests {
             .insert_once()
             .with_space(0.1, HapticPattern::builder().torque(1.0).finish())
             .insert_once()
-            .build(0.2, 0.8);
+            .build(0.2, 0.1);
         assert_matches!(res, Err(PatternLayerError::ActivationZoneOverlap(1)));
     }
 }

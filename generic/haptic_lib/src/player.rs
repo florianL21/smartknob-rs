@@ -1,11 +1,11 @@
 use crate::{
     Angle, Command, HapticPattern, Value,
-    curve::{CurveInstance, CurveState},
+    config::{HapticInstances, HapticStates},
 };
 
 /// This struct holds the state for playing back a haptic curve and it is the main interface for playing back haptic curves
 pub struct HapticPlayer<'a> {
-    curve: CurveState<'a>,
+    states: HapticStates<'a>,
     start_offset: Angle,
     scale: Value,
 }
@@ -23,7 +23,7 @@ impl ScaledPattern<'_> {
 }
 
 impl<'a> ScaledPattern<'a> {
-    fn _new(pattern: &'a HapticPattern, scale: f32) -> Self {
+    fn new(pattern: &'a HapticPattern, scale: f32) -> Self {
         Self { pattern, scale }
     }
 }
@@ -37,9 +37,9 @@ pub enum Playback<'a> {
 impl<'a> HapticPlayer<'a> {
     /// Create a new player state for plying back a specific curve
     /// `start_offset` defines the angle where the curve playback will start
-    pub fn new(start_offset: Angle, curve: &'a CurveInstance) -> Self {
+    pub fn new(start_offset: Angle, haptic_config_instance: &'a HapticInstances) -> Self {
         HapticPlayer {
-            curve: CurveState::new(curve),
+            states: haptic_config_instance.make_state(),
             start_offset,
             scale: 1.0,
         }
@@ -55,6 +55,51 @@ impl<'a> HapticPlayer<'a> {
     /// Note that this function is not stateless
     pub fn play(&mut self, position: Angle) -> Playback<'_> {
         let angle = position - self.start_offset;
-        Playback::Torque(self.curve.sample(angle) * self.scale)
+        if let Some((ps, pl)) = &mut self.states.pattern
+            && let Some(pattern) = ps.sample(pl, angle)
+        {
+            return Playback::Sequence(ScaledPattern::new(pattern, self.scale));
+        }
+        Playback::Torque(self.states.curve.sample(angle) * self.scale)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use matches::assert_matches;
+
+    use crate::{CurveBuilder, CurveSegment, HapticCurveConfig, HapticPlayer, Playback};
+
+    use super::*;
+    extern crate std;
+
+    #[test]
+    fn test_builder_push_scaled_repeated_sampling_overshoot() {
+        let mut builder = CurveBuilder::new();
+        let segment = builder.new_segment(CurveSegment::new().add_const(1.0, 0.5));
+        let curve = builder
+            .push_repeated_scaled(segment, 3, 2.0)
+            .finish(0.0)
+            .without_pattern_layer()
+            .instantiate()
+            .unwrap();
+
+        let mut player = HapticPlayer::new(0.0, &curve);
+        assert_matches!(player.play(5.0), Playback::Torque(1.0));
+    }
+
+    #[test]
+    fn test_builder_push_scaled_sampling_undershoot() {
+        let mut builder = CurveBuilder::new();
+        let segment = builder.new_segment(CurveSegment::new().add_const(1.0, 0.5));
+        let curve = builder
+            .push_scaled(segment, 2.0)
+            .finish(0.0)
+            .without_pattern_layer()
+            .instantiate()
+            .unwrap();
+
+        let mut player = HapticPlayer::new(0.0, &curve);
+        assert_matches!(player.play(-1.0), Playback::Torque(1.0));
     }
 }

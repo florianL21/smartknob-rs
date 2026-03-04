@@ -9,11 +9,13 @@ use charming::{
     element::{AxisType, Tooltip},
     series::Line,
 };
-use haptic_lib::{CurveBuilder, CurveSegment, HapticCurve, HapticPlayer, Playback};
+use haptic_lib::{
+    CurveBuilder, CurveSegment, HapticCurve, HapticCurveConfig, HapticPlayer, Playback,
+};
 
-fn create_graph(start: f32, curve: HapticCurve, sample_step: f32) -> Chart {
+fn create_graph(start: f32, curve: HapticCurveConfig, sample_step: f32) -> Chart {
     let curve_start_angle = curve.start_angle();
-    let curve_inst = curve.instantiate().unwrap();
+    let curve_inst = curve.without_pattern_layer().instantiate().unwrap();
     let width = curve_inst.width();
     println!("{curve_inst:#?}");
     let mut player = HapticPlayer::new(start, &curve_inst);

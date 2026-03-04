@@ -12,7 +12,7 @@ use esp_hal::{
     time::Rate,
 };
 use foc::pwm::SpaceVector;
-use haptic_lib::{CurveBuilder, CurveSegment};
+use haptic_lib::{CurveBuilder, CurveSegment, HapticPattern, PatternLayer};
 use log::info;
 use smartknob_core::{
     haptic_core::{CalibrationData, DetailedSettings, SmartknobHapticCore, encoder::MT6701Spi},
@@ -82,12 +82,25 @@ pub async fn update_foc(
             .add_bezier3(0.2, [0.7, 0.0, 0.0]),
     );
     let zero = curve_builder.new_segment(CurveSegment::new().add_const(1.0, 0.0));
-    let detent_curve = curve_builder
-        .push_repeated(detent, 25)
-        .push(zero)
-        .build(0.0)
+    let pattern = HapticPattern::builder()
+        .torque(-1.0)
+        .torque(1.0)
+        .multiplied(4);
+    let patterns = PatternLayer::builder()
+        .at_zero(pattern.clone())
+        .insert_once()
+        .with_space(0.2, pattern)
+        .insert_repeated(25)
+        .build(0.05, 0.05)
         .unwrap();
-    let _ = haptic_core.set_curve(&detent_curve, 0.7).await;
+    let detent_curve = curve_builder
+        .push(zero)
+        .push_repeated(detent, 25)
+        .finish(0.0)
+        .with_pattern_layer(patterns)
+        .instantiate()
+        .unwrap();
+    let _ = haptic_core.set_curve(&detent_curve, 1.0).await;
     loop {
         haptic_core.run(settings_store_signals).await;
     }

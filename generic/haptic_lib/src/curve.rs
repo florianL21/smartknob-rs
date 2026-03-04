@@ -76,7 +76,7 @@ pub struct SegmentReference {
 impl SegmentReference {
     fn get<'a>(
         &'a self,
-        segments: &'a Vec<SegmentInstance>,
+        segments: &'a [SegmentInstance],
         index: usize,
     ) -> Option<(&'a dyn CurveComponentInstance, Value)> {
         let segment = self.segment(segments);
@@ -86,16 +86,16 @@ impl SegmentReference {
         }
         segment
             .components
-            .get(index % num_comps as usize)
+            .get(index % num_comps)
             .map(|i| (i.as_ref(), self.scale))
     }
 
-    fn segment<'a>(&'a self, segments: &'a Vec<SegmentInstance>) -> &'a SegmentInstance {
+    fn segment<'a>(&'a self, segments: &'a [SegmentInstance]) -> &'a SegmentInstance {
         // here we assume that the definition of the curve itself is correct. so this unwrap should never fail
         segments.get(self.reference).unwrap()
     }
 
-    fn len(&self, segments: &Vec<SegmentInstance>) -> usize {
+    fn len(&self, segments: &[SegmentInstance]) -> usize {
         self.segment(segments).components.len() * self.repeat as usize
     }
 }
@@ -147,7 +147,7 @@ impl CurveInstance {
             .get(last_ref.reference)
             .ok_or(CurveError::ReferenceIndexInvalid(last_ref.reference))?
             .components
-            .first()
+            .last()
             .ok_or(CurveError::EmptyCurve)?
             .end()
             * last_ref.scale;
@@ -178,6 +178,10 @@ impl CurveInstance {
         None
     }
 
+    pub(crate) fn make_state<'a>(&'a self) -> CurveState<'a> {
+        CurveState::new(self)
+    }
+
     pub fn width(&self) -> Angle {
         self.total_width
     }
@@ -187,6 +191,7 @@ impl CurveInstance {
     }
 }
 
+#[derive(Debug)]
 struct CurveIterator<'a> {
     index: usize,
     curve_inst: &'a CurveInstance,
@@ -278,10 +283,10 @@ impl<'a> Iterator for CurveIterator<'a> {
             }
             self.start_angle_next = view.stop_angle;
             self.current = IteratorPosition::Within(view.clone());
-            return Some(view);
+            Some(view)
         } else {
             self.current = IteratorPosition::Above;
-            return None;
+            None
         }
     }
 }
@@ -316,13 +321,14 @@ impl<'a> DoubleEndedIterator for CurveIterator<'a> {
             }
             self.stop_angle_next_back = view.start_angle;
             self.current = IteratorPosition::Within(view.clone());
-            return Some(view);
+            Some(view)
         } else {
-            return None;
+            None
         }
     }
 }
 
+#[derive(Debug)]
 pub struct CurveState<'a>(CurveIterator<'a>, &'a CurveInstance);
 
 impl<'a> CurveState<'a> {
@@ -331,12 +337,12 @@ impl<'a> CurveState<'a> {
     }
 
     fn search_forward(&mut self, angle: Angle) -> Value {
-        while let Some(comp) = self.0.next() {
+        for comp in self.0.by_ref() {
             if let PositionGauge::SpotOn(c) = comp.gauge_position(angle) {
                 return c.sample(angle - comp.start_angle) * comp.scale;
             }
         }
-        return self.1.end_value;
+        self.1.end_value
     }
 
     fn search_backward(&mut self, angle: Angle) -> Value {
@@ -345,7 +351,7 @@ impl<'a> CurveState<'a> {
                 return c.sample(angle - comp.start_angle) * comp.scale;
             }
         }
-        return self.1.start_value;
+        self.1.start_value
     }
 
     pub fn sample(&mut self, angle: Angle) -> Value {
@@ -358,9 +364,7 @@ impl<'a> CurveState<'a> {
             IteratorPosition::Within(curr) => match curr.gauge_position(angle) {
                 PositionGauge::Higher => self.search_forward(angle),
                 PositionGauge::Lower => self.search_backward(angle),
-                PositionGauge::SpotOn(c) => {
-                    return c.sample(angle - curr.start_angle) * curr.scale;
-                }
+                PositionGauge::SpotOn(c) => c.sample(angle - curr.start_angle) * curr.scale,
             },
             IteratorPosition::Above => self.search_backward(angle),
             IteratorPosition::Below => self.search_forward(angle),
