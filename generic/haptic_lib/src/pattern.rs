@@ -6,6 +6,7 @@ use crate::{
     Angle,
     pattern::builder::{_Empty, Builder, HapticPatternBuilder},
 };
+use alloc::boxed::Box;
 use alloc::vec::Vec;
 use core::{
     cmp::Ordering,
@@ -205,6 +206,68 @@ impl PatternLayer {
     }
 }
 
+pub struct PatternZone {
+    start: Angle,
+    end: Angle,
+}
+
+pub struct PatternSegment {
+    activate: PatternZone,
+    deactivate: PatternZone,
+    pattern: HapticPattern,
+}
+
+impl PatternSegment {
+    fn may_trigger(&self) -> Option<&HapticPattern> {
+        // TODO: implement logic to decide if the pattern should be triggered or not
+        Some(&self.pattern)
+    }
+}
+use core::iter::Peekable;
+pub struct PatternLayerState1<'a> {
+    iter: Option<Peekable<core::slice::Iter<'a, PatternSegment>>>,
+    components: Vec<PatternSegment>,
+    active: bool,
+}
+
+impl<'a> PatternLayerState1<'a> {
+    fn new(components: Vec<PatternSegment>) -> Self {
+        Self {
+            iter: None,
+            active: false,
+            components,
+        }
+    }
+
+    fn sample(&'a mut self, angle: Angle) -> Option<&'a HapticPattern> {
+        // make sure the iterator has been created
+        let iter = self.iter.get_or_insert(self.components.iter().peekable());
+
+        // we reached the end of the iterator. Turn it back once so that the logic below can figure out where we need to be
+        if iter.peek().is_none() {
+            let _ = iter.next_back();
+        }
+        if let Some(curr) = iter.peek() {
+            if angle < curr.deactivate.end {
+                // evaluate zones and decide if a pattern needs to be triggered
+                return curr.may_trigger();
+            } else if angle < curr.deactivate.start {
+                // need to go back
+                while let Some(p) = iter.next_back() {
+                    if angle < p.deactivate.start {
+                        return p.may_trigger();
+                    }
+                }
+                return None;
+            } else if let Some(p) = iter.find(|p| angle > p.deactivate.start) {
+                // need to go forward
+                return p.may_trigger();
+            }
+        }
+        None
+    }
+}
+
 #[derive(Debug, PartialEq)]
 enum ActiveZone {
     Upper,
@@ -302,7 +365,6 @@ impl<'a> PatternLayerState<'a> {
                 }
             }
         }
-
         None
     }
 
