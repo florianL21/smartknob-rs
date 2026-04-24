@@ -13,47 +13,32 @@ path = "./src/bin/seedlabs_devkit.rs"
 required-features = ["lvgl"]
 
 [dependencies]
-esp-backtrace = { git = "https://github.com/esp-rs/esp-hal.git", rev = "8ac7d97", features = [
+esp-backtrace = { version = "0.19.0", features = [
   "esp32s3",
   "panic-handler",
   "println",
 ] }
-esp-bootloader-esp-idf = { git = "https://github.com/esp-rs/esp-hal.git", rev = "8ac7d97", features = [
-  "esp32s3",
-] }
-esp-hal = { git = "https://github.com/esp-rs/esp-hal.git", rev = "8ac7d97", features = [
-  "esp32s3",
-  "log-04",
-  "unstable",
-  "psram",
-] }
-esp-rtos = { git = "https://github.com/esp-rs/esp-hal.git", rev = "8ac7d97", default-features = false, features = [
+esp-bootloader-esp-idf = { version = "0.5.0", features = ["esp32s3"] }
+esp-hal = { version = "1.1.0", features = ["esp32s3", "log-04", "unstable"] }
+esp-rtos = { version = "0.3.0", default-features = false, features = [
   "esp32s3",
   "embassy",
   "log-04",
 ] }
-esp-println = { git = "https://github.com/esp-rs/esp-hal.git", rev = "8ac7d97", features = [
-  "esp32s3",
-  "log-04",
-] }
-esp-storage = { git = "https://github.com/esp-rs/esp-hal.git", rev = "8ac7d97", features = [
-  "esp32s3",
-  "critical-section",
-] }
-esp-sync = { git = "https://github.com/esp-rs/esp-hal.git", rev = "8ac7d97", features = [
-  "esp32s3",
-] }
+esp-println = { version = "0.17.0", features = ["esp32s3", "log-04"] }
+esp-storage = { version = "0.9.0", features = ["esp32s3", "critical-section"] }
+esp-sync = { version = "0.2.1", features = ["esp32s3"] }
 embassy-embedded-hal = "0.5.0"
-embassy-executor = { version = "0.9.1", features = ["log"] }
+embassy-executor = { version = "0.10.0", features = ["log"] }
 embassy-sync = "0.7.2"
 embassy-time = "0.5.0"
-esp-alloc = { git = "https://github.com/esp-rs/esp-hal.git", rev = "8ac7d97" }
+esp-alloc = { version = "0.10.0" }
 critical-section = "1.2.0"
 foc = "0.3.0"
 log = "0.4.28"
 static_cell = { version = "2.1.1", features = ["nightly"] }
 fixed = { version = "1.29.0", features = ["serde"] }
-embassy-usb = "0.5.1"
+embassy-usb = "0.6.0"
 embedded-io-async = "0.7.0"
 ufmt = "0.2.0"
 embedded-cli = { git = "https://github.com/florianL21/embedded-cli-rs.git", rev = "6b47952f1f4672160e7dbca8b0cfeed4e2aa153d" }

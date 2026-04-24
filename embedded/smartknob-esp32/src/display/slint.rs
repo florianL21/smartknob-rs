@@ -84,7 +84,7 @@ pub fn spawn_display_tasks<
         log_toggles
             .dyn_receiver()
             .ok_or(DisplayTaskError::LogReceiverOutOfCapacity)?,
-    ))?;
+    )?);
     spawner.spawn(render_task(
         &TX,
         &RX,
@@ -95,7 +95,7 @@ pub fn spawn_display_tasks<
         knob_tilt
             .dyn_subscriber()
             .map_err(|_| DisplayTaskError::KnobTiltSubscriberOutOfCapacity)?,
-    ))?;
+    )?);
     Ok(())
 }
 

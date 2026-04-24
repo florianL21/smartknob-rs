@@ -29,7 +29,7 @@ use esp_hal::{
     usb_serial_jtag::UsbSerialJtag,
 };
 use esp_rtos::embassy::Executor;
-use log::info;
+use log::{error, info};
 use smartknob_core::knob_tilt::KnobTiltEvent;
 use smartknob_core::system_settings::{HapticSystemStoreSignal, StoreSignals};
 use smartknob_core::{
@@ -94,19 +94,18 @@ async fn main(spawner: Spawner) {
     let psram_config = PsramConfig {
         flash_frequency: FlashFreq::FlashFreq80m,
         ram_frequency: SpiRamFreq::Freq80m,
+        mode: esp_hal::psram::PsramMode::OctalSpi,
         // core_clock: Some(SpiTimingConfigCoreClock::SpiTimingConfigCoreClock240m),
         ..Default::default()
     };
 
-    let config = esp_hal::Config::default()
-        .with_cpu_clock(CpuClock::max())
-        .with_psram(psram_config);
+    let config = esp_hal::Config::default().with_cpu_clock(CpuClock::max());
     let peripherals = esp_hal::init(config);
 
     let timg0 = TimerGroup::new(peripherals.TIMG0);
 
     esp_alloc::heap_allocator!(size: 72 * 1024);
-    esp_alloc::psram_allocator!(peripherals.PSRAM, esp_hal::psram);
+    esp_alloc::psram_allocator!(peripherals.PSRAM, esp_hal::psram, psram_config);
 
     let sw_int = SoftwareInterruptControl::new(peripherals.SW_INTERRUPT);
     esp_rtos::start(timg0.timer0, sw_int.software_interrupt0);
@@ -124,7 +123,7 @@ async fn main(spawner: Spawner) {
     let setting_signals = SETTING_SIGNALS.init(StoreSignals::new());
 
     let restored_state = flash.restore().await;
-    spawner.must_spawn(flash_task(flash, setting_signals));
+    spawner.spawn(flash_task(flash, setting_signals).unwrap());
 
     // Pins for LDC1614
     let pins_ldc_int_pin = peripherals.GPIO40;
@@ -209,23 +208,27 @@ async fn main(spawner: Spawner) {
                     pin_tmc_wl.into(),
                 );
 
-                spawner.must_spawn(update_foc(
-                    spi_bus,
-                    mag_cs,
-                    peripherals.MCPWM0,
-                    pwm_pins,
-                    motor_calibration,
-                    haptic_setting_signal,
-                    log_toggles_foc.dyn_receiver().unwrap(),
-                ));
+                spawner.spawn(
+                    update_foc(
+                        spi_bus,
+                        mag_cs,
+                        peripherals.MCPWM0,
+                        pwm_pins,
+                        motor_calibration,
+                        haptic_setting_signal,
+                        log_toggles_foc.dyn_receiver().unwrap(),
+                    )
+                    .unwrap(),
+                );
             });
         },
     );
 
     let serial = UsbSerialJtag::new(peripherals.USB_DEVICE).into_async();
-    spawner
-        .spawn(menu_handler(serial, flash, log_toggles.dyn_sender()))
-        .ok();
+    match menu_handler(serial, flash, log_toggles.dyn_sender()) {
+        Ok(token) => spawner.spawn(token),
+        Err(e) => error!("CLI task not started because: {e}"),
+    }
 
     // LDC sensor
     let i2c_bus: I2c<'_, esp_hal::Async> = I2c::new(
@@ -241,27 +244,33 @@ async fn main(spawner: Spawner) {
 
     let ldc_int_pin = Input::new(pins_ldc_int_pin, InputConfig::default());
 
-    spawner.must_spawn(ldc_knob_tilt_task(
-        i2c_bus,
-        ldc_int_pin,
-        knob_tilt
-            .dyn_publisher()
-            .expect("Could not create knob tilt subscriber, please increase capacity"),
-    ));
+    spawner.spawn(
+        ldc_knob_tilt_task(
+            i2c_bus,
+            ldc_int_pin,
+            knob_tilt
+                .dyn_publisher()
+                .expect("Could not create knob tilt subscriber, please increase capacity"),
+        )
+        .unwrap(),
+    );
 
     // log encoder values
-    spawner.must_spawn(log_rotations(log_toggles.dyn_receiver().unwrap()));
+    spawner.spawn(log_rotations(log_toggles.dyn_receiver().unwrap()).unwrap());
 
     // LED ring
     let rmt = Rmt::new(peripherals.RMT, Rate::from_mhz(80)).unwrap();
-    spawner.must_spawn(led_ring_task(
-        rmt.channel0,
-        pin_led_data.into(),
-        log_toggles.dyn_receiver().unwrap(),
-        knob_tilt
-            .dyn_subscriber()
-            .expect("Could not create knob tilt subscriber, please increase capacity"),
-    ));
+    spawner.spawn(
+        led_ring_task(
+            rmt.channel0,
+            pin_led_data.into(),
+            log_toggles.dyn_receiver().unwrap(),
+            knob_tilt
+                .dyn_subscriber()
+                .expect("Could not create knob tilt subscriber, please increase capacity"),
+        )
+        .unwrap(),
+    );
 
     // Display
     let spi_bus: spi::master::SpiDma<'_, esp_hal::Blocking> = Spi::new(
@@ -291,16 +300,19 @@ async fn main(spawner: Spawner) {
 
     spawn_display_tasks(spawner, display_handles, log_toggles, knob_tilt).unwrap();
     // Spawn the taks which sets the actual UI state
-    spawner.must_spawn(ui_task());
-    spawner.must_spawn(brightness_task(
-        backlight_stuff,
-        log_toggles
-            .dyn_receiver()
-            .expect("Could not get log toggle receiver"),
-    ));
+    spawner.spawn(ui_task().unwrap());
+    spawner.spawn(
+        brightness_task(
+            backlight_stuff,
+            log_toggles
+                .dyn_receiver()
+                .expect("Could not get log toggle receiver"),
+        )
+        .unwrap(),
+    );
 
     let power_off_pin = Output::new(power_off_pin, Level::High, OutputConfig::default());
-    spawner.must_spawn(shutdown_task(power_off_pin, true));
+    spawner.spawn(shutdown_task(power_off_pin, true).unwrap());
 
     info!("All tasks spawned");
     let stats = esp_alloc::HEAP.stats();

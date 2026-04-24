@@ -22,7 +22,7 @@ use esp_hal::{
     usb_serial_jtag::UsbSerialJtag,
 };
 use esp_rtos::embassy::Executor;
-use log::info;
+use log::{error, info};
 use smartknob_core::flash::FlashHandling;
 use smartknob_core::system_settings::log_toggles::LogToggleWatcher;
 use smartknob_core::system_settings::{HapticSystemStoreSignal, StoreSignals};
@@ -54,15 +54,13 @@ async fn main(spawner: Spawner) {
         ..Default::default()
     };
 
-    let config = esp_hal::Config::default()
-        .with_cpu_clock(CpuClock::max())
-        .with_psram(psram_config);
+    let config = esp_hal::Config::default().with_cpu_clock(CpuClock::max());
     let peripherals = esp_hal::init(config);
 
     let timg0 = TimerGroup::new(peripherals.TIMG0);
 
     esp_alloc::heap_allocator!(size: 72 * 1024);
-    esp_alloc::psram_allocator!(peripherals.PSRAM, esp_hal::psram);
+    esp_alloc::psram_allocator!(peripherals.PSRAM, esp_hal::psram, psram_config);
 
     let sw_int = SoftwareInterruptControl::new(peripherals.SW_INTERRUPT);
     esp_rtos::start(timg0.timer0, sw_int.software_interrupt0);
@@ -80,7 +78,7 @@ async fn main(spawner: Spawner) {
     let setting_signals = SETTING_SIGNALS.init(StoreSignals::new());
 
     let restored_state = flash.restore().await;
-    spawner.must_spawn(flash_task(flash, setting_signals));
+    spawner.spawn(flash_task(flash, setting_signals).unwrap());
 
     static LOG_TOGGLES: StaticCell<LogWatcher> = StaticCell::new();
     let log_toggles = LOG_TOGGLES.init(LogToggleWatcher::new());
@@ -159,23 +157,27 @@ async fn main(spawner: Spawner) {
                     pin_tmc_wl.into(),
                 );
 
-                spawner.must_spawn(update_foc(
-                    spi_bus,
-                    mag_cs,
-                    peripherals.MCPWM0,
-                    pwm_pins,
-                    motor_calibration,
-                    haptic_setting_signal,
-                    log_toggles_foc.dyn_receiver().unwrap(),
-                ));
+                spawner.spawn(
+                    update_foc(
+                        spi_bus,
+                        mag_cs,
+                        peripherals.MCPWM0,
+                        pwm_pins,
+                        motor_calibration,
+                        haptic_setting_signal,
+                        log_toggles_foc.dyn_receiver().unwrap(),
+                    )
+                    .unwrap(),
+                );
             });
         },
     );
 
     let serial = UsbSerialJtag::new(peripherals.USB_DEVICE).into_async();
-    spawner
-        .spawn(menu_handler(serial, flash, log_toggles.dyn_sender()))
-        .ok();
+    match menu_handler(serial, flash, log_toggles.dyn_sender()) {
+        Ok(token) => spawner.spawn(token),
+        Err(e) => error!("CLI task not started because: {e}"),
+    }
 
     info!("All tasks spawned");
     let stats = esp_alloc::HEAP.stats();
