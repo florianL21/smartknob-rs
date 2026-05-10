@@ -1,7 +1,19 @@
-# This is not a functional smartknob firmware!
+# This is heavily work in progress!
 This is very much still in development and not ready to be used or even functional in any capacity!
 The only reason to look at this repo is if you are interested in helping out with developing it
 
+# For users on Github
+This project was moved to [Codeberg](https://codeberg.org/florianL21/smartknob-rs).
+The issues on github have been locked and PRs were deactivated. The code here will simply mirror the one on codeberg now.
+If you want to contribute/create issues pelase do so at the codeberg repository.
+
+# Current status of features
+- [x] Create and play back haptic curves
+- [x] Render something on the display using slint
+- [x] All hardware drivers are present and functional
+- [ ] Communication with the PC
+- [ ] Haptic feedback like klicks
+- [ ] Any sort of actually useful UI
 
 # Quick overview of the project
 
