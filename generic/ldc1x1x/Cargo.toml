@@ -10,4 +10,4 @@ version = "0.1.2"
 edition = "2018"
 
 [dependencies]
-embedded-hal-async = "1.0.0"
+embedded-hal-async = { workspace = true }
