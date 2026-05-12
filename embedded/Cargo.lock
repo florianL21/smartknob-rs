@@ -929,6 +929,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "cobs"
+version = "0.5.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dd93fd2c1b27acd030440c9dbd9d14c1122aad622374fe05a670b67a4bc034be"
+dependencies = [
+ "heapless 0.9.3",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "color_quant"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1647,6 +1657,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6a189cbf1d8ab3c591f88632f85c1df892b6ab04116037cbee39dc37cbdcd79f"
 dependencies = [
  "embedded-io-async 0.7.0",
+]
+
+[[package]]
+name = "embassy-usb-logger"
+version = "0.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d67df3b052328a06f8d1d9bb0cb8a013aff9740e43eaa03cc2015e8ccc48d8e5"
+dependencies = [
+ "embassy-futures",
+ "embassy-sync 0.8.0",
+ "embassy-usb",
+ "log",
 ]
 
 [[package]]
@@ -3426,6 +3448,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3d3067d79b975e8844ca9eb072e16b31c3c1c36928edf9c6789548c524d0d954"
 
 [[package]]
+name = "idc"
+version = "0.1.0"
+dependencies = [
+ "postcard",
+ "serde",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "ident_case"
 version = "1.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5002,7 +5033,7 @@ version = "1.1.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6764c3b5dd454e283a30e6dfe78e9b31096d9e32036b5d1eaac7a6119ccb9a24"
 dependencies = [
- "cobs",
+ "cobs 0.3.0",
  "heapless 0.7.17",
  "postcard-derive",
  "serde",
@@ -5926,19 +5957,24 @@ dependencies = [
  "average",
  "bevy_ecs 0.18.1",
  "bytemuck",
+ "cobs 0.5.1",
  "ekv",
  "embassy-embedded-hal",
  "embassy-executor",
  "embassy-futures",
  "embassy-sync 0.8.0",
  "embassy-time",
+ "embassy-usb",
+ "embassy-usb-logger",
  "embedded-graphics",
  "embedded-graphics-core",
+ "embedded-io-async 0.7.0",
  "embedded-storage",
  "esp-bootloader-esp-idf",
  "esp-hal",
  "esp-hal-smartled",
  "esp-storage",
+ "idc",
  "lcd-async",
  "ldc1x1x",
  "libm",

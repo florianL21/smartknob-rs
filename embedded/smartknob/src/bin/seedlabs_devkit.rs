@@ -35,16 +35,13 @@ use smartknob_core::system_settings::log_toggles::{
     LogChannel, LogToggleReceiver, LogToggleWatcher, may_log,
 };
 use smartknob_core::system_settings::{HapticSystemStoreSignal, StoreSignals};
+use smartknob_esp32::display::{
+    BacklightHandles, BacklightTask, DisplayHandles, Orientation,
+    slint::{spawn_display_tasks, ui_task},
+};
 use smartknob_esp32::flash::FlashHandler;
 use smartknob_esp32::led_ring::led_ring_task;
 use smartknob_esp32::motor_driver::mcpwm::Pins6PWM;
-use smartknob_esp32::{
-    cli::menu_handler,
-    display::{
-        BacklightHandles, BacklightTask, DisplayHandles, Orientation,
-        slint::{spawn_display_tasks, ui_task},
-    },
-};
 use smartknob_rs::motor_control::update_foc;
 use static_cell::StaticCell;
 

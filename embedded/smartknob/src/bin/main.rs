@@ -26,7 +26,6 @@ use esp_hal::{
         master::{Config as SpiConfig, Spi},
     },
     time::Rate,
-    usb_serial_jtag::UsbSerialJtag,
 };
 use esp_rtos::embassy::Executor;
 use log::{error, info};
@@ -35,12 +34,13 @@ use smartknob_core::system_settings::{HapticSystemStoreSignal, StoreSignals};
 use smartknob_core::{
     flash::FlashHandling,
     haptic_core::get_encoder_position,
-    system_settings::log_toggles::{LogChannel, LogToggleReceiver, LogToggleWatcher, may_log},
+    system_settings::log_toggles::{
+        LogChannel, LogToggleReceiver, LogToggleWatcher, LogToggles, may_log,
+    },
 };
 use smartknob_esp32::knob_tilt::{I2cBusLDC, ldc_knob_tilt_task};
 use smartknob_esp32::led_ring::led_ring_task;
 use smartknob_esp32::{
-    cli::menu_handler,
     display::{
         BacklightHandles, BacklightTask, DisplayHandles, Orientation,
         slint::{spawn_display_tasks, ui_task},
@@ -48,6 +48,7 @@ use smartknob_esp32::{
     flash::FlashHandler,
     motor_driver::mcpwm::Pins6PWM,
     shutdown::shutdown_task,
+    uplink::initialize_uplink,
 };
 use smartknob_rs::motor_control::update_foc;
 use static_cell::StaticCell;
@@ -158,6 +159,10 @@ async fn main(spawner: Spawner) {
     let pin_lcd_bl = peripherals.GPIO9; // RST pin on the base PCB; BL on the display PCB
     let pin_lcd_reset = peripherals.GPIO8; // CS pin on the base PCB; RST on the display PCB
 
+    // USB pins
+    let pin_usb_plus = peripherals.GPIO20;
+    let pin_usb_minus = peripherals.GPIO19;
+
     // various other pins
     let _brightness_sensor_pin = peripherals.GPIO4;
     let power_off_pin = peripherals.GPIO38;
@@ -224,11 +229,15 @@ async fn main(spawner: Spawner) {
         },
     );
 
-    let serial = UsbSerialJtag::new(peripherals.USB_DEVICE).into_async();
-    match menu_handler(serial, flash, log_toggles.dyn_sender()) {
-        Ok(token) => spawner.spawn(token),
-        Err(e) => error!("CLI task not started because: {e}"),
-    }
+    // Needed to get the system to start up properly for now
+    log_toggles.dyn_sender().send(LogToggles::default());
+    initialize_uplink(
+        spawner,
+        peripherals.USB0,
+        peripherals.USB_DEVICE,
+        pin_usb_plus,
+        pin_usb_minus,
+    );
 
     // LDC sensor
     let i2c_bus: I2c<'_, esp_hal::Async> = I2c::new(

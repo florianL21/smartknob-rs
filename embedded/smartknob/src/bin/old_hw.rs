@@ -26,7 +26,7 @@ use log::{error, info};
 use smartknob_core::flash::FlashHandling;
 use smartknob_core::system_settings::log_toggles::LogToggleWatcher;
 use smartknob_core::system_settings::{HapticSystemStoreSignal, StoreSignals};
-use smartknob_esp32::{cli::menu_handler, flash::FlashHandler, motor_driver::mcpwm::Pins6PWM};
+use smartknob_esp32::{flash::FlashHandler, motor_driver::mcpwm::Pins6PWM};
 use smartknob_rs::motor_control::update_foc;
 use static_cell::StaticCell;
 
@@ -174,10 +174,6 @@ async fn main(spawner: Spawner) {
     );
 
     let serial = UsbSerialJtag::new(peripherals.USB_DEVICE).into_async();
-    match menu_handler(serial, flash, log_toggles.dyn_sender()) {
-        Ok(token) => spawner.spawn(token),
-        Err(e) => error!("CLI task not started because: {e}"),
-    }
 
     info!("All tasks spawned");
     let stats = esp_alloc::HEAP.stats();

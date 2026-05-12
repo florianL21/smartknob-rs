@@ -45,6 +45,9 @@ average = "0.17.0"
 atomic_float = "1.1.0"
 esp-hal-smartled = { git = "https://github.com/florianL21/esp-hal-community.git", rev = "142bbb5" }
 smart-leds = "0.4.0"
+cobs = { version = "0.5.1", default-features = false }
+embassy-usb-logger = "0.6.0"
+idc = { path = "../generic/idc" }
 
 [workspace.build-dependencies]
 slint-build = { git = "https://github.com/florianL21/slint", rev = "d3a47ed" }
