@@ -1,0 +1,22 @@
+[package]
+name = "smartknobctl"
+description = "Smartknob control CLI for performing various operation with and around a smartknob device attached via USB"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+charming = "0.6.0"
+env_logger = "0.11.10"
+fixed = { version = "1.31.0", features = ["std"] }
+haptic_lib = { path = "../haptic_lib" }
+log = "0.4.29"
+idc = { path = "../idc", features = ["host"] }
+clap = { version = "4.6.1", features = ["derive"] }
+postcard = { version = "1.1.3", features = ["use-std"] }
+cobs = "0.5.1"
+anyhow = { version = "1.0.102", features = ["backtrace"] }
+static_cell = "2.1.1"
+tokio = { version = "1.52.3", features = ["full"] }
+tokio-serial = "5.4.5"
+tokio-util = { version = "0.7.18", features = ["codec"] }
+futures = "0.3.32"

@@ -1,13 +1,13 @@
 extern crate std;
 
 use charming::{
-    Chart, HtmlRenderer,
     component::{
         Axis, DataZoom, DataZoomType, Feature, Restore, SaveAsImage, Title, Toolbox,
         ToolboxDataZoom,
     },
     element::{AxisType, Tooltip},
     series::Line,
+    Chart, HtmlRenderer,
 };
 use haptic_lib::{
     CurveBuilder, CurveSegment, HapticCurve, HapticCurveConfig, HapticPlayer, Playback,

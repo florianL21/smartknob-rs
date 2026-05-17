@@ -1,0 +1,30 @@
+{
+  "format_on_save": "on",
+  "lsp": {
+    "rust-analyzer": {
+      "initialization_options": {
+        "linkedProjects": [
+          "./generic/Cargo.toml",
+          // "./embedded/Cargo.toml"
+        ],
+        "cargo": {
+          "allTargets": false,
+          // Enable for working on on-target crates
+          // "target": "xtensa-esp32s3-none-elf",
+          // "extraEnv": {
+          //   "RUSTUP_TOOLCHAIN": "esp",
+          // },
+          "features": [
+            // "slint",
+            // "lvgl"
+          ],
+        },
+        "server": {
+          "extraEnv": {
+            "RUSTUP_TOOLCHAIN": "stable",
+          },
+        },
+      },
+    },
+  },
+}

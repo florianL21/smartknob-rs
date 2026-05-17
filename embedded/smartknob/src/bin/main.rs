@@ -28,8 +28,11 @@ use esp_hal::{
     time::Rate,
 };
 use esp_rtos::embassy::Executor;
-use log::{error, info};
+use log::info;
+use postcard::experimental::max_size::MaxSize;
+use smartknob_core::flash::FlashKeys;
 use smartknob_core::knob_tilt::KnobTiltEvent;
+use smartknob_core::system_settings::log_toggles::LogChannelToggles;
 use smartknob_core::system_settings::{HapticSystemStoreSignal, StoreSignals};
 use smartknob_core::{
     flash::FlashHandling,
@@ -230,7 +233,18 @@ async fn main(spawner: Spawner) {
     );
 
     // Needed to get the system to start up properly for now
-    log_toggles.dyn_sender().send(LogToggles::default());
+    let mut buffer = [0u8; LogChannelToggles::POSTCARD_MAX_SIZE];
+    let initial_log_toggles =
+        if let Ok(Some(t)) = flash.load(FlashKeys::LogChannels, &mut buffer).await {
+            t
+        } else {
+            LogChannelToggles::default()
+        };
+
+    log_toggles.dyn_sender().send(LogToggles {
+        active: true,
+        config: initial_log_toggles,
+    });
     initialize_uplink(
         spawner,
         peripherals.USB0,

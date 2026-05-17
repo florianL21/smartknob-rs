@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["ldc1x1x", "haptic_demo", "haptic_lib", "smartknob-core", "idc"]
+members = ["ldc1x1x", "smartknob-cli", "haptic_lib", "smartknob-core", "idc"]
 
 [workspace.dependencies]
 enterpolation = { version = "0.3.0", default-features = false }

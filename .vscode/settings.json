@@ -5,10 +5,10 @@
     "Smartknob"
   ],
   // Enable for working on on-target crates
-  "rust-analyzer.cargo.target": "xtensa-esp32s3-none-elf",
-  "rust-analyzer.cargo.extraEnv": {
-    "RUSTUP_TOOLCHAIN": "esp"
-  },
+  // "rust-analyzer.cargo.target": "xtensa-esp32s3-none-elf",
+  // "rust-analyzer.cargo.extraEnv": {
+  //   "RUSTUP_TOOLCHAIN": "esp"
+  // },
   // "rust-analyzer.cargo.features": [
   //   "slint",
   //   "lvgl"
