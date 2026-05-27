@@ -1,23 +1,20 @@
 extern crate std;
 
 use charming::{
+    Chart,
     component::{
         Axis, DataZoom, DataZoomType, Feature, Restore, SaveAsImage, Title, Toolbox,
         ToolboxDataZoom,
     },
     element::{AxisType, Tooltip},
     series::Line,
-    Chart, HtmlRenderer,
 };
-use haptic_lib::{
-    CurveBuilder, CurveSegment, HapticCurve, HapticCurveConfig, HapticPlayer, Playback,
-};
+use haptic_lib::{HapticCurveConfig, HapticPlayer, Playback};
 
-fn create_graph(start: f32, curve: HapticCurveConfig, sample_step: f32) -> Chart {
+pub fn create_graph(start: f32, curve: HapticCurveConfig, sample_step: f32) -> Chart {
     let curve_start_angle = curve.start_angle();
     let curve_inst = curve.without_pattern_layer().instantiate().unwrap();
     let width = curve_inst.width();
-    println!("{curve_inst:#?}");
     let mut player = HapticPlayer::new(start, &curve_inst);
     let start_angle = start + curve_start_angle - 1.0;
     let end_anlge = start_angle + width + 2.0;
@@ -59,27 +56,4 @@ fn create_graph(start: f32, curve: HapticCurveConfig, sample_step: f32) -> Chart
         .data_zoom(DataZoom::new().type_(DataZoomType::Inside))
         .data_zoom(DataZoom::new())
         .series(Line::new().data(data))
-}
-
-fn main() {
-    env_logger::init();
-    let mut curve_builder = CurveBuilder::new();
-
-    let seg1 = curve_builder.new_segment(
-        CurveSegment::new()
-            .add_bezier3(0.5, [0.0, -0.1, -1.0])
-            .add_bezier3(0.5, [1.0, 0.1, 0.0]),
-    );
-    let endstop_left = curve_builder.new_segment(CurveSegment::new().add_linear(0.8, 1.0, 0.0));
-    let endstop_right = curve_builder.new_segment(CurveSegment::new().add_linear(0.8, 0.0, -1.0));
-    let test_curve = curve_builder
-        .push(endstop_left)
-        .push_repeated(seg1, 3)
-        .push(endstop_right)
-        .finish(-0.3);
-
-    let chart = create_graph(0.0, test_curve, 0.01);
-
-    let mut renderer = HtmlRenderer::new("Force graph", 1000, 800);
-    renderer.save(&chart, "chart.html").unwrap();
 }

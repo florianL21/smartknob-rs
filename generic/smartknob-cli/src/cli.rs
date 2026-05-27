@@ -34,16 +34,27 @@ pub enum Command {
 #[derive(Debug, Args)]
 pub struct CurveArgs {
     /// File which contains a haptic curve definition
-    curve_file: PathBuf,
+    pub curve_file: PathBuf,
 
     #[command(subcommand)]
-    action: CurveActions,
+    pub action: CurveActions,
 }
 
 #[derive(Debug, Subcommand)]
-enum CurveActions {
+pub enum CurveActions {
     /// Pushes a haptic curve to a connected smartknob device
     Push,
+    /// Create an empty haptic curve scaffold file in the given file location. The given file is not allowed to exist yet
+    Init,
     /// Visualizes a haptic curve in an html file with an interactiveley explorable graph
-    Visualize { graph_output_file: PathBuf },
+    Visualize {
+        /// Angle to start rendering the graph from
+        #[arg(short, long)]
+        start_angle: Option<f32>,
+        /// If the rendered output should be opened once it is written
+        #[arg(short, long, default_value_t = true)]
+        open: bool,
+        /// File to render the visualized graph into
+        graph_output_file: PathBuf,
+    },
 }
