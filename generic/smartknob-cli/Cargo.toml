@@ -9,7 +9,6 @@ charming = { workspace = true }
 env_logger = { workspace = true }
 fixed = { workspace = true, features = ["std"] }
 log = { workspace = true }
-idc = { workspace = true, features = ["host"] }
 clap = { workspace = true, features = ["derive"] }
 postcard = { workspace = true, features = ["use-std"] }
 cobs = { workspace = true }

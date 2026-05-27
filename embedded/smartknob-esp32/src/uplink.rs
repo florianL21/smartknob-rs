@@ -19,9 +19,9 @@ use esp_hal::{
     peripherals::{USB_DEVICE, USB0},
     usb_serial_jtag::UsbSerialJtag,
 };
-use idc::Comm;
 use log::{error, info};
 use postcard::{experimental::max_size::MaxSize, from_bytes, to_slice_cobs};
+use smartknob_core::idc;
 use static_cell::StaticCell;
 
 const MAX_PACKET_SIZE: u16 = 64;
@@ -144,7 +144,7 @@ async fn comm_sender(mut sender: Sender<'static, Driver<'static>>) {
 async fn stream_events<'d>(
     sender: &mut Sender<'static, Driver<'static>>,
 ) -> Result<(), Disconnected> {
-    let mut buf = [0u8; max_encoding_length(Comm::POSTCARD_MAX_SIZE)];
+    let mut buf = [0u8; max_encoding_length(idc::Comm::POSTCARD_MAX_SIZE)];
 
     loop {
         let data = COMM_CHANNEL.receive().await;
@@ -155,7 +155,7 @@ async fn stream_events<'d>(
 
 #[embassy_executor::task]
 async fn event_sender() {
-    let data = Comm::Event(idc::Event::Button(idc::ButtonEvent::PressDown));
+    let data = idc::Comm::Event(idc::Event::Button(idc::ButtonEvent::PressDown));
     loop {
         Timer::after_secs(1).await;
         COMM_CHANNEL.send(data.clone()).await;

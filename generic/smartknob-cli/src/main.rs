@@ -8,6 +8,7 @@ use clap::Parser;
 use futures::SinkExt;
 use log::info;
 use smartknob_core::haptics::base::{CurveBuilder, CurveSegment};
+use smartknob_core::idc;
 use std::{fs::File, io::BufReader, io::BufWriter};
 
 use crate::{

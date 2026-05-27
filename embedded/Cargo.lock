@@ -3435,15 +3435,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3d3067d79b975e8844ca9eb072e16b31c3c1c36928edf9c6789548c524d0d954"
 
 [[package]]
-name = "idc"
-version = "0.1.0"
-dependencies = [
- "postcard",
- "serde",
- "thiserror 2.0.18",
-]
-
-[[package]]
 name = "ident_case"
 version = "1.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5960,7 +5951,6 @@ dependencies = [
  "esp-hal",
  "esp-hal-smartled",
  "esp-storage",
- "idc",
  "lcd-async",
  "ldc1x1x",
  "libm",

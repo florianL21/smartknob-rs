@@ -3,11 +3,9 @@ use cobs::max_encoding_length;
 use futures::stream::SplitSink;
 use futures::stream::SplitStream;
 use futures::stream::StreamExt;
-use idc::Command;
-use idc::Event;
-use idc::Response;
 use log::{error, info};
 use postcard::{experimental::max_size::MaxSize, from_bytes, to_stdvec_cobs};
+use smartknob_core::idc;
 use static_cell::StaticCell;
 use std::time::Duration;
 use tokio::task;
@@ -216,9 +214,9 @@ async fn log_listener(mut stream: Framed<SerialStream, LinesCodec>) {
 }
 
 pub struct CommChannels<'a> {
-    pub requests: SplitSink<Framed<SerialStream, PostcardCobsCodec<'static>>, &'a Command>,
-    pub responses: Receiver<Response>,
-    pub events: Receiver<Event>,
+    pub requests: SplitSink<Framed<SerialStream, PostcardCobsCodec<'static>>, &'a idc::Command>,
+    pub responses: Receiver<idc::Response>,
+    pub events: Receiver<idc::Event>,
 }
 
 pub async fn init_comms<'a>() -> Result<CommChannels<'a>> {

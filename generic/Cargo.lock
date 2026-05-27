@@ -966,16 +966,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "idc"
-version = "0.1.0"
-dependencies = [
- "clap",
- "postcard",
- "serde",
- "thiserror",
-]
-
-[[package]]
 name = "ident_case"
 version = "1.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1705,6 +1695,7 @@ version = "0.1.0"
 dependencies = [
  "atomic_float",
  "average",
+ "clap",
  "cordic",
  "ekv",
  "embassy-executor",
@@ -1743,7 +1734,6 @@ dependencies = [
  "env_logger",
  "fixed",
  "futures",
- "idc",
  "log",
  "open",
  "postcard",

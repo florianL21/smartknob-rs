@@ -1,5 +1,3 @@
-#![cfg_attr(not(feature = "host"), no_std)]
-
 #[cfg(feature = "host")]
 use clap::ValueEnum;
 use postcard::experimental::max_size::MaxSize;

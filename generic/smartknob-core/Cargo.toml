@@ -39,10 +39,12 @@ embassy-executor = { workspace = true }
 smart-leds = { workspace = true }
 average = { workspace = true }
 schemars = { workspace = true, optional = true }
+clap = { workspace = true, features = ["derive"], optional = true }
+
 
 [dev-dependencies]
 matches = "0.1.10"
 
 [features]
 default = []
-host = ["schemars"]
+host = ["schemars", "dep:clap"]
