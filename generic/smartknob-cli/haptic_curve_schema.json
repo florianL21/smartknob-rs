@@ -1,0 +1,436 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "HapticCurveConfig",
+  "type": "object",
+  "properties": {
+    "curve_layer": {
+      "$ref": "#/$defs/HapticCurve"
+    },
+    "pattern_layer": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/PatternLayer"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "required": [
+    "curve_layer"
+  ],
+  "$defs": {
+    "Command": {
+      "description": "A single command in a command sequence",
+      "oneOf": [
+        {
+          "description": "Apply torque",
+          "type": "object",
+          "properties": {
+            "Torque": {
+              "type": "number",
+              "format": "float"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "Torque"
+          ]
+        },
+        {
+          "description": "Delay the next command by this duration\nNote: Durations are converted to microseconds internally.\nAnything which does not fit into an u32 will be cut away",
+          "type": "object",
+          "properties": {
+            "Delay": {
+              "$ref": "#/$defs/Duration"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "Delay"
+          ]
+        }
+      ]
+    },
+    "CurveComponent": {
+      "description": "This is a single component of a haptic curve.\nA component has a width (angle range) and defines how the output value behaves over that range.\nThese components are chained together in a list to form a haptic curve over a certain angle range.",
+      "oneOf": [
+        {
+          "description": "A constant value over a certain angle range",
+          "type": "object",
+          "properties": {
+            "Const": {
+              "type": "object",
+              "properties": {
+                "value": {
+                  "description": "The constant torque value to apply over this range",
+                  "type": "number",
+                  "format": "float"
+                },
+                "width": {
+                  "description": "The width of this component in the curve",
+                  "type": "number",
+                  "format": "float"
+                }
+              },
+              "required": [
+                "width",
+                "value"
+              ]
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "Const"
+          ]
+        },
+        {
+          "description": "Define a bezier curve with 3 points",
+          "type": "object",
+          "properties": {
+            "Bezier3": {
+              "type": "object",
+              "properties": {
+                "points": {
+                  "description": "Points for defining the bezier curve",
+                  "type": "array",
+                  "items": {
+                    "type": "number",
+                    "format": "float"
+                  },
+                  "maxItems": 3,
+                  "minItems": 3
+                },
+                "width": {
+                  "description": "The width of this component in the curve",
+                  "type": "number",
+                  "format": "float"
+                }
+              },
+              "required": [
+                "width",
+                "points"
+              ]
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "Bezier3"
+          ]
+        },
+        {
+          "description": "Define a bezier curve with 4 points",
+          "type": "object",
+          "properties": {
+            "Bezier4": {
+              "type": "object",
+              "properties": {
+                "points": {
+                  "description": "Points for defining the bezier curve",
+                  "type": "array",
+                  "items": {
+                    "type": "number",
+                    "format": "float"
+                  },
+                  "maxItems": 4,
+                  "minItems": 4
+                },
+                "width": {
+                  "description": "The width of this component in the curve",
+                  "type": "number",
+                  "format": "float"
+                }
+              },
+              "required": [
+                "width",
+                "points"
+              ]
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "Bezier4"
+          ]
+        },
+        {
+          "description": "Define a bezier curve with 5 points",
+          "type": "object",
+          "properties": {
+            "Bezier5": {
+              "type": "object",
+              "properties": {
+                "points": {
+                  "description": "Points for defining the bezier curve",
+                  "type": "array",
+                  "items": {
+                    "type": "number",
+                    "format": "float"
+                  },
+                  "maxItems": 5,
+                  "minItems": 5
+                },
+                "width": {
+                  "description": "The width of this component in the curve",
+                  "type": "number",
+                  "format": "float"
+                }
+              },
+              "required": [
+                "width",
+                "points"
+              ]
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "Bezier5"
+          ]
+        },
+        {
+          "description": "Define a bezier curve with 6 points",
+          "type": "object",
+          "properties": {
+            "Bezier6": {
+              "type": "object",
+              "properties": {
+                "points": {
+                  "description": "Points for defining the bezier curve",
+                  "type": "array",
+                  "items": {
+                    "type": "number",
+                    "format": "float"
+                  },
+                  "maxItems": 6,
+                  "minItems": 6
+                },
+                "width": {
+                  "description": "The width of this component in the curve",
+                  "type": "number",
+                  "format": "float"
+                }
+              },
+              "required": [
+                "width",
+                "points"
+              ]
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "Bezier6"
+          ]
+        },
+        {
+          "description": "A transition from a start to an end value linearly over its width",
+          "type": "object",
+          "properties": {
+            "Linear": {
+              "type": "object",
+              "properties": {
+                "end": {
+                  "description": "Value at the end o the component",
+                  "type": "number",
+                  "format": "float"
+                },
+                "start": {
+                  "description": "Value at the start of the component",
+                  "type": "number",
+                  "format": "float"
+                },
+                "width": {
+                  "description": "The width of this component in the curve",
+                  "type": "number",
+                  "format": "float"
+                }
+              },
+              "required": [
+                "width",
+                "start",
+                "end"
+              ]
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "Linear"
+          ]
+        }
+      ]
+    },
+    "CurveSegment": {
+      "type": "object",
+      "properties": {
+        "components": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/CurveComponent"
+          }
+        }
+      },
+      "required": [
+        "components"
+      ]
+    },
+    "Duration": {
+      "type": "object",
+      "properties": {
+        "nanos": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "secs": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "secs",
+        "nanos"
+      ]
+    },
+    "HapticCurve": {
+      "description": "Curves always start at negative infinity. They always go left to right (increasing angle values).\nThe angle value after the last curve component is considered to be positive infinity.\nBecause of this the last curve components value at the very end of its width is taken as the value returned up until positive infinity.",
+      "type": "object",
+      "properties": {
+        "curve": {
+          "description": "A list of indexes of these reusable segments",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/SegmentReference"
+          }
+        },
+        "segments": {
+          "description": "Reusable segments of this curve",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/CurveSegment"
+          }
+        },
+        "start_angle": {
+          "description": "The start angle can be used to shift the curve left and right relative to the zero point",
+          "type": "number",
+          "format": "float"
+        }
+      },
+      "required": [
+        "segments",
+        "curve",
+        "start_angle"
+      ]
+    },
+    "HapticPattern": {
+      "description": "Definition of a haptic pattern. This returns a fixed sequence of values when played back",
+      "type": "object",
+      "properties": {
+        "commands": {
+          "description": "Fixed values to return",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Command"
+          }
+        },
+        "multiply": {
+          "description": "How many times each command should be repeated before moving to the next command",
+          "type": "integer",
+          "format": "uint16",
+          "maximum": 65535,
+          "minimum": 0
+        },
+        "repeat": {
+          "description": "How often to repeat the given pattern before the pattern is considered complete",
+          "type": "integer",
+          "format": "uint16",
+          "maximum": 65535,
+          "minimum": 0
+        }
+      },
+      "required": [
+        "commands",
+        "repeat",
+        "multiply"
+      ]
+    },
+    "PatternLayer": {
+      "description": "A sequence of patterns",
+      "type": "object",
+      "properties": {
+        "activation_zone": {
+          "description": "Width of the zone which upon entering will activate a pattern",
+          "type": "number",
+          "format": "float"
+        },
+        "components": {
+          "description": "Individual components of this curve",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/SequenceComponent"
+          }
+        },
+        "deactivation_zone": {
+          "description": "Width of the activation zone",
+          "type": "number",
+          "format": "float"
+        }
+      },
+      "required": [
+        "components",
+        "activation_zone",
+        "deactivation_zone"
+      ]
+    },
+    "SegmentReference": {
+      "description": "Reference to a segment. Intentionally uses indexes and not actual refs as this need to be serializable",
+      "type": "object",
+      "properties": {
+        "reference": {
+          "description": "Reference to an index in the segments vec of the curve instance",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "repeat": {
+          "description": "Repeat this exact reference a given amount of times in the full curve",
+          "type": "integer",
+          "format": "uint16",
+          "maximum": 65535,
+          "minimum": 0
+        },
+        "scale": {
+          "description": "Scale all values returned by the referenced segment by this amount.\nThe resulting scaled value is not allowed to exceed/undershoot 1.0/-1.0",
+          "type": "number",
+          "format": "float"
+        }
+      },
+      "required": [
+        "reference",
+        "repeat",
+        "scale"
+      ]
+    },
+    "SequenceComponent": {
+      "type": "object",
+      "properties": {
+        "pattern": {
+          "$ref": "#/$defs/HapticPattern"
+        },
+        "repeat": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "width": {
+          "type": "number",
+          "format": "float"
+        }
+      },
+      "required": [
+        "width",
+        "pattern",
+        "repeat"
+      ]
+    }
+  }
+}

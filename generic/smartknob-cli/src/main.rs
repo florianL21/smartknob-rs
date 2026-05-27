@@ -7,7 +7,9 @@ use charming::HtmlRenderer;
 use clap::Parser;
 use futures::SinkExt;
 use log::info;
-use smartknob_core::haptics::base::{CurveBuilder, CurveSegment};
+use schemars::schema_for;
+use smartknob_core::haptics::HapticCurveConfig;
+use smartknob_core::haptics::base::{CurveBuilder, CurveSegment, HapticCurveConfigWithSchema};
 use smartknob_core::idc;
 use std::{fs::File, io::BufReader, io::BufWriter};
 
@@ -47,8 +49,16 @@ async fn main() -> Result<()> {
                         "The curve file at {curve_file:?} already exists. When calling init the file must not yet exist"
                     );
                 }
-                let mut curve_builder = CurveBuilder::new();
+                let folder = curve_file.parent().context(
+                    "Could not get partent directory of given output file path ({curve_file_path})",
+                )?;
+                let schema_file_path = folder.with_file_name("haptic_curve_schema.json");
+                let file = File::create(schema_file_path).context("Schema file")?;
+                let writer = BufWriter::new(file);
+                let schema = schema_for!(HapticCurveConfig);
+                serde_json::to_writer_pretty(writer, &schema)?;
 
+                let mut curve_builder = CurveBuilder::new();
                 let seg1 = curve_builder.new_segment(
                     CurveSegment::new()
                         .add_bezier3(0.5, [0.0, -0.1, -1.0])
@@ -65,7 +75,7 @@ async fn main() -> Result<()> {
                     .finish(-0.3);
                 let file = File::create(curve_file)?;
                 let writer = BufWriter::new(file);
-                serde_json::to_writer_pretty(writer, &test_curve)?;
+                serde_json::to_writer_pretty(writer, &HapticCurveConfigWithSchema(test_curve))?;
             }
             CurveActions::Visualize {
                 start_angle,

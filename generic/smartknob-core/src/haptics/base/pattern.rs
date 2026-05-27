@@ -35,6 +35,7 @@ pub enum PatternLayerError {
 
 /// A single command in a command sequence
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "host", derive(schemars::JsonSchema))]
 pub enum Command {
     /// Apply torque
     Torque(f32),
@@ -65,6 +66,7 @@ impl Command {
 
 /// Definition of a haptic pattern. This returns a fixed sequence of values when played back
 #[derive(Serialize, Deserialize, Debug, Clone)]
+#[cfg_attr(feature = "host", derive(schemars::JsonSchema))]
 pub struct HapticPattern {
     /// Fixed values to return
     commands: CommandVec,
@@ -122,6 +124,7 @@ impl HapticPattern {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
+#[cfg_attr(feature = "host", derive(schemars::JsonSchema))]
 pub struct SequenceComponent {
     width: Angle,
     pattern: HapticPattern,
@@ -132,6 +135,7 @@ impl SequenceComponent {}
 
 /// A sequence of patterns
 #[derive(Serialize, Deserialize, Debug)]
+#[cfg_attr(feature = "host", derive(schemars::JsonSchema))]
 pub struct PatternLayer {
     /// Individual components of this curve
     pub(crate) components: Vec<SequenceComponent>,

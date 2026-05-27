@@ -1,4 +1,5 @@
 {
+  "$schema": "haptic_curve_schema.json",
   "curve_layer": {
     "segments": [
       {

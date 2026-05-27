@@ -62,6 +62,7 @@ impl SegmentInstance {
 
 /// Reference to a segment. Intentionally uses indexes and not actual refs as this need to be serializable
 #[derive(Debug, Serialize, Deserialize, Clone)]
+#[cfg_attr(feature = "host", derive(schemars::JsonSchema))]
 pub struct SegmentReference {
     /// Reference to an index in the segments vec of the curve instance
     pub(crate) reference: usize,

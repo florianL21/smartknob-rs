@@ -40,6 +40,7 @@ pub enum InterpolationBuilderError {
 /// A component has a width (angle range) and defines how the output value behaves over that range.
 /// These components are chained together in a list to form a haptic curve over a certain angle range.
 #[derive(Serialize, Deserialize, Debug, Clone)]
+#[cfg_attr(feature = "host", derive(schemars::JsonSchema))]
 pub enum CurveComponent {
     /// A constant value over a certain angle range
     Const {
@@ -139,6 +140,7 @@ impl CurveComponent {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "host", derive(schemars::JsonSchema))]
 pub struct CurveSegment {
     pub(crate) components: Vec<CurveComponent>,
 }
@@ -275,6 +277,7 @@ impl CurveSegment {
 /// The angle value after the last curve component is considered to be positive infinity.
 /// Because of this the last curve components value at the very end of its width is taken as the value returned up until positive infinity.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "host", derive(schemars::JsonSchema))]
 pub struct HapticCurve {
     /// Reusable segments of this curve
     pub(crate) segments: Vec<CurveSegment>,

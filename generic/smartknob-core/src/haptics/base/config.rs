@@ -3,6 +3,8 @@ use super::{
     curve::CurveState,
     pattern::{PatternLayerError, PatternLayerState},
 };
+#[cfg(feature = "host")]
+use serde::ser::{SerializeStruct, Serializer};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -15,9 +17,27 @@ pub enum ConfigError {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+#[cfg_attr(feature = "host", derive(schemars::JsonSchema))]
 pub struct HapticCurveConfig {
     curve_layer: HapticCurve,
     pattern_layer: Option<PatternLayer>,
+}
+
+// #[cfg(feature = "host")]
+pub struct HapticCurveConfigWithSchema(pub HapticCurveConfig);
+
+#[cfg(feature = "host")]
+impl Serialize for HapticCurveConfigWithSchema {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let mut state = serializer.serialize_struct("HapticCurveConfig", 3)?;
+        state.serialize_field("$schema", "haptic_curve_schema.json")?;
+        state.serialize_field("curve_layer", &self.0.curve_layer)?;
+        state.serialize_field("pattern_layer", &self.0.pattern_layer)?;
+        state.end()
+    }
 }
 
 impl HapticCurveConfig {
