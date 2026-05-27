@@ -8,7 +8,6 @@ edition = "2024"
 charming = { workspace = true }
 env_logger = { workspace = true }
 fixed = { workspace = true, features = ["std"] }
-haptic_lib = { workspace = true }
 log = { workspace = true }
 idc = { workspace = true, features = ["host"] }
 clap = { workspace = true, features = ["derive"] }
@@ -22,3 +21,4 @@ tokio-util = { workspace = true, features = ["codec"] }
 futures = { workspace = true }
 serde_json = { workspace = true }
 open = { workspace = true }
+smartknob-core = { workspace = true, features = ["host"] }

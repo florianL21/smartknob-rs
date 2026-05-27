@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use ufmt::uDebug;
 
-use crate::haptic_core::CalibrationData;
+use crate::haptics::CalibrationData;
 use crate::system_settings::StoreSignals;
 use crate::system_settings::log_toggles::LogChannelToggles;
 

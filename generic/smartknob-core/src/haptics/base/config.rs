@@ -1,4 +1,4 @@
-use crate::{
+use super::{
     Angle, CurveError, CurveInstance, HapticCurve, PatternLayer,
     curve::CurveState,
     pattern::{PatternLayerError, PatternLayerState},

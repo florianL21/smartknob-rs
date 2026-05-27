@@ -11,17 +11,18 @@
 //! - The [`MOTOR_COMMAND_SIGNAL`] is an input to this module.
 //!   It triggers various actions, some of which may be essential
 //!   for the proper operation of this module.
+pub mod base;
 pub mod encoder;
 mod haptic_hardware;
 pub mod motor_driver;
 
-use core::f32;
-
-use encoder::AbsolutePositionEncoder;
 pub use haptic_hardware::CalibrationData;
+pub use crate::haptics::base::*;
+
+use core::f32;
+use encoder::AbsolutePositionEncoder;
 use haptic_hardware::{HapticSystem, HapticSystemError};
 use motor_driver::MotorDriver;
-
 use atomic_float::AtomicF32;
 use embassy_sync::{
     blocking_mutex::raw::{CriticalSectionRawMutex, RawMutex},
@@ -30,11 +31,10 @@ use embassy_sync::{
 use embassy_time::{Duration, Instant, Ticker, Timer};
 use fixed::types::I16F16;
 use foc::pwm::Modulation;
-use haptic_lib::{Command, HapticInstances, HapticPlayer, Playback};
 use log::{error, info, warn};
 
 use crate::{
-    haptic_core::haptic_hardware::InactivitySettings,
+    haptics::haptic_hardware::InactivitySettings,
     system_settings::{
         HapticSystemStoreSignal,
         log_toggles::{LogChannel, LogToggleReceiver, may_log},

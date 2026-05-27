@@ -6,8 +6,8 @@ use anyhow::{Context, Result, bail};
 use charming::HtmlRenderer;
 use clap::Parser;
 use futures::SinkExt;
-use haptic_lib::{CurveBuilder, CurveSegment};
 use log::info;
+use smartknob_core::haptics::base::{CurveBuilder, CurveSegment};
 use std::{fs::File, io::BufReader, io::BufWriter};
 
 use crate::{

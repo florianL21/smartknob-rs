@@ -4,7 +4,7 @@ use enterpolation::{
     Curve, Equidistant, Identity, Signal, TransformInput, bezier::Bezier, linear::Linear,
 };
 
-use crate::{Angle, Value};
+use super::{Angle, Value};
 
 pub(crate) trait CurveComponentInstance: core::fmt::Debug {
     /// Sample the interpolation curve at the given angle. The angle should be between 0.0 and self.width()

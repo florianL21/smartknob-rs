@@ -1,9 +1,7 @@
 extern crate alloc;
 
-use crate::{
-    Angle, Command, HapticPattern, PatternLayer,
-    pattern::{CommandVec, PatternLayerError, SequenceComponent},
-};
+use super::{Angle, Command, HapticPattern, PatternLayer};
+use crate::haptics::base::pattern::{CommandVec, PatternLayerError, SequenceComponent};
 use alloc::vec::Vec;
 use core::{marker::PhantomData, time::Duration};
 

@@ -2,7 +2,7 @@ extern crate alloc;
 
 pub mod builder;
 
-use crate::{
+use super::{
     Angle,
     pattern::builder::{_Empty, Builder, HapticPatternBuilder},
 };

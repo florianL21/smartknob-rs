@@ -897,20 +897,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "haptic_lib"
-version = "0.1.0"
-dependencies = [
- "enterpolation",
- "fixed",
- "heapless",
- "log",
- "matches",
- "postcard",
- "serde",
- "thiserror",
-]
-
-[[package]]
 name = "hash32"
 version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1734,11 +1720,12 @@ dependencies = [
  "enterpolation",
  "fixed",
  "foc",
- "haptic_lib",
  "heapless",
  "log",
+ "matches",
  "num-traits",
  "postcard",
+ "schemars 1.2.1",
  "serde",
  "smart-leds",
  "thiserror",
@@ -1756,12 +1743,12 @@ dependencies = [
  "env_logger",
  "fixed",
  "futures",
- "haptic_lib",
  "idc",
  "log",
  "open",
  "postcard",
  "serde_json",
+ "smartknob-core",
  "static_cell",
  "tokio",
  "tokio-serial",

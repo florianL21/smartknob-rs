@@ -2961,19 +2961,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "haptic_lib"
-version = "0.1.0"
-dependencies = [
- "enterpolation",
- "fixed",
- "heapless 0.9.3",
- "log",
- "postcard",
- "serde",
- "thiserror 2.0.18",
-]
-
-[[package]]
 name = "harfrust"
 version = "0.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5938,7 +5925,6 @@ dependencies = [
  "enterpolation",
  "fixed",
  "foc",
- "haptic_lib",
  "heapless 0.9.3",
  "log",
  "num-traits",
@@ -6015,7 +6001,6 @@ dependencies = [
  "esp-sync",
  "fixed",
  "foc",
- "haptic_lib",
  "log",
  "postcard",
  "serde",

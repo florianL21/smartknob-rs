@@ -1,7 +1,7 @@
 pub mod log_toggles;
 use embassy_sync::{blocking_mutex::raw::RawMutex, signal::Signal};
 
-use crate::{haptic_core::CalibrationData, system_settings::log_toggles::LogChannelToggles};
+use crate::{haptics::CalibrationData, system_settings::log_toggles::LogChannelToggles};
 
 pub type HapticSystemStoreSignal<M> = Signal<M, CalibrationData>;
 pub type LogTogglesStoreSignal<M> = Signal<M, LogChannelToggles>;

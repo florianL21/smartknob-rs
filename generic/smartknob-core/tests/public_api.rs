@@ -1,4 +1,4 @@
-use haptic_lib::*;
+use smartknob_core::*;
 extern crate std;
 
 // fn torque(p: Playback) -> Value {

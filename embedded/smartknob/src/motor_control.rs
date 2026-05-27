@@ -12,10 +12,12 @@ use esp_hal::{
     time::Rate,
 };
 use foc::pwm::SpaceVector;
-use haptic_lib::{CurveBuilder, CurveSegment, HapticPattern, PatternLayer};
 use log::info;
 use smartknob_core::{
-    haptic_core::{CalibrationData, DetailedSettings, SmartknobHapticCore, encoder::MT6701Spi},
+    haptics::{
+        CalibrationData, CurveBuilder, CurveSegment, DetailedSettings, HapticPattern, PatternLayer,
+        SmartknobHapticCore, encoder::MT6701Spi,
+    },
     system_settings::{HapticSystemStoreSignal, log_toggles::LogToggleReceiver},
 };
 use smartknob_esp32::motor_driver::mcpwm::{MCPWM6, Pins6PWM};

@@ -1,5 +1,3 @@
-#![no_std]
-
 mod config;
 mod curve;
 mod pattern;

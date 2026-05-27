@@ -5,8 +5,7 @@ pub mod components;
 
 use core::cmp::Ordering;
 
-use crate::curve::components::CurveComponentInstance;
-use crate::{Angle, Value};
+use super::{Angle, Value, curve::components::CurveComponentInstance};
 use alloc::boxed::Box;
 use alloc::vec::Vec;
 use builder::InterpolationBuilderError;

@@ -9,7 +9,7 @@ use charming::{
     element::{AxisType, Tooltip},
     series::Line,
 };
-use haptic_lib::{HapticCurveConfig, HapticPlayer, Playback};
+use smartknob_core::haptics::base::{HapticCurveConfig, HapticPlayer, Playback};
 
 pub fn create_graph(start: f32, curve: HapticCurveConfig, sample_step: f32) -> Chart {
     let curve_start_angle = curve.start_angle();

@@ -1,10 +1,13 @@
 extern crate alloc;
 
-use crate::curve::components::{
-    BezierComponent, ConstComponent, CurveComponentInstance, LinearComponent,
+use super::{Angle, CurveError, CurveInstance, Value};
+use crate::haptics::base::{
+    HapticCurveConfig,
+    curve::{
+        SegmentInstance, SegmentReference,
+        components::{BezierComponent, ConstComponent, CurveComponentInstance, LinearComponent},
+    },
 };
-use crate::curve::{SegmentInstance, SegmentReference};
-use crate::{Angle, CurveError, CurveInstance, HapticCurveConfig, Value};
 
 use alloc::boxed::Box;
 use alloc::vec::Vec;

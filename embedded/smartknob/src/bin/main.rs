@@ -36,7 +36,7 @@ use smartknob_core::system_settings::log_toggles::LogChannelToggles;
 use smartknob_core::system_settings::{HapticSystemStoreSignal, StoreSignals};
 use smartknob_core::{
     flash::FlashHandling,
-    haptic_core::get_encoder_position,
+    haptics::get_encoder_position,
     system_settings::log_toggles::{
         LogChannel, LogToggleReceiver, LogToggleWatcher, LogToggles, may_log,
     },

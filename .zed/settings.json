@@ -10,10 +10,10 @@
         "cargo": {
           "allTargets": false,
           // Enable for working on on-target crates
-          // "target": "xtensa-esp32s3-none-elf",
-          // "extraEnv": {
-          //   "RUSTUP_TOOLCHAIN": "esp",
-          // },
+          "target": "xtensa-esp32s3-none-elf",
+          "extraEnv": {
+            "RUSTUP_TOOLCHAIN": "esp",
+          },
           "features": [
             // "slint",
             // "lvgl"

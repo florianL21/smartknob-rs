@@ -28,7 +28,7 @@ use slint::LogicalPosition;
 use slint::platform::Platform;
 use slint::platform::WindowEvent;
 use slint::platform::software_renderer::{MinimalSoftwareWindow, Rgb565Pixel};
-use smartknob_core::haptic_core::get_encoder_position;
+use smartknob_core::haptics::get_encoder_position;
 use smartknob_core::knob_tilt::{
     KNOB_TILT_ANGLE, KNOB_TILT_MAGNITUDE, KnobTiltEvent, TiltDirection,
 };

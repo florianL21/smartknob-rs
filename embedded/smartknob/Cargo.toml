@@ -45,7 +45,6 @@ embedded-cli = { workspace = true }
 thiserror = { workspace = true, default-features = false }
 serde = { workspace = true, default-features = false, features = ["derive"] }
 postcard = { workspace = true, features = ["experimental-derive"] }
-haptic_lib = { workspace = true }
 embedded-hal-async = { workspace = true }
 smartknob-core = { workspace = true }
 smartknob-esp32 = { workspace = true }
