@@ -25,12 +25,9 @@ pub fn create_graph(start: f32, curve: HapticCurveConfig, sample_step: f32) -> C
     let mut data: Vec<f32> = Vec::new();
     for _ in 0..steps {
         let playback = player.play(x);
-        match playback {
-            Playback::Torque(v) => {
-                data.push(v);
-                x_data.push(x);
-            }
-            _ => {}
+        if let Playback::Torque(v) = playback {
+            data.push(v);
+            x_data.push(x);
         }
         x += sample_step;
     }

@@ -7,7 +7,10 @@ use crate::knob_tilt::KnobTiltEvent;
 pub enum Event {
     EncoderAngle(f32),
     Button(KnobTiltEvent),
-    Tilt { angle: f32, magnitude: f32 },
+    Tilt {
+        angle: f32,
+        magnitude: f32,
+    },
     /// Informs the host about how namy events were missed by the embedded system
-    MissedEvents(u64)
+    MissedEvents(u64),
 }

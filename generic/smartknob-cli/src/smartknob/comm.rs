@@ -71,20 +71,15 @@ impl<'a> Encoder<&comm::Command> for PostcardCobsCodec<'a> {
 fn find_in_acm_mode(ports: Vec<SerialPortInfo>) -> Option<(SerialPortInfo, SerialPortInfo)> {
     let mut sk_ports: Vec<_> = ports
         .into_iter()
-        .filter(|p| match &p.port_type {
-            SerialPortType::UsbPort(UsbPortInfo {
-                vid: comm::VID,
-                pid: comm::PID,
+        .filter(|p| {
+            matches!(&p.port_type, SerialPortType::UsbPort(UsbPortInfo {
+                vid: JTAG_VID,
+                pid: JTAG_PID,
                 manufacturer: Some(man),
                 product: Some(prod),
-                serial_number: Some(ser),
-            }) if man.as_str() == comm::MANUFACTURER
-                && prod.as_str() == comm::PRODUCT
-                && ser.as_str() == comm::SERIAL =>
-            {
-                true
-            }
-            _ => false,
+                ..
+                })
+            if man.as_str() == JTAG_MANUFACTURER && prod.as_str() == JTAG_PRODUCT)
         })
         .collect();
     if sk_ports.len() == 2 {
@@ -99,15 +94,14 @@ fn find_in_acm_mode(ports: Vec<SerialPortInfo>) -> Option<(SerialPortInfo, Seria
 fn find_in_jtag_mode(ports: Vec<SerialPortInfo>) -> Option<SerialPortInfo> {
     let mut sk_ports: Vec<_> = ports
         .into_iter()
-        .filter(|p| match &p.port_type {
-            SerialPortType::UsbPort(UsbPortInfo {
+        .filter(|p| {
+            matches!(&p.port_type, SerialPortType::UsbPort(UsbPortInfo {
                 vid: JTAG_VID,
                 pid: JTAG_PID,
                 manufacturer: Some(man),
                 product: Some(prod),
                 ..
-            }) if man.as_str() == JTAG_MANUFACTURER && prod.as_str() == JTAG_PRODUCT => true,
-            _ => false,
+            }) if man.as_str() == JTAG_MANUFACTURER && prod.as_str() == JTAG_PRODUCT)
         })
         .collect();
     if sk_ports.len() == 1 {
@@ -178,13 +172,13 @@ async fn serial_listener(
     loop {
         match stream.next().await {
             Some(Ok(comm::Comm::Response(r))) => {
-                if let Err(_) = response_sender.send(r).await {
+                if response_sender.send(r).await.is_err() {
                     error!("Could not notify of new response");
                     return;
                 }
             }
             Some(Ok(comm::Comm::Event(r))) => {
-                if let Err(_) = event_sender.send(r).await {
+                if event_sender.send(r).await.is_err() {
                     error!("Could not notify of new event");
                     return;
                 }

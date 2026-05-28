@@ -34,14 +34,16 @@ where
 
     pub async fn write_reg(&mut self, reg: u8, data: u16) -> Result<(), Error<BE>> {
         self.bus
-            .write(self.adr, &[reg, (data >> 8) as u8, data as u8]).await
+            .write(self.adr, &[reg, (data >> 8) as u8, data as u8])
+            .await
             .map_err(Error::Bus)
     }
 
     pub async fn read_reg(&mut self, reg: u8) -> Result<u16, Error<BE>> {
         let mut result: [u8; 2] = [0xde, 0xad];
         self.bus
-            .write_read(self.adr, &[reg], &mut result).await
+            .write_read(self.adr, &[reg], &mut result)
+            .await
             .map_err(Error::Bus)?;
         Ok((result[0] as u16) << 8 | result[1] as u16)
     }
@@ -76,7 +78,8 @@ where
     /// This function must only be used with 24-bit devices (LDC161x).
     /// Use read_data_12bit with 12-bit devices (LDC131x).
     pub async fn read_data_24bit(&mut self, ch: Channel) -> Result<u32, Error<BE>> {
-        Ok((self.read_data_12bit(ch).await? as u32) << 16 | self.read_reg(1 + 2 * ch as u8).await? as u32)
+        Ok((self.read_data_12bit(ch).await? as u32) << 16
+            | self.read_reg(1 + 2 * ch as u8).await? as u32)
     }
 
     pub async fn set_ref_count_conv_interval(
@@ -112,7 +115,8 @@ where
         ch: Channel,
         divs: ClockDividers,
     ) -> Result<(), Error<BE>> {
-        self.write_reg(0x14 + ch as u8, divs.fin_div << 12 | divs.fref_div).await
+        self.write_reg(0x14 + ch as u8, divs.fin_div << 12 | divs.fref_div)
+            .await
     }
 
     pub async fn status(&mut self) -> Result<Status, Error<BE>> {
@@ -149,7 +153,11 @@ where
 
     // TODO: 131x also have a gain field in the reset register
 
-    pub async fn set_sensor_drive_current(&mut self, ch: Channel, cur: u8) -> Result<(), Error<BE>> {
+    pub async fn set_sensor_drive_current(
+        &mut self,
+        ch: Channel,
+        cur: u8,
+    ) -> Result<(), Error<BE>> {
         self.write_reg(0x1E + ch as u8, (cur as u16) << 11).await
     }
 

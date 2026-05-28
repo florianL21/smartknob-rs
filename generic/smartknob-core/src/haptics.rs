@@ -16,22 +16,22 @@ pub mod encoder;
 mod haptic_hardware;
 pub mod motor_driver;
 
-pub use haptic_hardware::CalibrationData;
 pub use crate::haptics::base::*;
+pub use haptic_hardware::CalibrationData;
 
-use core::f32;
-use encoder::AbsolutePositionEncoder;
-use haptic_hardware::{HapticSystem, HapticSystemError};
-use motor_driver::MotorDriver;
 use atomic_float::AtomicF32;
+use core::f32;
 use embassy_sync::{
     blocking_mutex::raw::{CriticalSectionRawMutex, RawMutex},
     signal::Signal,
 };
 use embassy_time::{Duration, Instant, Ticker, Timer};
+use encoder::AbsolutePositionEncoder;
 use fixed::types::I16F16;
 use foc::pwm::Modulation;
+use haptic_hardware::{HapticSystem, HapticSystemError};
 use log::{error, info, warn};
+use motor_driver::MotorDriver;
 
 use crate::{
     haptics::haptic_hardware::InactivitySettings,

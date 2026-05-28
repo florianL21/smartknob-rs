@@ -10,9 +10,9 @@ pub use crate::system_settings::log_toggles::LogChannel;
 
 pub const VID: u16 = 0x303A;
 pub const PID: u16 = 0x3001;
-pub const MANUFACTURER: &'static str = "FlorianL21";
-pub const PRODUCT: &'static str = "smartknob-rs";
-pub const SERIAL: &'static str = "12345678";
+pub const MANUFACTURER: &str = "FlorianL21";
+pub const PRODUCT: &str = "smartknob-rs";
+pub const SERIAL: &str = "12345678";
 
 #[derive(Deserialize, Serialize, Error, Debug, Clone)]
 pub enum EmbeddedError {
