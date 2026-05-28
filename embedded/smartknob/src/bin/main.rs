@@ -232,27 +232,6 @@ async fn main(spawner: Spawner) {
         },
     );
 
-    // Needed to get the system to start up properly for now
-    let mut buffer = [0u8; LogChannelToggles::POSTCARD_MAX_SIZE];
-    let initial_log_toggles =
-        if let Ok(Some(t)) = flash.load(FlashKeys::LogChannels, &mut buffer).await {
-            t
-        } else {
-            LogChannelToggles::default()
-        };
-
-    log_toggles.dyn_sender().send(LogToggles {
-        active: true,
-        config: initial_log_toggles,
-    });
-    initialize_uplink(
-        spawner,
-        peripherals.USB0,
-        peripherals.USB_DEVICE,
-        pin_usb_plus,
-        pin_usb_minus,
-    );
-
     // LDC sensor
     let i2c_bus: I2c<'_, esp_hal::Async> = I2c::new(
         peripherals.I2C0,
@@ -276,6 +255,30 @@ async fn main(spawner: Spawner) {
                 .expect("Could not create knob tilt subscriber, please increase capacity"),
         )
         .unwrap(),
+    );
+
+    // Needed to get the system to start up properly for now
+    let mut buffer = [0u8; LogChannelToggles::POSTCARD_MAX_SIZE];
+    let initial_log_toggles =
+        if let Ok(Some(t)) = flash.load(FlashKeys::LogChannels, &mut buffer).await {
+            t
+        } else {
+            LogChannelToggles::default()
+        };
+
+    log_toggles.dyn_sender().send(LogToggles {
+        active: true,
+        config: initial_log_toggles,
+    });
+    initialize_uplink(
+        spawner,
+        peripherals.USB0,
+        peripherals.USB_DEVICE,
+        pin_usb_plus,
+        pin_usb_minus,
+        knob_tilt
+            .dyn_subscriber()
+            .expect("Could not create knob tilt subscriber for uplink, please increase capacity"),
     );
 
     // log encoder values

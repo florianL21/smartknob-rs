@@ -1,10 +1,8 @@
-use core::str::FromStr;
-
+#[cfg(feature = "host")]
+use clap::ValueEnum;
 use embassy_sync::watch::{self, Watch};
-use embedded_cli::arguments::FromArgumentError;
 use postcard::experimental::max_size::MaxSize;
 use serde::{Deserialize, Serialize};
-use ufmt::{derive::uDebug, uDisplay, uwriteln};
 
 pub type LogToggleSender = watch::DynSender<'static, LogToggles>;
 pub type LogToggleReceiver = watch::DynReceiver<'static, LogToggles>;
@@ -12,26 +10,15 @@ pub type LogToggleWatcher<M, const N: usize> = Watch<M, LogToggles, N>;
 
 macro_rules! log_toggles {
     ($($variant:ident, $enum:ident),*) => {
-        #[derive(Clone, Debug, uDebug, Default, Serialize, Deserialize, MaxSize)]
+        #[derive(Clone, Debug, Default, Serialize, Deserialize, MaxSize)]
         pub struct LogChannelToggles {
             $($variant: bool),+
         }
 
+        #[derive(Deserialize, Serialize, Debug, Clone, MaxSize)]
+        #[cfg_attr(feature = "host", derive(ValueEnum))]
         pub enum LogChannel {
             $($enum),+
-        }
-
-
-        impl uDisplay for LogChannelToggles {
-            fn fmt<W>(&self, f: &mut ufmt::Formatter<'_, W>) -> Result<(), W::Error>
-            where
-                W: ufmt::uWrite + ?Sized,
-            {
-                uwriteln!(f, "Channel:       | Enabled:")?;
-                uwriteln!(f, "---------------|---------")?;
-                $(uwriteln!(f, "{} | {}", stringify!($variant), self.$variant)?;)+
-                Ok(())
-            }
         }
 
         impl LogChannelToggles {
@@ -48,29 +35,6 @@ macro_rules! log_toggles {
             }
         }
 
-        impl FromStr for LogChannel {
-            type Err = ();
-            fn from_str(s: &str) -> Result<Self, Self::Err> {
-                Ok(match s {
-                    $(stringify!($variant) => LogChannel::$enum,)+
-                    $(stringify!($enum) => LogChannel::$enum,)+
-                    _ => {
-                        return Err(());
-                    }
-                })
-            }
-        }
-
-        impl uDisplay for LogChannel {
-            fn fmt<W>(&self, f: &mut ufmt::Formatter<'_, W>) -> Result<(), W::Error>
-            where
-                W: ufmt::uWrite + ?Sized,
-            {
-                match self {
-                    $(LogChannel::$enum => f.write_str(stringify!($enum)),)+
-                }
-            }
-        }
     };
 }
 
@@ -89,19 +53,7 @@ log_toggles!(
     FOCLoop
 );
 
-impl<'a> embedded_cli::arguments::FromArgument<'a> for LogChannel {
-    fn from_arg(arg: &'a str) -> Result<Self, FromArgumentError<'a>>
-    where
-        Self: Sized,
-    {
-        arg.parse().map_err(|_| FromArgumentError {
-            value: arg,
-            expected: "a valid LogChannel enum variant",
-        })
-    }
-}
-
-#[derive(Clone, Debug, uDebug, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct LogToggles {
     pub active: bool,
     pub config: LogChannelToggles,

@@ -1,0 +1,23 @@
+use postcard::experimental::max_size::MaxSize;
+use serde::{Deserialize, Serialize};
+
+use crate::{comm::EmbeddedError, system_settings::log_toggles::LogChannel};
+
+#[derive(Deserialize, Serialize, Debug, Clone, MaxSize)]
+pub enum Command {
+    LogEnable(LogChannel),
+    LogDisable(LogChannel),
+    FlashErase,
+    MotorCalibrate,
+    Ping,
+}
+
+#[derive(Deserialize, Serialize, Debug, Clone, MaxSize)]
+pub enum Response {
+    /// Sent if operation was completed successfully
+    Ack,
+    /// Sent when there was a framing error. Simply repeating the mesage could likeley fix the issue in this case
+    Repeat,
+    /// Sent when there was an error with executing the operation
+    Error(EmbeddedError),
+}

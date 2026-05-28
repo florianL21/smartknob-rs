@@ -8,9 +8,9 @@ use clap::Parser;
 use futures::SinkExt;
 use log::info;
 use schemars::schema_for;
+use smartknob_core::comm;
 use smartknob_core::haptics::HapticCurveConfig;
 use smartknob_core::haptics::base::{CurveBuilder, CurveSegment, HapticCurveConfigWithSchema};
-use smartknob_core::idc;
 use std::{fs::File, io::BufReader, io::BufWriter};
 
 use crate::{
@@ -27,8 +27,8 @@ async fn main() -> Result<()> {
     match cli.command {
         Command::Log { channel, enabled } => {
             let msg = match enabled {
-                LogState::Enable => idc::Command::LogEnable(channel),
-                LogState::Disable => idc::Command::LogDisable(channel),
+                LogState::Enable => comm::Command::LogEnable(channel),
+                LogState::Disable => comm::Command::LogDisable(channel),
             };
             let mut comms = init_comms().await?;
             comms.requests.send(&msg).await?;

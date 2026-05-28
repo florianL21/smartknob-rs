@@ -1,0 +1,32 @@
+pub mod commands;
+pub mod events;
+
+use postcard::experimental::max_size::MaxSize;
+use serde::{Deserialize, Serialize};
+use thiserror::Error;
+
+pub use crate::comm::{commands::Command, commands::Response, events::Event};
+pub use crate::system_settings::log_toggles::LogChannel;
+
+pub const VID: u16 = 0x303A;
+pub const PID: u16 = 0x3001;
+pub const MANUFACTURER: &'static str = "FlorianL21";
+pub const PRODUCT: &'static str = "smartknob-rs";
+pub const SERIAL: &'static str = "12345678";
+
+#[derive(Deserialize, Serialize, Error, Debug, Clone)]
+pub enum EmbeddedError {
+    #[error("Postcard deserialize failed")]
+    PostcardDecodeError(#[from] postcard::Error),
+}
+
+impl MaxSize for EmbeddedError {
+    // Wild guess. TODO: check this holds true
+    const POSTCARD_MAX_SIZE: usize = 2;
+}
+
+#[derive(Deserialize, Serialize, Debug, Clone, MaxSize)]
+pub enum Comm {
+    Response(Response),
+    Event(Event),
+}

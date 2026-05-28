@@ -1,9 +1,11 @@
 use cobs::{CobsDecoder, max_encoding_length};
 use embassy_executor::Spawner;
+use embassy_futures::select::select;
 use embassy_sync::{
-    blocking_mutex::raw::CriticalSectionRawMutex, channel::Channel, signal::Signal,
+    blocking_mutex::raw::CriticalSectionRawMutex, channel::Channel, pubsub::DynSubscriber,
+    signal::Signal,
 };
-use embassy_time::Timer;
+use embassy_time::{Duration, Ticker};
 use embassy_usb::{
     Builder,
     class::cdc_acm::{CdcAcmClass, Receiver, Sender, State},
@@ -21,12 +23,13 @@ use esp_hal::{
 };
 use log::{error, info};
 use postcard::{experimental::max_size::MaxSize, from_bytes, to_slice_cobs};
-use smartknob_core::idc;
+use smartknob_core::haptics::get_encoder_position;
+use smartknob_core::{comm, knob_tilt::KnobTiltEvent};
 use static_cell::StaticCell;
 
 const MAX_PACKET_SIZE: u16 = 64;
 static USB_CDC_TRIGGER: Signal<CriticalSectionRawMutex, ()> = Signal::new();
-static COMM_CHANNEL: Channel<CriticalSectionRawMutex, idc::Comm, 10> = Channel::new();
+static COMM_CHANNEL: Channel<CriticalSectionRawMutex, comm::Comm, 10> = Channel::new();
 
 pub fn initialize_uplink(
     spawner: Spawner,
@@ -34,6 +37,7 @@ pub fn initialize_uplink(
     usb_device: USB_DEVICE<'static>,
     dp: impl UsbDp + 'static,
     dm: impl UsbDm + 'static,
+    knob_events: DynSubscriber<'static, KnobTiltEvent>,
 ) {
     let usb = Usb::new(usb, dp, dm);
 
@@ -45,10 +49,10 @@ pub fn initialize_uplink(
     let driver = Driver::new(usb, ep_out_buffer, config);
 
     // Create embassy-usb Config
-    let mut config = embassy_usb::Config::new(idc::VID, idc::PID);
-    config.manufacturer = Some(idc::MANUFACTURER);
-    config.product = Some(idc::PRODUCT);
-    config.serial_number = Some(idc::SERIAL);
+    let mut config = embassy_usb::Config::new(comm::VID, comm::PID);
+    config.manufacturer = Some(comm::MANUFACTURER);
+    config.product = Some(comm::PRODUCT);
+    config.serial_number = Some(comm::SERIAL);
 
     // Required for windows compatibility.
     // https://developer.nordicsemi.com/nRF_Connect_SDK/doc/1.9.1/kconfig/CONFIG_CDC_ACM_IAD.html#help
@@ -91,7 +95,7 @@ pub fn initialize_uplink(
     spawner.spawn(usb_task(builder).unwrap());
     spawner.spawn(logger_task(logging_class).unwrap());
     spawner.spawn(comm_sender(tx).unwrap());
-    spawner.spawn(event_sender().unwrap());
+    spawner.spawn(event_sender(knob_events, Duration::from_hz(20)).unwrap());
     spawner.spawn(request_handler(rx).unwrap());
 }
 
@@ -144,7 +148,7 @@ async fn comm_sender(mut sender: Sender<'static, Driver<'static>>) {
 async fn stream_events<'d>(
     sender: &mut Sender<'static, Driver<'static>>,
 ) -> Result<(), Disconnected> {
-    let mut buf = [0u8; max_encoding_length(idc::Comm::POSTCARD_MAX_SIZE)];
+    let mut buf = [0u8; max_encoding_length(comm::Comm::POSTCARD_MAX_SIZE)];
 
     loop {
         let data = COMM_CHANNEL.receive().await;
@@ -154,12 +158,31 @@ async fn stream_events<'d>(
 }
 
 #[embassy_executor::task]
-async fn event_sender() {
-    let data = idc::Comm::Event(idc::Event::Button(idc::ButtonEvent::PressDown));
+async fn event_sender(mut events: DynSubscriber<'static, KnobTiltEvent>, poll_rate: Duration) {
+    let mut ticker = Ticker::every(poll_rate);
     loop {
-        Timer::after_secs(1).await;
-        COMM_CHANNEL.send(data.clone()).await;
-        info!("Sent Button press event");
+        //TODO: Send off tilt information in case we are currently tilted
+        match select(ticker.next(), events.next_message()).await {
+            embassy_futures::select::Either::First(_) => {
+                COMM_CHANNEL
+                    .send(comm::Comm::Event(comm::Event::EncoderAngle(
+                        get_encoder_position(),
+                    )))
+                    .await;
+            }
+            embassy_futures::select::Either::Second(msg) => match msg {
+                embassy_sync::pubsub::WaitResult::Lagged(num_missed) => {
+                    COMM_CHANNEL
+                        .send(comm::Comm::Event(comm::Event::MissedEvents(num_missed)))
+                        .await;
+                }
+                embassy_sync::pubsub::WaitResult::Message(msg) => {
+                    COMM_CHANNEL
+                        .send(comm::Comm::Event(comm::Event::Button(msg)))
+                        .await;
+                }
+            },
+        }
     }
 }
 
@@ -190,7 +213,7 @@ async fn read_requests<'d>(
     let mut buf = [0u8; MAX_PACKET_SIZE as usize];
     // The buffer must be at least as long as a single packet can be to prevent some decoding errors
     const MAX_SIZE: usize =
-        max_encoding_length(idc::Command::POSTCARD_MAX_SIZE) + MAX_PACKET_SIZE as usize;
+        max_encoding_length(comm::Command::POSTCARD_MAX_SIZE) + MAX_PACKET_SIZE as usize;
 
     let mut msg_buf = [0u8; MAX_SIZE];
     let mut decoder = CobsDecoder::new(&mut msg_buf);
@@ -202,14 +225,14 @@ async fn read_requests<'d>(
             }
             Ok(Some(msg)) => {
                 let frame = &decoder.dest()[..msg.frame_size()];
-                match from_bytes::<idc::Command>(frame) {
+                match from_bytes::<comm::Command>(frame) {
                     Ok(cmd) => {
                         handle_request(cmd).await;
                     }
                     Err(e) => {
                         error!("Postcard parsing error: {e}");
                         COMM_CHANNEL
-                            .send(idc::Comm::Response(idc::Response::Error(e.into())))
+                            .send(comm::Comm::Response(comm::Response::Error(e.into())))
                             .await;
                     }
                 }
@@ -217,19 +240,19 @@ async fn read_requests<'d>(
             Err(e) => {
                 error!("COBS decoding error: {e}");
                 COMM_CHANNEL
-                    .send(idc::Comm::Response(idc::Response::Repeat))
+                    .send(comm::Comm::Response(comm::Response::Repeat))
                     .await;
             }
         }
     }
 }
 
-async fn handle_request(request: idc::Command) {
+async fn handle_request(request: comm::Command) {
     info!("Got command of {request:?}");
     match request {
         _ => {
             COMM_CHANNEL
-                .send(idc::Comm::Response(idc::Response::Ack))
+                .send(comm::Comm::Response(comm::Response::Ack))
                 .await
         }
     }

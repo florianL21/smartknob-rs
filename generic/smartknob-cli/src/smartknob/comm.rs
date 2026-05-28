@@ -5,7 +5,7 @@ use futures::stream::SplitStream;
 use futures::stream::StreamExt;
 use log::{error, info};
 use postcard::{experimental::max_size::MaxSize, from_bytes, to_stdvec_cobs};
-use smartknob_core::idc;
+use smartknob_core::comm;
 use static_cell::StaticCell;
 use std::time::Duration;
 use tokio::task;
@@ -38,7 +38,7 @@ impl<'a> PostcardCobsCodec<'a> {
 }
 
 impl<'a> Decoder for PostcardCobsCodec<'a> {
-    type Item = idc::Comm;
+    type Item = comm::Comm;
     type Error = Error;
 
     fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
@@ -56,10 +56,10 @@ impl<'a> Decoder for PostcardCobsCodec<'a> {
     }
 }
 
-impl<'a> Encoder<&idc::Command> for PostcardCobsCodec<'a> {
+impl<'a> Encoder<&comm::Command> for PostcardCobsCodec<'a> {
     type Error = Error;
 
-    fn encode(&mut self, item: &idc::Command, dst: &mut BytesMut) -> Result<(), Self::Error> {
+    fn encode(&mut self, item: &comm::Command, dst: &mut BytesMut) -> Result<(), Self::Error> {
         let ser = to_stdvec_cobs(item)?;
         dst.reserve(ser.len());
         dst.put(ser.as_slice());
@@ -73,14 +73,14 @@ fn find_in_acm_mode(ports: Vec<SerialPortInfo>) -> Option<(SerialPortInfo, Seria
         .into_iter()
         .filter(|p| match &p.port_type {
             SerialPortType::UsbPort(UsbPortInfo {
-                vid: idc::VID,
-                pid: idc::PID,
+                vid: comm::VID,
+                pid: comm::PID,
                 manufacturer: Some(man),
                 product: Some(prod),
                 serial_number: Some(ser),
-            }) if man.as_str() == idc::MANUFACTURER
-                && prod.as_str() == idc::PRODUCT
-                && ser.as_str() == idc::SERIAL =>
+            }) if man.as_str() == comm::MANUFACTURER
+                && prod.as_str() == comm::PRODUCT
+                && ser.as_str() == comm::SERIAL =>
             {
                 true
             }
@@ -172,18 +172,18 @@ async fn connect_with_retry(port: SerialPortInfo) -> Option<SerialStream> {
 
 async fn serial_listener(
     mut stream: SplitStream<Framed<SerialStream, PostcardCobsCodec<'_>>>,
-    response_sender: mpsc::Sender<idc::Response>,
-    event_sender: mpsc::Sender<idc::Event>,
+    response_sender: mpsc::Sender<comm::Response>,
+    event_sender: mpsc::Sender<comm::Event>,
 ) {
     loop {
         match stream.next().await {
-            Some(Ok(idc::Comm::Response(r))) => {
+            Some(Ok(comm::Comm::Response(r))) => {
                 if let Err(_) = response_sender.send(r).await {
                     error!("Could not notify of new response");
                     return;
                 }
             }
-            Some(Ok(idc::Comm::Event(r))) => {
+            Some(Ok(comm::Comm::Event(r))) => {
                 if let Err(_) = event_sender.send(r).await {
                     error!("Could not notify of new event");
                     return;
@@ -214,9 +214,9 @@ async fn log_listener(mut stream: Framed<SerialStream, LinesCodec>) {
 }
 
 pub struct CommChannels<'a> {
-    pub requests: SplitSink<Framed<SerialStream, PostcardCobsCodec<'static>>, &'a idc::Command>,
-    pub responses: Receiver<idc::Response>,
-    pub events: Receiver<idc::Event>,
+    pub requests: SplitSink<Framed<SerialStream, PostcardCobsCodec<'static>>, &'a comm::Command>,
+    pub responses: Receiver<comm::Response>,
+    pub events: Receiver<comm::Event>,
 }
 
 pub async fn init_comms<'a>() -> Result<CommChannels<'a>> {
@@ -232,7 +232,7 @@ pub async fn init_comms<'a>() -> Result<CommChannels<'a>> {
         .await
         .context("Could not open communications serial prot")?;
 
-    static BUFFER: StaticCell<[u8; max_encoding_length(idc::Comm::POSTCARD_MAX_SIZE)]> =
+    static BUFFER: StaticCell<[u8; max_encoding_length(comm::Comm::POSTCARD_MAX_SIZE)]> =
         StaticCell::new();
     let buffer = BUFFER.init([0u8; _]);
     let (tx, rx) = Framed::new(port, PostcardCobsCodec::new(buffer.as_mut_slice())).split();

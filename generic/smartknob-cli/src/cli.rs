@@ -24,7 +24,7 @@ pub enum Command {
     Log {
         /// The channel which to enable/disable
         #[arg(value_enum)]
-        channel: smartknob_core::idc::LogChannel,
+        channel: smartknob_core::comm::LogChannel,
 
         /// whether to enable or disable the log channel
         enabled: LogState,
