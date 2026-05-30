@@ -1,5 +1,5 @@
 use crate::{
-    knob_tilt::{KNOB_TILT_ANGLE, KnobTiltEvent},
+    knob_tilt::{KnobTiltEvent, get_tilt_angle},
     system_settings::log_toggles::{LogChannel, LogToggleReceiver, may_log},
 };
 use embassy_sync::pubsub::DynSubscriber;
@@ -60,7 +60,7 @@ where
                 }
             }
             KnobTiltEvent::TiltStart(_) | KnobTiltEvent::TiltAdjust => {
-                let angle = KNOB_TILT_ANGLE.load(core::sync::atomic::Ordering::Relaxed);
+                let angle = get_tilt_angle();
                 let angle = if angle < 0.0 {
                     angle + 2.0 * core::f32::consts::PI
                 } else {

@@ -23,8 +23,11 @@ use esp_hal::{
 };
 use log::{error, info};
 use postcard::{experimental::max_size::MaxSize, from_bytes, to_slice_cobs};
-use smartknob_core::haptics::get_encoder_position;
 use smartknob_core::{comm, knob_tilt::KnobTiltEvent};
+use smartknob_core::{
+    haptics::get_encoder_position,
+    knob_tilt::{get_tilt_angle, get_tilt_magnitude},
+};
 use static_cell::StaticCell;
 
 const MAX_PACKET_SIZE: u16 = 64;
@@ -149,7 +152,6 @@ async fn stream_events<'d>(
     sender: &mut Sender<'static, Driver<'static>>,
 ) -> Result<(), Disconnected> {
     let mut buf = [0u8; max_encoding_length(comm::Comm::POSTCARD_MAX_SIZE)];
-
     loop {
         let data = COMM_CHANNEL.receive().await;
         let encoded = to_slice_cobs(&data, &mut buf).unwrap();
@@ -163,15 +165,40 @@ async fn stream_events<'d>(
 #[embassy_executor::task]
 async fn event_sender(mut events: DynSubscriber<'static, KnobTiltEvent>, poll_rate: Duration) {
     let mut ticker = Ticker::every(poll_rate);
+    let mut last_encoder_pos = get_encoder_position();
+    let mut is_tilted = false;
+    let mut last_tilt = comm::Event::Tilt {
+        angle: get_tilt_angle(),
+        magnitude: get_tilt_magnitude(),
+    };
     loop {
-        //TODO: Send off tilt information in case we are currently tilted
         match select(ticker.next(), events.next_message()).await {
             embassy_futures::select::Either::First(_) => {
-                COMM_CHANNEL
-                    .send(comm::Comm::Event(comm::Event::EncoderAngle(
-                        get_encoder_position(),
-                    )))
-                    .await;
+                let current_pos = get_encoder_position();
+                // TODO: Consider making this approximateley equal
+                if current_pos != last_encoder_pos {
+                    last_encoder_pos = current_pos;
+                    COMM_CHANNEL
+                        .send(comm::Comm::Event(comm::Event::EncoderAngle(
+                            get_encoder_position(),
+                        )))
+                        .await;
+                }
+                if is_tilted {
+                    let new = comm::Event::Tilt {
+                        angle: get_tilt_angle(),
+                        magnitude: get_tilt_magnitude(),
+                    };
+                    if new != last_tilt {
+                        last_tilt = new;
+                        COMM_CHANNEL
+                            .send(comm::Comm::Event(comm::Event::Tilt {
+                                angle: get_tilt_angle(),
+                                magnitude: get_tilt_magnitude(),
+                            }))
+                            .await;
+                    }
+                }
             }
             embassy_futures::select::Either::Second(msg) => match msg {
                 embassy_sync::pubsub::WaitResult::Lagged(num_missed) => {
@@ -180,6 +207,15 @@ async fn event_sender(mut events: DynSubscriber<'static, KnobTiltEvent>, poll_ra
                         .await;
                 }
                 embassy_sync::pubsub::WaitResult::Message(msg) => {
+                    match msg {
+                        KnobTiltEvent::TiltStart(_) => {
+                            is_tilted = true;
+                        }
+                        KnobTiltEvent::TiltEnd => {
+                            is_tilted = false;
+                        }
+                        _ => {}
+                    }
                     COMM_CHANNEL
                         .send(comm::Comm::Event(comm::Event::Button(msg)))
                         .await;

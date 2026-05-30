@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::knob_tilt::KnobTiltEvent;
 
-#[derive(Deserialize, Serialize, Debug, Clone, MaxSize)]
+#[derive(Deserialize, Serialize, Debug, Clone, MaxSize, PartialEq)]
 pub enum Event {
     EncoderAngle(f32),
     Button(KnobTiltEvent),

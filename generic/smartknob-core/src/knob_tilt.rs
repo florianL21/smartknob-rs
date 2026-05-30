@@ -11,7 +11,7 @@ pub type KnobTiltPublisher<M, const CAP: usize, const SUBS: usize, const PUBS: u
 pub static KNOB_TILT_ANGLE: AtomicF32 = AtomicF32::new(0.0);
 pub static KNOB_TILT_MAGNITUDE: AtomicF32 = AtomicF32::new(0.0);
 
-#[derive(Deserialize, Serialize, Debug, Clone, MaxSize)]
+#[derive(Deserialize, Serialize, Debug, Clone, MaxSize, PartialEq)]
 pub enum TiltDirection {
     Up,
     Right,
@@ -19,11 +19,19 @@ pub enum TiltDirection {
     Left,
 }
 
-#[derive(Deserialize, Serialize, Debug, Clone, MaxSize)]
+#[derive(Deserialize, Serialize, Debug, Clone, MaxSize, PartialEq)]
 pub enum KnobTiltEvent {
     TiltStart(TiltDirection),
     TiltAdjust,
     TiltEnd,
     PressStart,
     PressEnd,
+}
+
+pub fn get_tilt_angle() -> f32 {
+    KNOB_TILT_ANGLE.load(core::sync::atomic::Ordering::Relaxed)
+}
+
+pub fn get_tilt_magnitude() -> f32 {
+    KNOB_TILT_MAGNITUDE.load(core::sync::atomic::Ordering::Relaxed)
 }

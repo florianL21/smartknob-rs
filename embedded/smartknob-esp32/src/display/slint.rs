@@ -29,9 +29,7 @@ use slint::platform::Platform;
 use slint::platform::WindowEvent;
 use slint::platform::software_renderer::{MinimalSoftwareWindow, Rgb565Pixel};
 use smartknob_core::haptics::get_encoder_position;
-use smartknob_core::knob_tilt::{
-    KNOB_TILT_ANGLE, KNOB_TILT_MAGNITUDE, KnobTiltEvent, TiltDirection,
-};
+use smartknob_core::knob_tilt::{KnobTiltEvent, TiltDirection, get_tilt_angle, get_tilt_magnitude};
 use smartknob_core::system_settings::log_toggles::{
     LogChannel, LogToggleReceiver, LogToggleWatcher, may_log,
 };
@@ -369,8 +367,8 @@ pub async fn ui_task() {
     let ui = MainWindow::new().unwrap();
     ui.show().expect("unable to show main window");
     loop {
-        let tilt_angle = KNOB_TILT_ANGLE.load(core::sync::atomic::Ordering::Relaxed);
-        let magnitude = KNOB_TILT_MAGNITUDE.load(core::sync::atomic::Ordering::Relaxed);
+        let tilt_angle = get_tilt_angle();
+        let magnitude = get_tilt_magnitude();
         ui.global::<State>()
             .set_tilt_angle(tilt_angle * 180.0 / core::f32::consts::PI);
         ui.global::<State>().set_tilt_magnitude(magnitude);
