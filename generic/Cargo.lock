@@ -119,9 +119,9 @@ checksum = "bef38d45163c2f1dde094a7dfd33ccf595c92905c8f8f4fdc18d06fb1037718a"
 
 [[package]]
 name = "bitflags"
-version = "2.10.0"
+version = "2.11.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "812e12b5285cc515a9c72a5c1d3b6d46a19dac5acfef5265968c166106e31dd3"
+checksum = "c4512299f36f043ab09a583e57bceb5a5aab7a73db1805848e8fef3c9e8c78b3"
 
 [[package]]
 name = "block-buffer"
@@ -589,7 +589,7 @@ name = "embedded-cli"
 version = "0.2.1"
 source = "git+https://github.com/florianL21/embedded-cli-rs.git?rev=12434bd4#12434bd465b7c108a48d3a6be91019872b67d84e"
 dependencies = [
- "bitflags 2.10.0",
+ "bitflags 2.11.1",
  "embedded-cli-macros",
  "embedded-io 0.7.1",
  "ufmt",
@@ -1215,7 +1215,7 @@ version = "0.29.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "71e2746dc3a24dd78b3cfcb7be93368c6de9963d30f43a6a73998a9cf4b17b46"
 dependencies = [
- "bitflags 2.10.0",
+ "bitflags 2.11.1",
  "cfg-if",
  "cfg_aliases",
  "libc",
@@ -1431,7 +1431,7 @@ version = "0.5.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ed2bf2547551a7053d6fdfafda3f938979645c44812fbfcda098faae3f1a362d"
 dependencies = [
- "bitflags 2.10.0",
+ "bitflags 2.11.1",
 ]
 
 [[package]]
@@ -1635,7 +1635,7 @@ version = "4.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a4d91116f97173694f1642263b2ff837f80d933aa837e2314969f6728f661df3"
 dependencies = [
- "bitflags 2.10.0",
+ "bitflags 2.11.1",
  "cfg-if",
  "core-foundation",
  "core-foundation-sys",
@@ -1752,6 +1752,7 @@ name = "smartknobctl"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "bitflags 2.11.1",
  "charming",
  "clap",
  "cobs 0.5.1",
@@ -1765,6 +1766,7 @@ dependencies = [
  "serde_json",
  "smartknob-core",
  "static_cell",
+ "thiserror",
  "tokio",
  "tokio-serial",
  "tokio-util",

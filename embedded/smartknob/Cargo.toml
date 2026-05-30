@@ -41,13 +41,13 @@ fixed = { workspace = true, features = ["serde"] }
 embassy-usb = { workspace = true }
 embedded-io-async = { workspace = true }
 ufmt = { workspace = true }
-embedded-cli = { workspace = true }
 thiserror = { workspace = true, default-features = false }
 serde = { workspace = true, default-features = false, features = ["derive"] }
 postcard = { workspace = true, features = ["experimental-derive"] }
 embedded-hal-async = { workspace = true }
 smartknob-core = { workspace = true }
 smartknob-esp32 = { workspace = true }
+embassy-usb-logger = { workspace = true }
 
 [features]
 default = ["slint"]

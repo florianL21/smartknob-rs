@@ -18,6 +18,15 @@ pub enum LogState {
 
 #[derive(Subcommand, Debug)]
 pub enum Command {
+    /// Connect to the smartknob and print out information from it, until cancelled
+    Watch {
+        /// Print out logs from the smartknob; active by default
+        #[arg(short, long, default_value_t = true)]
+        logs: bool,
+        /// Print out all events coming from the smartknob
+        #[arg(short, long, default_value_t = false)]
+        events: bool,
+    },
     /// Work with haptic curves
     Curve(CurveArgs),
     /// Enable or disable a log channel

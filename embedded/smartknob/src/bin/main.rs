@@ -94,7 +94,9 @@ async fn brightness_task(handles: BacklightHandles, log_receiver: LogToggleRecei
 
 #[esp_rtos::main]
 async fn main(spawner: Spawner) {
-    esp_println::logger::init_logger_from_env();
+    // For now only enable this for debugging early startup issues or problems where a PC connection cannot yet be established.
+    // Also keep in mind that this is exclusive with the logger_task in uplink.rs
+    // esp_println::logger::init_logger_from_env();
     let psram_config = PsramConfig {
         flash_frequency: FlashFreq::FlashFreq80m,
         ram_frequency: SpiRamFreq::Freq80m,

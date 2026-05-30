@@ -22,3 +22,5 @@ serde_json = { workspace = true }
 open = { workspace = true }
 smartknob-core = { workspace = true, features = ["host"] }
 schemars = { workspace = true }
+thiserror = { workspace = true, features = ["std"] }
+bitflags = { workspace = true }

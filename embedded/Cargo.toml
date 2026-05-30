@@ -23,7 +23,6 @@ fixed = "1.29.0"
 embassy-usb = "0.6.0"
 embedded-io-async = "0.7.0"
 ufmt = "0.2.0"
-embedded-cli = { git = "https://github.com/florianL21/embedded-cli-rs.git", rev = "6b47952f1f4672160e7dbca8b0cfeed4e2aa153d" }
 thiserror = { version = "2.0.18", default-features = false }
 serde = { version = "1.0.228", default-features = false }
 postcard = "1.1.3"

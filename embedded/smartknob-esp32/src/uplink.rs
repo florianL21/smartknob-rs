@@ -8,10 +8,10 @@ use embassy_sync::{
 use embassy_time::{Duration, Ticker};
 use embassy_usb::{
     Builder,
-    class::cdc_acm::{CdcAcmClass, Receiver, Sender, State},
+    class::cdc_acm::{CdcAcmClass, CdcAcmError, Receiver, Sender, State},
     driver::EndpointError,
 };
-use embedded_io_async::Read;
+use embedded_io_async::{Read, Write};
 use esp_hal::{
     Async,
     otg_fs::{
@@ -153,7 +153,10 @@ async fn stream_events<'d>(
     loop {
         let data = COMM_CHANNEL.receive().await;
         let encoded = to_slice_cobs(&data, &mut buf).unwrap();
-        sender.write_packet(encoded).await?;
+        sender.write_all(encoded).await?;
+        if let comm::Comm::Response(x) = data {
+            info!("Response was sent: {x:?}");
+        }
     }
 }
 
@@ -194,6 +197,12 @@ impl From<EndpointError> for Disconnected {
             EndpointError::BufferOverflow => panic!("Buffer overflow"),
             EndpointError::Disabled => Disconnected {},
         }
+    }
+}
+
+impl From<CdcAcmError> for Disconnected {
+    fn from(_: CdcAcmError) -> Self {
+        Disconnected {}
     }
 }
 
@@ -238,7 +247,10 @@ async fn read_requests<'d>(
                 }
             }
             Err(e) => {
+                info!("Incoming bytes: {size}; buffer size: {MAX_SIZE}");
                 error!("COBS decoding error: {e}");
+                // Clear the internal state of the decoder
+                decoder = CobsDecoder::new(&mut msg_buf);
                 COMM_CHANNEL
                     .send(comm::Comm::Response(comm::Response::Repeat))
                     .await;
