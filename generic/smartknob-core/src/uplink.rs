@@ -1,3 +1,9 @@
+use crate::comm::LogChannel;
+use crate::display::DISPLAY_BRIGHTNESS_SIGNAL;
+use crate::flash::{FlashHandling, FlashKeys};
+use crate::haptics::{MOTOR_COMMAND_SIGNAL, MotorCommand};
+use crate::shutdown::REQUEST_POWER_DOWN;
+use crate::system_settings::log_toggles::{LogChannelToggles, LogToggleSender};
 use crate::{comm, knob_tilt::KnobTiltEvent};
 use crate::{
     haptics::get_encoder_position,
@@ -14,10 +20,10 @@ use embassy_usb::{
     driver::EndpointError,
 };
 use embedded_io_async::Write;
+use embedded_storage::nor_flash::NorFlash;
+use fixed::types::I16F16;
 use log::{error, info};
 use postcard::{experimental::max_size::MaxSize, from_bytes, to_slice_cobs};
-
-// static COMM_CHANNEL: Channel<CriticalSectionRawMutex, comm::Comm, 10> = Channel::new();
 
 //TODO: Remove this const and make the functions generic instead
 const MAX_PACKET_SIZE: u16 = 64;
@@ -160,21 +166,36 @@ impl From<CdcAcmError> for Disconnected {
     }
 }
 
-pub async fn run_request_handler<D: Driver<'static>>(
+pub async fn run_request_handler<D: Driver<'static>, Flash: NorFlash, F: FlashHandling<Flash>>(
     mut receiver: Receiver<'static, D>,
     comm_tx: channel::DynamicSender<'static, comm::Comm>,
+    log_toggles_initial: LogChannelToggles,
+    log_toggle_sender: LogToggleSender,
+    flash: &'static F,
 ) {
+    let mut current_toggle_state = log_toggles_initial;
     loop {
         receiver.wait_connection().await;
         info!("Connected");
-        read_requests(&mut receiver, comm_tx).await.ok();
+        read_requests(
+            &mut receiver,
+            comm_tx,
+            &mut current_toggle_state,
+            &log_toggle_sender,
+            flash,
+        )
+        .await
+        .ok();
         info!("Disconnected");
     }
 }
 
-async fn read_requests<'d, D: Driver<'static>>(
+async fn read_requests<'d, D: Driver<'static>, Flash: NorFlash, F: FlashHandling<Flash>>(
     receiver: &mut Receiver<'static, D>,
     comm_tx: channel::DynamicSender<'static, comm::Comm>,
+    current_toggle_state: &mut LogChannelToggles,
+    log_toggle_sender: &LogToggleSender,
+    flash: &'static F,
 ) -> Result<(), Disconnected> {
     let mut buf = [0u8; MAX_PACKET_SIZE as usize];
     // The buffer must be at least as long as a single packet can be to prevent some decoding errors
@@ -193,7 +214,14 @@ async fn read_requests<'d, D: Driver<'static>>(
                 let frame = &decoder.dest()[..msg.frame_size()];
                 match from_bytes::<comm::Command>(frame) {
                     Ok(cmd) => {
-                        handle_request(cmd, comm_tx).await;
+                        handle_request(
+                            cmd,
+                            comm_tx,
+                            current_toggle_state,
+                            &log_toggle_sender,
+                            flash,
+                        )
+                        .await;
                     }
                     Err(e) => {
                         error!("Postcard parsing error: {e}");
@@ -216,16 +244,137 @@ async fn read_requests<'d, D: Driver<'static>>(
     }
 }
 
-async fn handle_request(
-    request: comm::Command,
+async fn set_log<Flash: NorFlash, F: FlashHandling<Flash>>(
+    current_toggle_state: &mut LogChannelToggles,
     comm_tx: channel::DynamicSender<'static, comm::Comm>,
+    log_toggle_sender: &LogToggleSender,
+    flash: &'static F,
+    channel: LogChannel,
+    state: bool,
 ) {
-    info!("Got command of {request:?}");
-    match request {
-        _ => {
+    current_toggle_state.set(&channel, state);
+    info!("Enabled logging for channel {channel:?}");
+    log_toggle_sender.send(current_toggle_state.clone());
+    match flash
+        .store::<_, { LogChannelToggles::POSTCARD_MAX_SIZE }>(
+            &FlashKeys::LogChannels,
+            current_toggle_state,
+        )
+        .await
+    {
+        Ok(_) => {
             comm_tx
                 .send(comm::Comm::Response(comm::Response::Ack))
+                .await;
+        }
+        Err(e) => {
+            error!("Failed to store log toggle update: {e}");
+            comm_tx
+                .send(comm::Comm::Response(comm::Response::Error(
+                    comm::EmbeddedError::FlashError,
+                )))
                 .await
+        }
+    }
+}
+
+async fn handle_request<Flash: NorFlash, F: FlashHandling<Flash>>(
+    request: comm::Command,
+    comm_tx: channel::DynamicSender<'static, comm::Comm>,
+    current_toggle_state: &mut LogChannelToggles,
+    log_toggle_sender: &LogToggleSender,
+    flash: &'static F,
+) {
+    async fn ack(comm_tx: channel::DynamicSender<'static, comm::Comm>) {
+        comm_tx
+            .send(comm::Comm::Response(comm::Response::Ack))
+            .await
+    }
+    info!("Got command of {request:?}");
+    match request {
+        comm::Command::MotorCalibrate => {
+            info!("Starting motor alignment");
+            MOTOR_COMMAND_SIGNAL.signal(MotorCommand::StartAlignment);
+            ack(comm_tx).await;
+        }
+        comm::Command::EncoderValidate => {
+            info!("Validating encoder linearity. Do not touch the motor!");
+            MOTOR_COMMAND_SIGNAL.signal(MotorCommand::VerifyEncoder);
+            ack(comm_tx).await;
+        }
+        comm::Command::MotorTune(value) => {
+            MOTOR_COMMAND_SIGNAL.signal(MotorCommand::TuneAlignment(I16F16::from_num(value)));
+            ack(comm_tx).await;
+        }
+        comm::Command::MotorTuneStore => {
+            MOTOR_COMMAND_SIGNAL.signal(MotorCommand::TuneStore);
+            ack(comm_tx).await;
+        }
+        comm::Command::Beep {
+            freq,
+            duration,
+            volume,
+            note_offset,
+        } => {
+            MOTOR_COMMAND_SIGNAL.signal(MotorCommand::Beep {
+                freq: I16F16::from_num(freq),
+                duration: Duration::from_millis(duration),
+                volume: I16F16::from_num(volume),
+                note_offset: note_offset,
+            });
+            ack(comm_tx).await;
+        }
+        comm::Command::Brightness { percent } => {
+            let percent = (percent).clamp(0, 100);
+            info!("Setting display brightness to {percent}%");
+            DISPLAY_BRIGHTNESS_SIGNAL.signal(percent);
+            ack(comm_tx).await;
+        }
+        comm::Command::Shutdown => {
+            info!("System shutdown requested");
+            ack(comm_tx).await;
+            REQUEST_POWER_DOWN.signal(true);
+        }
+        comm::Command::FlashErase => {
+            info!("Formatting flash");
+            match flash.format().await {
+                Ok(_) => {
+                    ack(comm_tx).await;
+                }
+                Err(e) => {
+                    error!("Failed to format flash: {e}");
+                    comm_tx
+                        .send(comm::Comm::Response(comm::Response::Error(
+                            comm::EmbeddedError::FlashError,
+                        )))
+                        .await
+                }
+            }
+        }
+        comm::Command::LogDisable(channel) => {
+            set_log(
+                current_toggle_state,
+                comm_tx,
+                log_toggle_sender,
+                flash,
+                channel,
+                false,
+            )
+            .await
+        }
+        comm::Command::LogEnable(channel) => {
+            set_log(
+                current_toggle_state,
+                comm_tx,
+                log_toggle_sender,
+                flash,
+                channel,
+                true,
+            )
+            .await
+        }
+        comm::Command::Ping => {
+            ack(comm_tx).await;
         }
     }
 }

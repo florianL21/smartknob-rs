@@ -21,9 +21,12 @@ use log::info;
 use smartknob_core::{
     comm,
     knob_tilt::KnobTiltEvent,
+    system_settings::log_toggles::{LogChannelToggles, LogToggleSender},
     uplink::{run_comm_sender, run_event_sender, run_logger, run_request_handler},
 };
 use static_cell::StaticCell;
+
+use crate::flash::FlashHandler;
 
 const MAX_PACKET_SIZE: u16 = 64;
 static USB_CDC_TRIGGER: Signal<CriticalSectionRawMutex, ()> = Signal::new();
@@ -37,6 +40,9 @@ pub fn initialize_uplink(
     knob_events: DynSubscriber<'static, KnobTiltEvent>,
     comm_channel_sender: channel::DynamicSender<'static, comm::Comm>,
     comm_channel_receiver: channel::DynamicReceiver<'static, comm::Comm>,
+    initial_log_toggles: LogChannelToggles,
+    log_toggle_sender: LogToggleSender,
+    flash: &'static FlashHandler,
 ) {
     let usb = Usb::new(usb, dp, dm);
 
@@ -102,7 +108,16 @@ pub fn initialize_uplink(
         )
         .unwrap(),
     );
-    spawner.spawn(request_handler(rx, comm_channel_sender.clone()).unwrap());
+    spawner.spawn(
+        request_handler(
+            rx,
+            comm_channel_sender.clone(),
+            initial_log_toggles,
+            log_toggle_sender,
+            flash,
+        )
+        .unwrap(),
+    );
 }
 
 #[embassy_executor::task]
@@ -138,8 +153,18 @@ async fn event_sender(
 async fn request_handler(
     receiver: Receiver<'static, Driver<'static>>,
     comm_tx: channel::DynamicSender<'static, comm::Comm>,
+    log_toggles_initial: LogChannelToggles,
+    log_toggle_sender: LogToggleSender,
+    flash: &'static FlashHandler,
 ) {
-    run_request_handler(receiver, comm_tx).await;
+    run_request_handler(
+        receiver,
+        comm_tx,
+        log_toggles_initial,
+        log_toggle_sender,
+        flash,
+    )
+    .await;
 }
 
 #[embassy_executor::task]

@@ -4,9 +4,9 @@ use embassy_sync::watch::{self, Watch};
 use postcard::experimental::max_size::MaxSize;
 use serde::{Deserialize, Serialize};
 
-pub type LogToggleSender = watch::DynSender<'static, LogToggles>;
-pub type LogToggleReceiver = watch::DynReceiver<'static, LogToggles>;
-pub type LogToggleWatcher<M, const N: usize> = Watch<M, LogToggles, N>;
+pub type LogToggleSender = watch::DynSender<'static, LogChannelToggles>;
+pub type LogToggleReceiver = watch::DynReceiver<'static, LogChannelToggles>;
+pub type LogToggleWatcher<M, const N: usize> = Watch<M, LogChannelToggles, N>;
 
 macro_rules! log_toggles {
     ($($variant:ident, $enum:ident),*) => {
@@ -52,18 +52,6 @@ log_toggles!(
     foc_loop,
     FOCLoop
 );
-
-#[derive(Clone, Debug, Default)]
-pub struct LogToggles {
-    pub active: bool,
-    pub config: LogChannelToggles,
-}
-
-impl LogToggles {
-    pub fn should_log(&self, channel: LogChannel) -> bool {
-        self.active && self.config.should_log(channel)
-    }
-}
 
 pub async fn may_log<C>(receiver: &mut LogToggleReceiver, channel: LogChannel, c: C)
 where

@@ -30,18 +30,13 @@ use esp_hal::{
 };
 use esp_rtos::embassy::Executor;
 use log::info;
-use postcard::experimental::max_size::MaxSize;
 use smartknob_core::comm;
-use smartknob_core::flash::FlashKeys;
 use smartknob_core::knob_tilt::KnobTiltEvent;
-use smartknob_core::system_settings::log_toggles::LogChannelToggles;
 use smartknob_core::system_settings::{HapticSystemStoreSignal, StoreSignals};
 use smartknob_core::{
     flash::FlashHandling,
     haptics::get_encoder_position,
-    system_settings::log_toggles::{
-        LogChannel, LogToggleReceiver, LogToggleWatcher, LogToggles, may_log,
-    },
+    system_settings::log_toggles::{LogChannel, LogToggleReceiver, LogToggleWatcher, may_log},
 };
 use smartknob_esp32::knob_tilt::{I2cBusLDC, ldc_knob_tilt_task};
 use smartknob_esp32::led_ring::led_ring_task;
@@ -262,18 +257,8 @@ async fn main(spawner: Spawner) {
     );
 
     // Needed to get the system to start up properly for now
-    let mut buffer = [0u8; LogChannelToggles::POSTCARD_MAX_SIZE];
-    let initial_log_toggles =
-        if let Ok(Some(t)) = flash.load(FlashKeys::LogChannels, &mut buffer).await {
-            t
-        } else {
-            LogChannelToggles::default()
-        };
-
-    log_toggles.dyn_sender().send(LogToggles {
-        active: true,
-        config: initial_log_toggles,
-    });
+    let log_toggles_initial = restored_state.log_toggles.unwrap_or_default();
+    log_toggles.dyn_sender().send(log_toggles_initial.clone());
 
     static COMM_CHANNEL: StaticCell<channel::Channel<CriticalSectionRawMutex, comm::Comm, 10>> =
         StaticCell::new();
@@ -290,6 +275,9 @@ async fn main(spawner: Spawner) {
             .expect("Could not create knob tilt subscriber for uplink, please increase capacity"),
         comm_channel.dyn_sender(),
         comm_channel.dyn_receiver(),
+        log_toggles_initial,
+        log_toggles.dyn_sender(),
+        flash,
     );
 
     // log encoder values

@@ -192,6 +192,7 @@ pub trait FlashHandling<Flash: NorFlash> {
         }
     }
 
+    /// Format the whole flash
     fn format(&self) -> impl core::future::Future<Output = Result<(), FlashErrorType<Flash>>> {
         async {
             self.get_flash().format().await?;
@@ -199,6 +200,7 @@ pub trait FlashHandling<Flash: NorFlash> {
         }
     }
 
+    /// Restore all setting values from flash. Ususally called at boot of the system
     fn restore(&self) -> impl core::future::Future<Output = RestoredState> {
         async {
             // restore motor calibration

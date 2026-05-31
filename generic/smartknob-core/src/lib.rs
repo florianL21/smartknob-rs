@@ -5,13 +5,17 @@
 //! Please check the documentation of the submodules of this create to learn more about each individual system.
 
 pub mod comm;
-pub mod display;
-pub mod flash;
 pub mod haptics;
 pub mod knob_tilt;
-pub mod led_ring;
-pub mod shutdown;
 pub mod system_settings;
 
+#[cfg(feature = "embed")]
+pub mod display;
+#[cfg(feature = "embed")]
+pub mod flash;
+#[cfg(feature = "embed")]
+pub mod led_ring;
+#[cfg(feature = "embed")]
+pub mod shutdown;
 #[cfg(feature = "embed")]
 pub mod uplink;

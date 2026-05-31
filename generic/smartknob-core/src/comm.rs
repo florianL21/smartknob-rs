@@ -18,6 +18,8 @@ pub const SERIAL: &str = "12345678";
 pub enum EmbeddedError {
     #[error("Postcard deserialize failed")]
     PostcardDecodeError(#[from] postcard::Error),
+    #[error("Flash error")]
+    FlashError,
 }
 
 impl MaxSize for EmbeddedError {

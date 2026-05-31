@@ -15,6 +15,8 @@ pub enum Command {
     FlashErase,
     /// Run full motor calibration sequence
     MotorCalibrate,
+    // Measure the encoder for non-linearity and give a verdict if the error is too big for proper operation
+    EncoderValidate,
     /// offset the current motor calibration by the given value
     MotorTune(f32),
     /// Save the modified current electrical angle offset to flash
