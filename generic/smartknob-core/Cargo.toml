@@ -40,11 +40,14 @@ smart-leds = { workspace = true }
 average = { workspace = true }
 schemars = { workspace = true, optional = true }
 clap = { workspace = true, features = ["derive"], optional = true }
-
+embassy-usb-logger = { workspace = true, optional = true }
+embassy-usb = { workspace = true, optional = true }
+cobs = { workspace = true, optional = true }
 
 [dev-dependencies]
 matches = "0.1.10"
 
 [features]
 default = []
-host = ["schemars", "dep:clap"]
+embed = ["dep:embassy-usb-logger", "dep:embassy-usb", "dep:cobs"]
+host = ["schemars", "dep:clap", "serde/std"]

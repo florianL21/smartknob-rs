@@ -5,10 +5,37 @@ use crate::{comm::EmbeddedError, system_settings::log_toggles::LogChannel};
 
 #[derive(Deserialize, Serialize, Debug, Clone, MaxSize)]
 pub enum Command {
+    /// Initiate a system shutdown
+    Shutdown,
+    /// Enable a logging channel
     LogEnable(LogChannel),
+    /// Disable a logging channel
     LogDisable(LogChannel),
+    /// Format the whole flash
     FlashErase,
+    /// Run full motor calibration sequence
     MotorCalibrate,
+    /// offset the current motor calibration by the given value
+    MotorTune(f32),
+    /// Save the modified current electrical angle offset to flash
+    MotorTuneStore,
+    /// Make a beep sound
+    Beep {
+        /// Frequency of the beep
+        freq: f32,
+        /// duration in ms
+        duration: u64,
+        /// volume in % between 0 and 100
+        volume: f32,
+        /// Note offsetfreq
+        note_offset: u32,
+    },
+    /// Set the backlight brightness of the display
+    Brightness {
+        /// Brightness in percent 0-100
+        percent: u8,
+    },
+    /// Used to test system if the communication is working
     Ping,
 }
 

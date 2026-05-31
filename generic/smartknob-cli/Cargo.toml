@@ -11,7 +11,7 @@ fixed = { workspace = true, features = ["std"] }
 log = { workspace = true }
 clap = { workspace = true, features = ["derive"] }
 postcard = { workspace = true, features = ["use-std"] }
-cobs = { workspace = true }
+cobs = { workspace = true, features = ["default"] }
 anyhow = { workspace = true, features = ["backtrace"] }
 static_cell = { workspace = true }
 tokio = { workspace = true, features = ["full"] }

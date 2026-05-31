@@ -5,6 +5,7 @@ extern crate alloc;
 
 use embassy_executor::Spawner;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
+use embassy_sync::channel;
 use embassy_sync::pubsub::PubSubChannel;
 use embassy_sync::{blocking_mutex::raw::NoopRawMutex, mutex::Mutex};
 use embassy_time::Timer;
@@ -30,6 +31,7 @@ use esp_hal::{
 use esp_rtos::embassy::Executor;
 use log::info;
 use postcard::experimental::max_size::MaxSize;
+use smartknob_core::comm;
 use smartknob_core::flash::FlashKeys;
 use smartknob_core::knob_tilt::KnobTiltEvent;
 use smartknob_core::system_settings::log_toggles::LogChannelToggles;
@@ -272,6 +274,11 @@ async fn main(spawner: Spawner) {
         active: true,
         config: initial_log_toggles,
     });
+
+    static COMM_CHANNEL: StaticCell<channel::Channel<CriticalSectionRawMutex, comm::Comm, 10>> =
+        StaticCell::new();
+    let comm_channel = COMM_CHANNEL.init(channel::Channel::new());
+
     initialize_uplink(
         spawner,
         peripherals.USB0,
@@ -281,6 +288,8 @@ async fn main(spawner: Spawner) {
         knob_tilt
             .dyn_subscriber()
             .expect("Could not create knob tilt subscriber for uplink, please increase capacity"),
+        comm_channel.dyn_sender(),
+        comm_channel.dyn_receiver(),
     );
 
     // log encoder values

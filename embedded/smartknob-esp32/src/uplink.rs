@@ -1,17 +1,13 @@
-use cobs::{CobsDecoder, max_encoding_length};
 use embassy_executor::Spawner;
-use embassy_futures::select::select;
 use embassy_sync::{
-    blocking_mutex::raw::CriticalSectionRawMutex, channel::Channel, pubsub::DynSubscriber,
-    signal::Signal,
+    blocking_mutex::raw::CriticalSectionRawMutex, channel, pubsub::DynSubscriber, signal::Signal,
 };
-use embassy_time::{Duration, Ticker};
+use embassy_time::Duration;
 use embassy_usb::{
     Builder,
-    class::cdc_acm::{CdcAcmClass, CdcAcmError, Receiver, Sender, State},
-    driver::EndpointError,
+    class::cdc_acm::{CdcAcmClass, Receiver, Sender, State},
 };
-use embedded_io_async::{Read, Write};
+use embedded_io_async::Read;
 use esp_hal::{
     Async,
     otg_fs::{
@@ -21,18 +17,16 @@ use esp_hal::{
     peripherals::{USB_DEVICE, USB0},
     usb_serial_jtag::UsbSerialJtag,
 };
-use log::{error, info};
-use postcard::{experimental::max_size::MaxSize, from_bytes, to_slice_cobs};
-use smartknob_core::{comm, knob_tilt::KnobTiltEvent};
+use log::info;
 use smartknob_core::{
-    haptics::get_encoder_position,
-    knob_tilt::{get_tilt_angle, get_tilt_magnitude},
+    comm,
+    knob_tilt::KnobTiltEvent,
+    uplink::{run_comm_sender, run_event_sender, run_logger, run_request_handler},
 };
 use static_cell::StaticCell;
 
 const MAX_PACKET_SIZE: u16 = 64;
 static USB_CDC_TRIGGER: Signal<CriticalSectionRawMutex, ()> = Signal::new();
-static COMM_CHANNEL: Channel<CriticalSectionRawMutex, comm::Comm, 10> = Channel::new();
 
 pub fn initialize_uplink(
     spawner: Spawner,
@@ -41,6 +35,8 @@ pub fn initialize_uplink(
     dp: impl UsbDp + 'static,
     dm: impl UsbDm + 'static,
     knob_events: DynSubscriber<'static, KnobTiltEvent>,
+    comm_channel_sender: channel::DynamicSender<'static, comm::Comm>,
+    comm_channel_receiver: channel::DynamicReceiver<'static, comm::Comm>,
 ) {
     let usb = Usb::new(usb, dp, dm);
 
@@ -97,38 +93,21 @@ pub fn initialize_uplink(
 
     spawner.spawn(usb_task(builder).unwrap());
     spawner.spawn(logger_task(logging_class).unwrap());
-    spawner.spawn(comm_sender(tx).unwrap());
-    spawner.spawn(event_sender(knob_events, Duration::from_hz(20)).unwrap());
-    spawner.spawn(request_handler(rx).unwrap());
+    spawner.spawn(comm_sender(tx, comm_channel_receiver).unwrap());
+    spawner.spawn(
+        event_sender(
+            knob_events,
+            Duration::from_hz(20),
+            comm_channel_sender.clone(),
+        )
+        .unwrap(),
+    );
+    spawner.spawn(request_handler(rx, comm_channel_sender.clone()).unwrap());
 }
 
 #[embassy_executor::task]
 async fn logger_task(class: CdcAcmClass<'static, Driver<'static>>) {
-    const RESET: &str = "\u{001B}[0m";
-    const RED: &str = "\u{001B}[31m";
-    const GREEN: &str = "\u{001B}[32m";
-    const YELLOW: &str = "\u{001B}[33m";
-    const BLUE: &str = "\u{001B}[34m";
-    const CYAN: &str = "\u{001B}[35m";
-
-    let log_fut = embassy_usb_logger::with_custom_style!(
-        1024,
-        log::LevelFilter::Info,
-        class,
-        |record, writer| {
-            use core::fmt::Write;
-            let level = record.level().as_str();
-            let color = match record.level() {
-                log::Level::Error => RED,
-                log::Level::Warn => YELLOW,
-                log::Level::Info => GREEN,
-                log::Level::Debug => BLUE,
-                log::Level::Trace => CYAN,
-            };
-            write!(writer, "{}[{level}] {}{}\r\n", color, record.args(), RESET).unwrap();
-        }
-    );
-    log_fut.await; // never returns
+    run_logger(class).await;
 }
 
 #[embassy_executor::task]
@@ -139,171 +118,28 @@ async fn usb_task(builder: Builder<'static, Driver<'static>>) {
 }
 
 #[embassy_executor::task]
-async fn comm_sender(mut sender: Sender<'static, Driver<'static>>) {
-    loop {
-        sender.wait_connection().await;
-        info!("Sender connected");
-        let _ = stream_events(&mut sender).await;
-        info!("Sender disconnected");
-    }
-}
-
-async fn stream_events<'d>(
-    sender: &mut Sender<'static, Driver<'static>>,
-) -> Result<(), Disconnected> {
-    let mut buf = [0u8; max_encoding_length(comm::Comm::POSTCARD_MAX_SIZE)];
-    loop {
-        let data = COMM_CHANNEL.receive().await;
-        let encoded = to_slice_cobs(&data, &mut buf).unwrap();
-        sender.write_all(encoded).await?;
-        if let comm::Comm::Response(x) = data {
-            info!("Response was sent: {x:?}");
-        }
-    }
+async fn comm_sender(
+    sender: Sender<'static, Driver<'static>>,
+    comm_rx: channel::DynamicReceiver<'static, comm::Comm>,
+) {
+    run_comm_sender(sender, comm_rx).await;
 }
 
 #[embassy_executor::task]
-async fn event_sender(mut events: DynSubscriber<'static, KnobTiltEvent>, poll_rate: Duration) {
-    let mut ticker = Ticker::every(poll_rate);
-    let mut last_encoder_pos = get_encoder_position();
-    let mut is_tilted = false;
-    let mut last_tilt = comm::Event::Tilt {
-        angle: get_tilt_angle(),
-        magnitude: get_tilt_magnitude(),
-    };
-    loop {
-        match select(ticker.next(), events.next_message()).await {
-            embassy_futures::select::Either::First(_) => {
-                let current_pos = get_encoder_position();
-                // TODO: Consider making this approximateley equal
-                if current_pos != last_encoder_pos {
-                    last_encoder_pos = current_pos;
-                    COMM_CHANNEL
-                        .send(comm::Comm::Event(comm::Event::EncoderAngle(
-                            get_encoder_position(),
-                        )))
-                        .await;
-                }
-                if is_tilted {
-                    let new = comm::Event::Tilt {
-                        angle: get_tilt_angle(),
-                        magnitude: get_tilt_magnitude(),
-                    };
-                    if new != last_tilt {
-                        last_tilt = new;
-                        COMM_CHANNEL
-                            .send(comm::Comm::Event(comm::Event::Tilt {
-                                angle: get_tilt_angle(),
-                                magnitude: get_tilt_magnitude(),
-                            }))
-                            .await;
-                    }
-                }
-            }
-            embassy_futures::select::Either::Second(msg) => match msg {
-                embassy_sync::pubsub::WaitResult::Lagged(num_missed) => {
-                    COMM_CHANNEL
-                        .send(comm::Comm::Event(comm::Event::MissedEvents(num_missed)))
-                        .await;
-                }
-                embassy_sync::pubsub::WaitResult::Message(msg) => {
-                    match msg {
-                        KnobTiltEvent::TiltStart(_) => {
-                            is_tilted = true;
-                        }
-                        KnobTiltEvent::TiltEnd => {
-                            is_tilted = false;
-                        }
-                        _ => {}
-                    }
-                    COMM_CHANNEL
-                        .send(comm::Comm::Event(comm::Event::Button(msg)))
-                        .await;
-                }
-            },
-        }
-    }
-}
-
-struct Disconnected {}
-
-impl From<EndpointError> for Disconnected {
-    fn from(val: EndpointError) -> Self {
-        match val {
-            EndpointError::BufferOverflow => panic!("Buffer overflow"),
-            EndpointError::Disabled => Disconnected {},
-        }
-    }
-}
-
-impl From<CdcAcmError> for Disconnected {
-    fn from(_: CdcAcmError) -> Self {
-        Disconnected {}
-    }
+async fn event_sender(
+    events: DynSubscriber<'static, KnobTiltEvent>,
+    poll_rate: Duration,
+    comm_tx: channel::DynamicSender<'static, comm::Comm>,
+) {
+    run_event_sender(events, poll_rate, comm_tx).await;
 }
 
 #[embassy_executor::task]
-async fn request_handler(mut receiver: Receiver<'static, Driver<'static>>) {
-    loop {
-        receiver.wait_connection().await;
-        info!("Connected");
-        read_requests(&mut receiver).await.ok();
-        info!("Disconnected");
-    }
-}
-
-async fn read_requests<'d>(
-    receiver: &mut Receiver<'static, Driver<'static>>,
-) -> Result<(), Disconnected> {
-    let mut buf = [0u8; MAX_PACKET_SIZE as usize];
-    // The buffer must be at least as long as a single packet can be to prevent some decoding errors
-    const MAX_SIZE: usize =
-        max_encoding_length(comm::Command::POSTCARD_MAX_SIZE) + MAX_PACKET_SIZE as usize;
-
-    let mut msg_buf = [0u8; MAX_SIZE];
-    let mut decoder = CobsDecoder::new(&mut msg_buf);
-    loop {
-        let size = receiver.read_packet(&mut buf).await?;
-        match decoder.push(&buf[..size]) {
-            Ok(None) => {
-                // Dont' need to do anything. Waiting for more bytes to be sent
-            }
-            Ok(Some(msg)) => {
-                let frame = &decoder.dest()[..msg.frame_size()];
-                match from_bytes::<comm::Command>(frame) {
-                    Ok(cmd) => {
-                        handle_request(cmd).await;
-                    }
-                    Err(e) => {
-                        error!("Postcard parsing error: {e}");
-                        COMM_CHANNEL
-                            .send(comm::Comm::Response(comm::Response::Error(e.into())))
-                            .await;
-                    }
-                }
-            }
-            Err(e) => {
-                info!("Incoming bytes: {size}; buffer size: {MAX_SIZE}");
-                error!("COBS decoding error: {e}");
-                // Clear the internal state of the decoder
-                decoder = CobsDecoder::new(&mut msg_buf);
-                COMM_CHANNEL
-                    .send(comm::Comm::Response(comm::Response::Repeat))
-                    .await;
-            }
-        }
-    }
-}
-
-async fn handle_request(request: comm::Command) {
-    info!("Got command of {request:?}");
-    match request {
-        _ => {
-            COMM_CHANNEL
-                .send(comm::Comm::Response(comm::Response::Ack))
-                .await
-        }
-    }
+async fn request_handler(
+    receiver: Receiver<'static, Driver<'static>>,
+    comm_tx: channel::DynamicSender<'static, comm::Comm>,
+) {
+    run_request_handler(receiver, comm_tx).await;
 }
 
 #[embassy_executor::task]

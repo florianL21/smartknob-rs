@@ -5,7 +5,7 @@ version = "0.1.0"
 
 [dependencies]
 esp-hal = { workspace = true, features = ["esp32s3", "log-04", "unstable"] }
-smartknob-core = { workspace = true }
+smartknob-core = { workspace = true, features = ["embed"] }
 ekv = { workspace = true }
 embassy-futures = { workspace = true }
 embassy-sync = { workspace = true }

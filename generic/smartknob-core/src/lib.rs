@@ -12,3 +12,6 @@ pub mod knob_tilt;
 pub mod led_ring;
 pub mod shutdown;
 pub mod system_settings;
+
+#[cfg(feature = "embed")]
+pub mod uplink;
