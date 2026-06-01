@@ -38,6 +38,46 @@ pub enum Command {
         /// whether to enable or disable the log channel
         enabled: LogState,
     },
+    /// Actions related to the motor system
+    Motor(MotorArgs),
+    /// Initiate a system shutdown
+    Shutdown,
+    /// Format the whole flash
+    FlashErase,
+    /// Set the backlight brightness of the display
+    Brightness {
+        /// Brightness in percent 0-100
+        percent: u8,
+    },
+}
+
+#[derive(Debug, Args)]
+pub struct MotorArgs {
+    #[command(subcommand)]
+    pub action: MotorActions,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum MotorActions {
+    /// Calibrate the smartknob system
+    Calibrate,
+    /// Validate that the encoder and motor are properly calibrated
+    Validate,
+    /// offset the current motor calibration by the given value
+    MotorTune { value: f32 },
+    /// Save the modified current electrical angle offset to flash
+    MotorTuneStore,
+    /// Make a beep sound
+    Beep {
+        /// Frequency of the beep
+        freq: f32,
+        /// duration in ms
+        duration: u64,
+        /// volume in % between 0 and 100
+        volume: f32,
+        /// Note offsetfreq
+        note_offset: u32,
+    },
 }
 
 #[derive(Debug, Args)]

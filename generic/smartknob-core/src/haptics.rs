@@ -45,6 +45,7 @@ const LOG_STATISTICS_EVERY: Duration = Duration::from_secs(10);
 
 /// This signal can be set to trigger different action of the haptic system
 pub static MOTOR_COMMAND_SIGNAL: Signal<CriticalSectionRawMutex, MotorCommand> = Signal::new();
+pub static MOTOR_COMMAND_FINISHED_SIGNAL: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 
 /// This stores the absolute encoder position
 static ENCODER_POSITION: AtomicF32 = AtomicF32::new(0.0);
@@ -268,6 +269,7 @@ impl<
 
                     info!("Alignment result: {result:?}");
                     self.haptics.disengage();
+                    MOTOR_COMMAND_FINISHED_SIGNAL.signal(());
                 }
                 MotorCommand::TuneAlignment(tune) => {
                     if let Some(a) = self.haptics.tune_alignment(tune) {
@@ -277,17 +279,22 @@ impl<
                             "No alignment adjustment was made. Please complete motor alignment first"
                         )
                     }
+                    MOTOR_COMMAND_FINISHED_SIGNAL.signal(());
                 }
-                MotorCommand::VerifyEncoder => match self.haptics.validate_encoder().await {
-                    Ok(_) => info!("Encoder validation successful!"),
-                    Err(e) => warn!("encoder validation failed: {e}"),
-                },
+                MotorCommand::VerifyEncoder => {
+                    match self.haptics.validate_encoder().await {
+                        Ok(_) => info!("Encoder validation successful!"),
+                        Err(e) => warn!("encoder validation failed: {e}"),
+                    };
+                    MOTOR_COMMAND_FINISHED_SIGNAL.signal(());
+                }
                 MotorCommand::TuneStore => {
                     if let Some(cal_data) = self.haptics.get_cal_data() {
                         store_signal.signal(*cal_data);
                     } else {
                         warn!("System was not yet calibrated. No value was stored!");
                     }
+                    MOTOR_COMMAND_FINISHED_SIGNAL.signal(());
                 }
                 MotorCommand::Beep {
                     freq,
@@ -296,6 +303,7 @@ impl<
                     note_offset,
                 } => {
                     self.haptics.play_tone(freq, duration, volume, note_offset);
+                    MOTOR_COMMAND_FINISHED_SIGNAL.signal(());
                 }
             }
         }

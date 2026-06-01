@@ -2,7 +2,7 @@ mod cli;
 mod curves;
 mod smartknob;
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result, anyhow, bail};
 use charming::HtmlRenderer;
 use clap::Parser;
 use log::{error, info, warn};
@@ -11,10 +11,13 @@ use smartknob_core::comm::{self, LogChannel};
 use smartknob_core::haptics::HapticCurveConfig;
 use smartknob_core::haptics::base::{CurveBuilder, CurveSegment, HapticCurveConfigWithSchema};
 use std::path::PathBuf;
+use std::time::Duration;
 use std::{fs::File, io::BufReader, io::BufWriter};
 use tokio::spawn;
 use tokio::task::JoinSet;
+use tokio::time::sleep;
 
+use crate::cli::MotorArgs;
 use crate::smartknob::comm::{ConnectionError, event_printer, log_printer};
 use crate::{
     cli::{Cli, Command, CurveActions, CurveArgs, LogState},
@@ -82,11 +85,7 @@ fn handle_curve_command(curve_file: PathBuf, action: CurveActions) -> Result<()>
     Ok(())
 }
 
-async fn handle_log_command(channel: LogChannel, enabled: LogState) -> Result<()> {
-    let msg = match enabled {
-        LogState::Enable => comm::Command::LogEnable(channel),
-        LogState::Disable => comm::Command::LogDisable(channel),
-    };
+async fn send_single_message(msg: comm::Command, timeout: Duration) -> Result<comm::Response> {
     let mut comm = Communication::init().await?;
     match comm.take_log().await {
         Ok(stream) => {
@@ -102,9 +101,72 @@ async fn handle_log_command(channel: LogChannel, enabled: LogState) -> Result<()
         }
     }
     let mut comms = comm.take_comms().await?;
-    let resp = comms.send_command(&msg).await?;
-    info!("Response: {resp:?}");
-    Ok(())
+    // Sleep a bit of time before returning to give the logger task time to get logs from the smartknob before terminating the program
+    let resp = comms.send_command(&msg, timeout).await?;
+    sleep(Duration::from_millis(100)).await;
+    Ok(resp)
+}
+
+async fn send_single_message_expect_ack(msg: comm::Command, timeout: Duration) -> Result<()> {
+    let reply = send_single_message(msg, timeout).await;
+    if let Ok(comm::Response::Ack) = reply {
+        Ok(())
+    } else {
+        Err(anyhow!(
+            "Did not get expected reply of Ack. Instead Got: {reply:?}"
+        ))
+    }
+}
+
+async fn handle_log_command(channel: LogChannel, enabled: LogState) -> Result<()> {
+    let msg = match enabled {
+        LogState::Enable => comm::Command::Log {
+            channel,
+            enabled: true,
+        },
+        LogState::Disable => comm::Command::Log {
+            channel,
+            enabled: false,
+        },
+    };
+    send_single_message_expect_ack(msg, Duration::from_secs(1)).await
+}
+async fn handle_motor_commends(args: MotorArgs) -> Result<()> {
+    match args.action {
+        cli::MotorActions::Calibrate => {
+            send_single_message_expect_ack(comm::Command::MotorCalibrate, Duration::from_secs(30))
+                .await
+        }
+        cli::MotorActions::Beep {
+            freq,
+            duration,
+            volume,
+            note_offset,
+        } => {
+            send_single_message_expect_ack(
+                comm::Command::Beep {
+                    freq,
+                    duration,
+                    volume,
+                    note_offset,
+                },
+                Duration::from_secs(5),
+            )
+            .await
+        }
+        cli::MotorActions::MotorTune { value } => {
+            send_single_message_expect_ack(comm::Command::MotorTune(value), Duration::from_secs(1))
+                .await
+        }
+        cli::MotorActions::MotorTuneStore => {
+            send_single_message_expect_ack(comm::Command::MotorTuneStore, Duration::from_secs(3))
+                .await
+        }
+        cli::MotorActions::Validate => {
+            send_single_message_expect_ack(comm::Command::EncoderValidate, Duration::from_secs(30))
+                .await
+        }
+    }
 }
 
 #[tokio::main]
@@ -143,6 +205,23 @@ async fn main() -> Result<()> {
                 }
             }
             let _ = set.join_all().await;
+        }
+        Command::Motor(args) => {
+            handle_motor_commends(args).await?;
+        }
+        Command::Shutdown => {
+            send_single_message_expect_ack(comm::Command::Shutdown, Duration::from_secs(1)).await?;
+        }
+        Command::Brightness { percent } => {
+            send_single_message_expect_ack(
+                comm::Command::Brightness { percent },
+                Duration::from_secs(1),
+            )
+            .await?;
+        }
+        Command::FlashErase => {
+            send_single_message_expect_ack(comm::Command::FlashErase, Duration::from_secs(1))
+                .await?;
         }
     }
     Ok(())

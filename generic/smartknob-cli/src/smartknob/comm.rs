@@ -314,13 +314,14 @@ impl<'a> CommChannels<'a> {
     pub async fn send_command(
         &mut self,
         msg: &'a comm::Command,
+        response_timeout: Duration,
     ) -> Result<comm::Response, CommError> {
         self.active_channels.responses = true;
         self.active_channel_tx.send(self.active_channels)?;
         let mut num_retries = NUM_MAX_REPEAT;
         loop {
             self.requests.send(msg).await?;
-            let resp = timeout(Duration::from_secs(3), self.responses.recv())
+            let resp = timeout(response_timeout, self.responses.recv())
                 .await
                 .map_err(CommError::ExceededTimeout)?
                 .ok_or(CommError::GettingResponse)?;

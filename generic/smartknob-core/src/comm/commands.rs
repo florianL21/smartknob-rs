@@ -7,10 +7,11 @@ use crate::{comm::EmbeddedError, system_settings::log_toggles::LogChannel};
 pub enum Command {
     /// Initiate a system shutdown
     Shutdown,
-    /// Enable a logging channel
-    LogEnable(LogChannel),
-    /// Disable a logging channel
-    LogDisable(LogChannel),
+    /// Enable/Disable a logging channel
+    Log {
+        channel: LogChannel,
+        enabled: bool,
+    },
     /// Format the whole flash
     FlashErase,
     /// Run full motor calibration sequence
