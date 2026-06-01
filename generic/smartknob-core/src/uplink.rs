@@ -1,6 +1,7 @@
+use crate::comm::COMMAND_BUFFER_SIZE;
 use crate::display::DISPLAY_BRIGHTNESS_SIGNAL;
 use crate::flash::{FlashHandling, FlashKeys};
-use crate::haptics::{MOTOR_COMMAND_FINISHED_SIGNAL, MOTOR_COMMAND_SIGNAL, MotorCommand};
+use crate::haptics::{MotorCommand, execute_motor_command, set_curve_config_blocking};
 use crate::shutdown::REQUEST_POWER_DOWN;
 use crate::system_settings::log_toggles::{LogChannelToggles, LogToggleSender};
 use crate::{comm, knob_tilt::KnobTiltEvent};
@@ -8,7 +9,7 @@ use crate::{
     haptics::get_encoder_position,
     knob_tilt::{get_tilt_angle, get_tilt_magnitude},
 };
-use cobs::{CobsDecoder, max_encoding_length};
+use cobs::{CobsDecoder, DecodeError, max_encoding_length};
 use embassy_futures::select::select;
 use embassy_sync::channel;
 use embassy_sync::pubsub::DynSubscriber;
@@ -197,11 +198,7 @@ async fn read_requests<'d, D: Driver<'static>, Flash: NorFlash, F: FlashHandling
     flash: &'static F,
 ) -> Result<(), Disconnected> {
     let mut buf = [0u8; MAX_PACKET_SIZE as usize];
-    // The buffer must be at least as long as a single packet can be to prevent some decoding errors
-    const MAX_SIZE: usize =
-        max_encoding_length(comm::Command::POSTCARD_MAX_SIZE) + MAX_PACKET_SIZE as usize;
-
-    let mut msg_buf = [0u8; MAX_SIZE];
+    let mut msg_buf = [0u8; COMMAND_BUFFER_SIZE];
     let mut decoder = CobsDecoder::new(&mut msg_buf);
     loop {
         let size = receiver.read_packet(&mut buf).await?;
@@ -231,8 +228,10 @@ async fn read_requests<'d, D: Driver<'static>, Flash: NorFlash, F: FlashHandling
                 }
             }
             Err(e) => {
-                info!("Incoming bytes: {size}; buffer size: {MAX_SIZE}");
                 error!("COBS decoding error: {e}");
+                if let DecodeError::TargetBufTooSmall = e {
+                    info!("Incoming bytes: {size}; buffer size: {COMMAND_BUFFER_SIZE}");
+                }
                 // Clear the internal state of the decoder
                 decoder = CobsDecoder::new(&mut msg_buf);
                 comm_tx
@@ -259,24 +258,20 @@ async fn handle_request<Flash: NorFlash, F: FlashHandling<Flash>>(
     match request {
         comm::Command::MotorCalibrate => {
             info!("Starting motor alignment");
-            MOTOR_COMMAND_SIGNAL.signal(MotorCommand::StartAlignment);
-            MOTOR_COMMAND_FINISHED_SIGNAL.wait().await;
+            execute_motor_command(MotorCommand::StartAlignment).await;
             ack(comm_tx).await;
         }
         comm::Command::EncoderValidate => {
             info!("Validating encoder linearity. Do not touch the motor!");
-            MOTOR_COMMAND_SIGNAL.signal(MotorCommand::VerifyEncoder);
-            MOTOR_COMMAND_FINISHED_SIGNAL.wait().await;
+            execute_motor_command(MotorCommand::VerifyEncoder).await;
             ack(comm_tx).await;
         }
         comm::Command::MotorTune(value) => {
-            MOTOR_COMMAND_SIGNAL.signal(MotorCommand::TuneAlignment(I16F16::from_num(value)));
-            MOTOR_COMMAND_FINISHED_SIGNAL.wait().await;
+            execute_motor_command(MotorCommand::TuneAlignment(I16F16::from_num(value))).await;
             ack(comm_tx).await;
         }
         comm::Command::MotorTuneStore => {
-            MOTOR_COMMAND_SIGNAL.signal(MotorCommand::TuneStore);
-            MOTOR_COMMAND_FINISHED_SIGNAL.wait().await;
+            execute_motor_command(MotorCommand::TuneStore).await;
             ack(comm_tx).await;
         }
         comm::Command::Beep {
@@ -285,13 +280,13 @@ async fn handle_request<Flash: NorFlash, F: FlashHandling<Flash>>(
             volume,
             note_offset,
         } => {
-            MOTOR_COMMAND_SIGNAL.signal(MotorCommand::Beep {
+            execute_motor_command(MotorCommand::Beep {
                 freq: I16F16::from_num(freq),
                 duration: Duration::from_millis(duration),
                 volume: I16F16::from_num(volume),
                 note_offset: note_offset,
-            });
-            MOTOR_COMMAND_FINISHED_SIGNAL.wait().await;
+            })
+            .await;
             ack(comm_tx).await;
         }
         comm::Command::Brightness { percent } => {
@@ -350,5 +345,15 @@ async fn handle_request<Flash: NorFlash, F: FlashHandling<Flash>>(
         comm::Command::Ping => {
             ack(comm_tx).await;
         }
+        comm::Command::PushHapticConfig(config) => match set_curve_config_blocking(config).await {
+            Ok(_) => {
+                ack(comm_tx).await;
+            }
+            Err(e) => {
+                comm_tx
+                    .send(comm::Comm::Response(comm::Response::Error(e)))
+                    .await;
+            }
+        },
     }
 }

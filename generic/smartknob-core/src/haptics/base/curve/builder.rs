@@ -22,7 +22,7 @@ use thiserror::Error;
 type BezierInterpolation<const N: usize> =
     TransformInput<Bezier<f32, [f32; N], enterpolation::ConstSpace<f32, N>>, f32, f32>;
 
-#[derive(Error, Debug)]
+#[derive(Error, Debug, Serialize, Deserialize, Clone)]
 pub enum InterpolationBuilderError {
     #[error("Failed to build bezier interpolation: {0}")]
     BezierError(BezierError),

@@ -9,6 +9,8 @@
 //!
 //! ## Signals
 //! - The [`MOTOR_COMMAND_SIGNAL`] is an input to this module.
+//!   It may also be substituted to calls to [`execute_motor_command`]
+//!   if the caller needs to wait for the command to finish executing.
 //!   It triggers various actions, some of which may be essential
 //!   for the proper operation of this module.
 pub mod base;
@@ -34,6 +36,7 @@ use log::{error, info, warn};
 use motor_driver::MotorDriver;
 
 use crate::{
+    comm::EmbeddedError,
     haptics::haptic_hardware::InactivitySettings,
     system_settings::{
         HapticSystemStoreSignal,
@@ -45,7 +48,12 @@ const LOG_STATISTICS_EVERY: Duration = Duration::from_secs(10);
 
 /// This signal can be set to trigger different action of the haptic system
 pub static MOTOR_COMMAND_SIGNAL: Signal<CriticalSectionRawMutex, MotorCommand> = Signal::new();
-pub static MOTOR_COMMAND_FINISHED_SIGNAL: Signal<CriticalSectionRawMutex, ()> = Signal::new();
+static MOTOR_COMMAND_FINISHED_SIGNAL: Signal<CriticalSectionRawMutex, ()> = Signal::new();
+
+// These signals are for setting a new haptic config
+static HAPTIC_CONFIG_SIGNAL: Signal<CriticalSectionRawMutex, HapticConfiguration> = Signal::new();
+static HAPTIC_CONFIG_FINISHED_SIGNAL: Signal<CriticalSectionRawMutex, Result<(), EmbeddedError>> =
+    Signal::new();
 
 /// This stores the absolute encoder position
 static ENCODER_POSITION: AtomicF32 = AtomicF32::new(0.0);
@@ -53,6 +61,27 @@ static ENCODER_POSITION: AtomicF32 = AtomicF32::new(0.0);
 /// Returns the absolute encoder position of the system since boot
 pub fn get_encoder_position() -> f32 {
     ENCODER_POSITION.load(core::sync::atomic::Ordering::Relaxed)
+}
+
+/// This function can be used to issue a command to the motor
+/// system and then wait for it to finish before returning
+pub async fn execute_motor_command(command: MotorCommand) {
+    MOTOR_COMMAND_SIGNAL.signal(command);
+    MOTOR_COMMAND_FINISHED_SIGNAL.wait().await;
+}
+
+/// This function can be used to set the haptic config
+/// It will wait for the action to be finished before it returns
+pub async fn set_curve_config_blocking(
+    curve_config: HapticConfiguration,
+) -> Result<(), EmbeddedError> {
+    HAPTIC_CONFIG_SIGNAL.signal(curve_config);
+    HAPTIC_CONFIG_FINISHED_SIGNAL.wait().await
+}
+
+/// This function can be used to set the haptic config
+pub fn set_curve_config(curve_config: HapticConfiguration) {
+    HAPTIC_CONFIG_SIGNAL.signal(curve_config);
 }
 
 /// The actions which the haptic system may perform
@@ -150,7 +179,6 @@ impl StatisticsLogging {
 }
 
 pub struct SmartknobHapticCore<
-    'a,
     E: AbsolutePositionEncoder,
     D: MotorDriver<PWM_RESOLUTION>,
     M: Modulation,
@@ -158,7 +186,6 @@ pub struct SmartknobHapticCore<
     const MAX_CURVE_ELEM: usize,
 > {
     haptics: HapticSystem<E, D, M, PWM_RESOLUTION>,
-    player: Option<HapticPlayer<'a>>,
     curve_scale: f32,
     /// Optional ticker for throttling the FOC loop
     ticker: Option<Ticker>,
@@ -187,13 +214,12 @@ impl Default for DetailedSettings {
 }
 
 impl<
-    'a,
     E: AbsolutePositionEncoder,
     D: MotorDriver<PWM_RESOLUTION>,
     M: Modulation,
     const PWM_RESOLUTION: u16,
     const MAX_CURVE_ELEM: usize,
-> SmartknobHapticCore<'a, E, D, M, PWM_RESOLUTION, MAX_CURVE_ELEM>
+> SmartknobHapticCore<E, D, M, PWM_RESOLUTION, MAX_CURVE_ELEM>
 {
     /// Create a new haptic core given an `encoder` and a motor `driver`.
     /// - The number of `pole_pairs` of the motor needs to be known at this point.
@@ -224,7 +250,6 @@ impl<
 
         Self {
             haptics,
-            player: None,
             curve_scale: settings.curve_scale,
             ticker: refresh_rate.map(Ticker::every),
             statistics: StatisticsLogging {
@@ -237,106 +262,119 @@ impl<
         }
     }
 
-    /// Set a haptic curve to play back.
-    /// `curve_scale` scales the curve itself on top of the scaling value set in the system.
-    /// For example if a curve is intended to feel weaker than normal this may be set to a value < 1.
-    /// If no modification of the curve is desired this should be set to 1.0
-    pub async fn set_curve(
-        &mut self,
-        haptic_config: &'a HapticInstances,
-        curve_scale: f32,
-    ) -> Result<(), HapticSystemError<E::Error>> {
-        let meas = self.haptics.update_encoder().await?;
-        self.player = Some(
-            HapticPlayer::new(meas.position.to_num(), haptic_config)
-                .with_scale(self.curve_scale * curve_scale),
-        );
-        Ok(())
-    }
+    /// Run the core haptic system. This runs an endless loop and will never return
+    pub async fn run<MU: RawMutex>(self, store_signal: &HapticSystemStoreSignal<MU>) -> ! {
+        let mut curve;
+        let mut player = None;
+        let mut haptics = self.haptics;
+        let mut statistics = self.statistics;
+        let mut ticker = self.ticker;
+        loop {
+            let start = Instant::now();
+            if let Some(sig) = MOTOR_COMMAND_SIGNAL.try_take() {
+                match sig {
+                    MotorCommand::StartAlignment => {
+                        let result = haptics.align().await;
+                        if let Ok(cal_data) = result {
+                            store_signal.signal(*cal_data);
+                        } else {
+                            error!("There is no calibration data to store");
+                        }
 
-    /// Run the core haptic system. This should be called in a task loop endlessly
-    pub async fn run<MU: RawMutex>(&mut self, store_signal: &HapticSystemStoreSignal<MU>) {
-        let start = Instant::now();
-        if let Some(sig) = MOTOR_COMMAND_SIGNAL.try_take() {
-            match sig {
-                MotorCommand::StartAlignment => {
-                    let result = self.haptics.align().await;
-                    if let Ok(cal_data) = result {
-                        store_signal.signal(*cal_data);
-                    } else {
-                        error!("There is no calibration data to store");
+                        info!("Alignment result: {result:?}");
+                        haptics.disengage();
+                        MOTOR_COMMAND_FINISHED_SIGNAL.signal(());
                     }
-
-                    info!("Alignment result: {result:?}");
-                    self.haptics.disengage();
-                    MOTOR_COMMAND_FINISHED_SIGNAL.signal(());
-                }
-                MotorCommand::TuneAlignment(tune) => {
-                    if let Some(a) = self.haptics.tune_alignment(tune) {
-                        info!("New alignment value is: {a}");
-                    } else {
-                        warn!(
-                            "No alignment adjustment was made. Please complete motor alignment first"
-                        )
+                    MotorCommand::TuneAlignment(tune) => {
+                        if let Some(a) = haptics.tune_alignment(tune) {
+                            info!("New alignment value is: {a}");
+                        } else {
+                            warn!(
+                                "No alignment adjustment was made. Please complete motor alignment first"
+                            )
+                        }
+                        MOTOR_COMMAND_FINISHED_SIGNAL.signal(());
                     }
-                    MOTOR_COMMAND_FINISHED_SIGNAL.signal(());
-                }
-                MotorCommand::VerifyEncoder => {
-                    match self.haptics.validate_encoder().await {
-                        Ok(_) => info!("Encoder validation successful!"),
-                        Err(e) => warn!("encoder validation failed: {e}"),
-                    };
-                    MOTOR_COMMAND_FINISHED_SIGNAL.signal(());
-                }
-                MotorCommand::TuneStore => {
-                    if let Some(cal_data) = self.haptics.get_cal_data() {
-                        store_signal.signal(*cal_data);
-                    } else {
-                        warn!("System was not yet calibrated. No value was stored!");
+                    MotorCommand::VerifyEncoder => {
+                        match haptics.validate_encoder().await {
+                            Ok(_) => info!("Encoder validation successful!"),
+                            Err(e) => warn!("encoder validation failed: {e}"),
+                        };
+                        MOTOR_COMMAND_FINISHED_SIGNAL.signal(());
                     }
-                    MOTOR_COMMAND_FINISHED_SIGNAL.signal(());
-                }
-                MotorCommand::Beep {
-                    freq,
-                    duration,
-                    volume,
-                    note_offset,
-                } => {
-                    self.haptics.play_tone(freq, duration, volume, note_offset);
-                    MOTOR_COMMAND_FINISHED_SIGNAL.signal(());
+                    MotorCommand::TuneStore => {
+                        if let Some(cal_data) = haptics.get_cal_data() {
+                            store_signal.signal(*cal_data);
+                        } else {
+                            warn!("System was not yet calibrated. No value was stored!");
+                        }
+                        MOTOR_COMMAND_FINISHED_SIGNAL.signal(());
+                    }
+                    MotorCommand::Beep {
+                        freq,
+                        duration,
+                        volume,
+                        note_offset,
+                    } => {
+                        haptics.play_tone(freq, duration, volume, note_offset);
+                        MOTOR_COMMAND_FINISHED_SIGNAL.signal(());
+                    }
                 }
             }
-        }
-        if let Ok(encoder_meas) = self.haptics.update_encoder().await {
-            let encoder_position = encoder_meas.position.to_num();
-            ENCODER_POSITION.store(encoder_position, core::sync::atomic::Ordering::Relaxed);
-            if let Some(ref mut player) = self.player {
-                let playback = player.play(encoder_position);
-                match playback {
-                    Playback::Torque(v) => {
-                        if let Err(e) = self.haptics.set_motor(encoder_meas, I16F16::from_num(v))
-                            && !matches!(e, HapticSystemError::NotYetCalibrated)
-                        {
-                            error!("Failed to set motor torque: {e}");
+            // Receiving of haptic config goes here
+            if HAPTIC_CONFIG_SIGNAL.signaled() {
+                let config = HAPTIC_CONFIG_SIGNAL.wait().await;
+                match config.instantiate() {
+                    Ok(inst) => match haptics.update_encoder().await {
+                        Ok(meas) => {
+                            curve = inst;
+                            player = Some(
+                                HapticPlayer::new(meas.position.to_num(), &curve)
+                                    .with_scale(self.curve_scale),
+                            );
+                            HAPTIC_CONFIG_FINISHED_SIGNAL.signal(Ok(()));
                         }
+                        Err(e) => {
+                            error!("Failed to update haptic curve: {e}");
+                            HAPTIC_CONFIG_FINISHED_SIGNAL.signal(Err(EmbeddedError::EncoderError));
+                        }
+                    },
+                    Err(e) => {
+                        HAPTIC_CONFIG_FINISHED_SIGNAL.signal(Err(e.into()));
                     }
-                    Playback::Sequence(p) => {
-                        let commands = p.play();
-                        for command in commands {
-                            match command {
-                                Command::Delay(d) => {
-                                    Timer::after(embassy_time::Duration::from_micros(
-                                        d.as_micros() as u64
-                                    ))
-                                    .await
-                                }
-                                Command::Torque(t) => {
-                                    if let Ok(enc) = self.haptics.update_encoder().await
-                                        && let Err(e) =
-                                            self.haptics.set_motor(enc, I16F16::from_num(t))
-                                        && !matches!(e, HapticSystemError::NotYetCalibrated)
-                                    {
-                                        error!("Failed to set motor torque: {e}");
+                }
+            }
+            if let Ok(encoder_meas) = haptics.update_encoder().await {
+                let encoder_position = encoder_meas.position.to_num();
+                ENCODER_POSITION.store(encoder_position, core::sync::atomic::Ordering::Relaxed);
+                if let Some(ref mut player) = player {
+                    let playback = player.play(encoder_position);
+                    match playback {
+                        Playback::Torque(v) => {
+                            if let Err(e) = haptics.set_motor(encoder_meas, I16F16::from_num(v))
+                                && !matches!(e, HapticSystemError::NotYetCalibrated)
+                            {
+                                error!("Failed to set motor torque: {e}");
+                            }
+                        }
+                        Playback::Sequence(p) => {
+                            let commands = p.play();
+                            for command in commands {
+                                match command {
+                                    Command::Delay(d) => {
+                                        Timer::after(embassy_time::Duration::from_micros(
+                                            d.as_micros() as u64,
+                                        ))
+                                        .await
+                                    }
+                                    Command::Torque(t) => {
+                                        if let Ok(enc) = haptics.update_encoder().await
+                                            && let Err(e) =
+                                                haptics.set_motor(enc, I16F16::from_num(t))
+                                            && !matches!(e, HapticSystemError::NotYetCalibrated)
+                                        {
+                                            error!("Failed to set motor torque: {e}");
+                                        }
                                     }
                                 }
                             }
@@ -344,10 +382,10 @@ impl<
                     }
                 }
             }
-        }
-        self.statistics.log(start).await;
-        if let Some(ref mut ticker) = self.ticker {
-            ticker.next().await;
+            statistics.log(start).await;
+            if let Some(ref mut ticker) = ticker {
+                ticker.next().await;
+            }
         }
     }
 }

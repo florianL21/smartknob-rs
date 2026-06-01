@@ -43,8 +43,6 @@ pub enum HapticSystemError<E: EncoderError> {
     EncoderError(#[from] E),
     #[error("Building Interpolation curve failed: {0}")]
     InterpolationError(LinearError),
-    #[error("Failed to interpolate encoder data")]
-    InterpolationFailed,
     #[error(
         "Non linearity correction was not goo enough. expected: <{MAX_ALLOWED_ENCODER_DEVIATION}; found {0}"
     )]

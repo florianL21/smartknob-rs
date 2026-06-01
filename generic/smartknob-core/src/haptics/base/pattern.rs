@@ -17,7 +17,7 @@ use thiserror::Error;
 
 type CommandVec = Vec<Command>;
 
-#[derive(Error, Debug)]
+#[derive(Error, Debug, Deserialize, Serialize, Clone)]
 pub enum PatternLayerError {
     #[error(
         "The activation zones of the pattern at position {0} overlaps with the previous pattern"

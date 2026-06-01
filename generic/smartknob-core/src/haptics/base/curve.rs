@@ -12,7 +12,7 @@ use builder::InterpolationBuilderError;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-#[derive(Error, Debug)]
+#[derive(Error, Debug, Clone, Serialize, Deserialize)]
 pub enum CurveError {
     #[error("curve was empty")]
     EmptyCurve,
@@ -119,6 +119,19 @@ pub struct CurveInstance {
 }
 
 impl CurveInstance {
+    /// Create a new empty instance
+    pub fn empty() -> Self {
+        Self {
+            curve: Vec::new(),
+            segments: Vec::new(),
+            max_index: 0,
+            end_value: 0.0,
+            start_angle: 0.0,
+            start_value: 0.0,
+            total_width: 0.0,
+        }
+    }
+
     pub fn new(
         segments: Vec<SegmentInstance>,
         curve: Vec<SegmentReference>,

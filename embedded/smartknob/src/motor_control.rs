@@ -16,7 +16,7 @@ use log::info;
 use smartknob_core::{
     haptics::{
         CalibrationData, CurveBuilder, CurveSegment, DetailedSettings, HapticPattern, PatternLayer,
-        SmartknobHapticCore, encoder::MT6701Spi,
+        SmartknobHapticCore, encoder::MT6701Spi, set_curve_config,
     },
     system_settings::{HapticSystemStoreSignal, log_toggles::LogToggleReceiver},
 };
@@ -62,17 +62,16 @@ pub async fn update_foc(
     )
     .unwrap();
 
-    let mut haptic_core: SmartknobHapticCore<'_, _, _, SpaceVector, _, 52> =
-        SmartknobHapticCore::new(
-            encoder,
-            motor_driver,
-            MOTOR_POLE_PAIRS,
-            None,
-            DetailedSettings::default(),
-            restored_state,
-            log_receiver,
-        )
-        .await;
+    let haptic_core: SmartknobHapticCore<_, _, SpaceVector, _, 52> = SmartknobHapticCore::new(
+        encoder,
+        motor_driver,
+        MOTOR_POLE_PAIRS,
+        None,
+        DetailedSettings::default(),
+        restored_state,
+        log_receiver,
+    )
+    .await;
     // Create a curve with 25 identical detents for encoder positions 0-10
     // Each detent = 0.4 encoder units (10 / 25 = 0.4)
     // Gauge value = detent * 4 (0, 4, 8, ... 100)
@@ -99,11 +98,8 @@ pub async fn update_foc(
         .push(zero)
         .push_repeated(detent, 25)
         .finish(0.0)
-        .with_pattern_layer(patterns)
-        .instantiate()
-        .unwrap();
-    let _ = haptic_core.set_curve(&detent_curve, 1.0).await;
-    loop {
-        haptic_core.run(settings_store_signals).await;
-    }
+        .with_pattern_layer(patterns);
+
+    set_curve_config(detent_curve);
+    haptic_core.run(settings_store_signals).await
 }

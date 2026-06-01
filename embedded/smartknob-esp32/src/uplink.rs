@@ -100,18 +100,11 @@ pub fn initialize_uplink(
     spawner.spawn(usb_task(builder).unwrap());
     spawner.spawn(logger_task(logging_class).unwrap());
     spawner.spawn(comm_sender(tx, comm_channel_receiver).unwrap());
-    spawner.spawn(
-        event_sender(
-            knob_events,
-            Duration::from_hz(20),
-            comm_channel_sender.clone(),
-        )
-        .unwrap(),
-    );
+    spawner.spawn(event_sender(knob_events, Duration::from_hz(20), comm_channel_sender).unwrap());
     spawner.spawn(
         request_handler(
             rx,
-            comm_channel_sender.clone(),
+            comm_channel_sender,
             initial_log_toggles,
             log_toggle_sender,
             flash,

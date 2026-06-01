@@ -22,7 +22,7 @@ use esp_hal::{
     usb_serial_jtag::UsbSerialJtag,
 };
 use esp_rtos::embassy::Executor;
-use log::{error, info};
+use log::info;
 use smartknob_core::flash::FlashHandling;
 use smartknob_core::system_settings::log_toggles::LogToggleWatcher;
 use smartknob_core::system_settings::{HapticSystemStoreSignal, StoreSignals};
@@ -173,7 +173,7 @@ async fn main(spawner: Spawner) {
         },
     );
 
-    let serial = UsbSerialJtag::new(peripherals.USB_DEVICE).into_async();
+    let _serial = UsbSerialJtag::new(peripherals.USB_DEVICE).into_async();
 
     info!("All tasks spawned");
     let stats = esp_alloc::HEAP.stats();

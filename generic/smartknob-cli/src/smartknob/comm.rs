@@ -8,6 +8,7 @@ use log::warn;
 use log::{error, info};
 use postcard::{experimental::max_size::MaxSize, from_bytes, to_stdvec_cobs};
 use smartknob_core::comm;
+use smartknob_core::comm::EmbeddedError;
 use static_cell::StaticCell;
 use std::time::Duration;
 use thiserror::Error;
@@ -245,10 +246,10 @@ async fn serial_listener(
     event_sender: mpsc::Sender<comm::Event>,
     mut channel_receiver: watch::Receiver<ActiveCommChannels>,
 ) {
-    let mut active_channels = channel_receiver.borrow_and_update().clone();
+    let mut active_channels = *channel_receiver.borrow_and_update();
     loop {
         if let Ok(true) = channel_receiver.has_changed() {
-            active_channels = channel_receiver.borrow_and_update().clone();
+            active_channels = *channel_receiver.borrow_and_update();
         }
 
         match stream.next().await {
@@ -325,15 +326,19 @@ impl<'a> CommChannels<'a> {
                 .await
                 .map_err(CommError::ExceededTimeout)?
                 .ok_or(CommError::GettingResponse)?;
-            if let comm::Response::Repeat = resp {
-                if num_retries == 0 {
-                    return Err(CommError::ExceededRetries);
-                } else {
-                    num_retries -= 1;
-                    warn!("Retrying sending response. {num_retries} retries left");
+            match resp {
+                comm::Response::Repeat
+                | comm::Response::Error(EmbeddedError::PostcardDecodeError(_)) => {
+                    if num_retries == 0 {
+                        return Err(CommError::ExceededRetries);
+                    } else {
+                        num_retries -= 1;
+                        warn!("Retrying sending response. {num_retries} retries left");
+                    }
                 }
-            } else {
-                return Ok(resp);
+                _ => {
+                    return Ok(resp);
+                }
             }
         }
     }
@@ -343,7 +348,7 @@ impl<'a> CommChannels<'a> {
     pub fn take_event_receiver(&mut self) -> Result<Receiver<comm::Event>, CommError> {
         self.active_channels.events = true;
         self.active_channel_tx.send(self.active_channels)?;
-        Ok(self.events.take().ok_or(CommError::EventChannelGone)?)
+        self.events.take().ok_or(CommError::EventChannelGone)
     }
 }
 

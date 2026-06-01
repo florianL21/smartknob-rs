@@ -1,9 +1,11 @@
 use postcard::experimental::max_size::MaxSize;
 use serde::{Deserialize, Serialize};
 
-use crate::{comm::EmbeddedError, system_settings::log_toggles::LogChannel};
+use crate::{
+    comm::EmbeddedError, haptics::HapticConfiguration, system_settings::log_toggles::LogChannel,
+};
 
-#[derive(Deserialize, Serialize, Debug, Clone, MaxSize)]
+#[derive(Deserialize, Serialize, Debug)]
 pub enum Command {
     /// Initiate a system shutdown
     Shutdown,
@@ -40,6 +42,8 @@ pub enum Command {
     },
     /// Used to test system if the communication is working
     Ping,
+    /// Command to set the currently running haptic config
+    PushHapticConfig(HapticConfiguration),
 }
 
 #[derive(Deserialize, Serialize, Debug, Clone, MaxSize)]

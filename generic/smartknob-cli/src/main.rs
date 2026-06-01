@@ -7,9 +7,10 @@ use charming::HtmlRenderer;
 use clap::Parser;
 use log::{error, info, warn};
 use schemars::schema_for;
+use serde::{Deserialize, Serialize};
 use smartknob_core::comm::{self, LogChannel};
-use smartknob_core::haptics::HapticCurveConfig;
-use smartknob_core::haptics::base::{CurveBuilder, CurveSegment, HapticCurveConfigWithSchema};
+use smartknob_core::haptics::HapticConfiguration;
+use smartknob_core::haptics::base::{CurveBuilder, CurveSegment};
 use std::path::PathBuf;
 use std::time::Duration;
 use std::{fs::File, io::BufReader, io::BufWriter};
@@ -25,10 +26,33 @@ use crate::{
     smartknob::comm::Communication,
 };
 
-fn handle_curve_command(curve_file: PathBuf, action: CurveActions) -> Result<()> {
+#[derive(Serialize, Deserialize, schemars::JsonSchema)]
+pub struct HapticConfigurationWithSchema {
+    config: HapticConfiguration,
+    #[serde(rename = "$schema")]
+    schema: String,
+}
+
+impl HapticConfigurationWithSchema {
+    fn new(config: HapticConfiguration) -> Self {
+        Self {
+            config,
+            schema: "haptic_config_schema.json".into(),
+        }
+    }
+}
+
+async fn handle_curve_command(curve_file: PathBuf, action: CurveActions) -> Result<()> {
     match action {
         CurveActions::Push => {
-            todo!();
+            let file = File::open(curve_file)?;
+            let reader = BufReader::new(file);
+            let config: HapticConfigurationWithSchema = serde_json::from_reader(reader)?;
+            send_single_message_expect_ack(
+                comm::Command::PushHapticConfig(config.config),
+                Duration::from_secs(1),
+            )
+            .await?;
         }
         CurveActions::Init => {
             if curve_file.exists() {
@@ -39,10 +63,10 @@ fn handle_curve_command(curve_file: PathBuf, action: CurveActions) -> Result<()>
             let folder = curve_file.parent().context(
                 "Could not get partent directory of given output file path ({curve_file_path})",
             )?;
-            let schema_file_path = folder.with_file_name("haptic_curve_schema.json");
+            let schema_file_path = folder.with_file_name("haptic_config_schema.json");
             let file = File::create(schema_file_path).context("Schema file")?;
             let writer = BufWriter::new(file);
-            let schema = schema_for!(HapticCurveConfig);
+            let schema = schema_for!(HapticConfigurationWithSchema);
             serde_json::to_writer_pretty(writer, &schema)?;
 
             let mut curve_builder = CurveBuilder::new();
@@ -62,7 +86,11 @@ fn handle_curve_command(curve_file: PathBuf, action: CurveActions) -> Result<()>
                 .finish(-0.3);
             let file = File::create(curve_file)?;
             let writer = BufWriter::new(file);
-            serde_json::to_writer_pretty(writer, &HapticCurveConfigWithSchema(test_curve))?;
+
+            serde_json::to_writer_pretty(
+                writer,
+                &HapticConfigurationWithSchema::new(HapticConfiguration::Curve(test_curve)),
+            )?;
         }
         CurveActions::Visualize {
             start_angle,
@@ -71,14 +99,17 @@ fn handle_curve_command(curve_file: PathBuf, action: CurveActions) -> Result<()>
         } => {
             let file = File::open(curve_file)?;
             let reader = BufReader::new(file);
-            let curve = serde_json::from_reader(reader)?;
+            let config: HapticConfigurationWithSchema = serde_json::from_reader(reader)?;
+            if let HapticConfiguration::Curve(curve) = config.config {
+                let chart = create_graph(start_angle.unwrap_or_default(), curve, 0.01);
 
-            let chart = create_graph(start_angle.unwrap_or_default(), curve, 0.01);
-
-            let mut renderer = HtmlRenderer::new("Force graph", 1000, 800);
-            renderer.save(&chart, &graph_output_file)?;
-            if open_file {
-                open::that(graph_output_file)?;
+                let mut renderer = HtmlRenderer::new("Force graph", 1000, 800);
+                renderer.save(&chart, &graph_output_file)?;
+                if open_file {
+                    open::that(graph_output_file)?;
+                }
+            } else {
+                bail!("Haptic config is not a curve type and can thus not be visualized");
             }
         }
     }
@@ -177,7 +208,7 @@ async fn main() -> Result<()> {
     match cli.command {
         Command::Log { channel, enabled } => handle_log_command(channel, enabled).await?,
         Command::Curve(CurveArgs { curve_file, action }) => {
-            handle_curve_command(curve_file, action)?
+            handle_curve_command(curve_file, action).await?
         }
         Command::Watch { events, logs } => {
             let mut comm = Communication::init().await?;

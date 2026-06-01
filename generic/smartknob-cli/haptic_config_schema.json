@@ -1,24 +1,18 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "HapticCurveConfig",
+  "title": "HapticConfigurationWithSchema",
   "type": "object",
   "properties": {
-    "curve_layer": {
-      "$ref": "#/$defs/HapticCurve"
+    "$schema": {
+      "type": "string"
     },
-    "pattern_layer": {
-      "anyOf": [
-        {
-          "$ref": "#/$defs/PatternLayer"
-        },
-        {
-          "type": "null"
-        }
-      ]
+    "config": {
+      "$ref": "#/$defs/HapticConfiguration"
     }
   },
   "required": [
-    "curve_layer"
+    "config",
+    "$schema"
   ],
   "$defs": {
     "Command": {
@@ -291,6 +285,29 @@
         "nanos"
       ]
     },
+    "HapticConfiguration": {
+      "description": "This holds a set of full configurations for the haptic system.\nThis can fully define all actions it may ever take while being in this config.\nThis should be fully serializable and can be loaded on runtime",
+      "oneOf": [
+        {
+          "description": "This configuration is a curve based config",
+          "type": "object",
+          "properties": {
+            "Curve": {
+              "$ref": "#/$defs/HapticCurveConfig"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "Curve"
+          ]
+        },
+        {
+          "description": "This configuration is a haptic program (yet to be implemented)",
+          "type": "string",
+          "const": "Program"
+        }
+      ]
+    },
     "HapticCurve": {
       "description": "Curves always start at negative infinity. They always go left to right (increasing angle values).\nThe angle value after the last curve component is considered to be positive infinity.\nBecause of this the last curve components value at the very end of its width is taken as the value returned up until positive infinity.",
       "type": "object",
@@ -319,6 +336,27 @@
         "segments",
         "curve",
         "start_angle"
+      ]
+    },
+    "HapticCurveConfig": {
+      "type": "object",
+      "properties": {
+        "curve_layer": {
+          "$ref": "#/$defs/HapticCurve"
+        },
+        "pattern_layer": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PatternLayer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "curve_layer"
       ]
     },
     "HapticPattern": {

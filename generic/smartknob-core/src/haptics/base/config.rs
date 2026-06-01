@@ -3,12 +3,10 @@ use super::{
     curve::CurveState,
     pattern::{PatternLayerError, PatternLayerState},
 };
-#[cfg(feature = "host")]
-use serde::ser::{SerializeStruct, Serializer};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-#[derive(Error, Debug)]
+#[derive(Error, Debug, Deserialize, Serialize, Clone)]
 pub enum ConfigError {
     #[error("Error with the curve layer")]
     CurveLayerError(#[from] CurveError),
@@ -21,23 +19,6 @@ pub enum ConfigError {
 pub struct HapticCurveConfig {
     curve_layer: HapticCurve,
     pattern_layer: Option<PatternLayer>,
-}
-
-// #[cfg(feature = "host")]
-pub struct HapticCurveConfigWithSchema(pub HapticCurveConfig);
-
-#[cfg(feature = "host")]
-impl Serialize for HapticCurveConfigWithSchema {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        let mut state = serializer.serialize_struct("HapticCurveConfig", 3)?;
-        state.serialize_field("$schema", "haptic_curve_schema.json")?;
-        state.serialize_field("curve_layer", &self.0.curve_layer)?;
-        state.serialize_field("pattern_layer", &self.0.pattern_layer)?;
-        state.end()
-    }
 }
 
 impl HapticCurveConfig {
@@ -100,12 +81,20 @@ impl HapticCurveConfig {
     pub fn start_angle(&self) -> Angle {
         self.curve_layer.start_angle
     }
+
+    /// Make a HapticConfiguration instance out of this config as-is.
+    /// This should probably not be called when building a haptic curve via a builder pattern in the firmware,
+    /// instead this is useful for example when a configuration received over some wire needs to be instantiated
+    pub fn instantiate(self) -> Result<HapticInstances, ConfigError> {
+        HapticConfiguration::Curve(self).instantiate()
+    }
 }
 
 /// This holds a set of full configurations for the haptic system.
-/// This can fully defines all actions it may ever take while being in this config.
+/// This can fully define all actions it may ever take while being in this config.
 /// This should be fully serializable and can be loaded on runtime
 #[derive(Debug, Serialize, Deserialize)]
+#[cfg_attr(feature = "host", derive(schemars::JsonSchema))]
 pub enum HapticConfiguration {
     /// This configuration is a curve based config
     Curve(HapticCurveConfig),
@@ -181,6 +170,15 @@ impl HapticInstances {
             }
         } else {
             curve_width
+        }
+    }
+}
+
+impl Default for HapticInstances {
+    fn default() -> Self {
+        Self {
+            curve: CurveInstance::empty(),
+            pattern: None,
         }
     }
 }
