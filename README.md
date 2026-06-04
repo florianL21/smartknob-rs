@@ -1,17 +1,20 @@
 # This is heavily work in progress!
+
 This is very much still in development and not ready to be used or even functional in any capacity!
 The only reason to look at this repo is if you are interested in helping out with developing it
 
 # For users on Github
+
 This project was moved to [Codeberg](https://codeberg.org/florianL21/smartknob-rs).
 The issues on github have been locked and PRs were deactivated. The code here will simply mirror the one on codeberg now.
 If you want to contribute/create issues pelase do so at the codeberg repository.
 
 # Current status of features
+
 - [x] Create and play back haptic curves
 - [x] Render something on the display using slint
 - [x] All hardware drivers are present and functional
-- [ ] Communication with the PC
+- [x] Communication with the PC
 - [ ] Haptic feedback like klicks
 - [ ] Any sort of actually useful UI
 
@@ -19,13 +22,12 @@ If you want to contribute/create issues pelase do so at the codeberg repository.
 
 This firmware makes use of many rust crates for various functionality but the main ones used are:
 
-* `embassy` for the no_std, async, bare metal runtime
-* `esp-hal` for the ESP32-S3 HAL abstraction
-* `slint-ui` as a UI library and for rendering the user interface on the display
-* `mipidsi` for driving the display
-* `foc` for the FOC control algorithms for driving the motor
-* `ekv` for storing configuration values in flash
-* `embedded-cli` for providing a debugging interface for playing around during development
+- `embassy` for the no_std, async, bare metal runtime
+- `esp-hal` for the ESP32-S3 HAL abstraction
+- `slint-ui` as a UI library and for rendering the user interface on the display
+- `mipidsi` for driving the display
+- `foc` for the FOC control algorithms for driving the motor
+- `ekv` for storing configuration values in flash
 
 Some of these crates may have been forked by me to make async versions of them to be able to use them more comfortably with embassy.
 
@@ -97,10 +99,30 @@ cargo run --release --bin seedlabs_devkit
 
 ## Using the firmware
 
-The firmware does not do much as of right now.
-But when it boots up it presents some log output thought he serial monitor.
+On the first startup of the system it needs to be calibrated.
+This can be done by connecting the smartknob to the PC via USB and then run some commands from the smartknob-cli crate.
+To get up and running quickly you can run the following:
 
-By pressing the enter key you will be dropped into a "shell". Here you can type `help` to see all available commands
-While in the "shell" no log output will be produced.
+```sh
+cd generic/smartknob-cli
+cargo run -- motor calibrate
+```
 
-Once the `exit` command is issued the shell will exit and log message printing is enabled again.
+When the firmware currently boots it shows nothing of use on the screen.
+However it does already come preloaded with a demo of a haptic curve which runs from the start.
+
+The most interesting feature of the firmware currently is that the
+configuration of the haptic system cahn be changed live from the PC while the smartknob is running.
+A few commands that can be of interest:
+
+```sh
+# This opens a webbrowser to visualize the haptic curve in the given json file
+cargo run -- curve test_curve.json visualize chart.html -o
+# The file can be modified and then pushed to the knob by running
+cargo run -- curve test_curve.json push
+# To view live logs from the smartknob you can open a monitor by running
+cargo run -- watch
+# While watch is running further commands can be issued from a second terminal session
+```
+
+If you are interested in more commands check the --help of the CLI
