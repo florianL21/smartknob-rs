@@ -4,57 +4,30 @@
 extern crate alloc;
 
 use embassy_executor::Spawner;
-use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
-use embassy_sync::channel;
-use embassy_sync::pubsub::PubSubChannel;
-use embassy_sync::{blocking_mutex::raw::NoopRawMutex, mutex::Mutex};
 use embassy_time::Timer;
 use esp_backtrace as _;
 use esp_hal::interrupt::software::SoftwareInterruptControl;
-use esp_hal::ledc::Ledc;
 use esp_hal::psram::{FlashFreq, PsramConfig, SpiRamFreq};
-use esp_hal::spi;
-use esp_hal::system::Stack;
 use esp_hal::timer::timg::TimerGroup;
-use esp_hal::{
-    clock::CpuClock,
-    gpio::{Input, InputConfig, Level, Output, OutputConfig},
-    i2c::master::{Config as I2cConfig, I2c},
-    rmt::Rmt,
-    spi::{
-        Mode,
-        master::{Config as SpiConfig, Spi},
-    },
-    time::Rate,
-};
-use esp_rtos::embassy::Executor;
+use esp_hal::{clock::CpuClock, time::Rate};
 use log::info;
-use smartknob_core::comm;
-use smartknob_core::knob_tilt::KnobTiltEvent;
-use smartknob_core::system_settings::{HapticSystemStoreSignal, StoreSignals};
+use smartknob_core::haptics::{CurveBuilder, CurveSegment, DetailedSettings, set_curve_config};
 use smartknob_core::{
     haptics::get_encoder_position,
-    system_settings::log_toggles::{LogChannel, LogToggleReceiver, LogToggleWatcher, may_log},
+    system_settings::log_toggles::{LogChannel, LogToggleReceiver, may_log},
 };
-use smartknob_esp32::flash::{flash_task, init_flash};
-use smartknob_esp32::knob_tilt::{I2cBusLDC, ldc_knob_tilt_task};
-use smartknob_esp32::led_ring::led_ring_task;
-use smartknob_esp32::{
-    display::{
-        BacklightHandles, DisplayHandles, Orientation, brightness_task,
-        slint::{spawn_display_tasks, ui_task},
-    },
-    motor_driver::mcpwm::Pins6PWM,
-    shutdown::shutdown_task,
-    uplink::initialize_uplink,
+use smartknob_esp32::building_blocks::{
+    Peripherals, SmartknobSystemConfig, SystemPins,
+    button::{LDCButtons, LDCPins},
+    display::{DisplayPins, SPIDisplay},
+    foc::{EncoderPins, FOCMT6701With6PWM},
+    led::WS2812LedRingForPushEvents,
+    shutdown::PinBasedShutdown,
+    smartknob_main,
 };
-use smartknob_rs::motor_control::update_foc;
-use static_cell::StaticCell;
+use smartknob_esp32::{display::Orientation, motor_driver::mcpwm::Pins6PWM};
 
 esp_bootloader_esp_idf::esp_app_desc!();
-
-type LogWatcher = LogToggleWatcher<CriticalSectionRawMutex, 6>;
-type KnobTiltChannel = PubSubChannel<NoopRawMutex, KnobTiltEvent, 10, 4, 1>;
 
 #[embassy_executor::task]
 async fn log_rotations(mut log_receiver: LogToggleReceiver) {
@@ -94,16 +67,26 @@ async fn main(spawner: Spawner) {
     esp_rtos::start(timg0.timer0, sw_int.software_interrupt0);
     info!("Embassy initialized!");
 
-    // Pins for LDC1614
-    let pins_ldc_int_pin = peripherals.GPIO40;
-    let pins_i2c_scl = peripherals.GPIO42;
-    let pins_i2c_sda = peripherals.GPIO41;
+    // so far unused pins for MT6701-CT
+    let _pin_mag_push = peripherals.GPIO3;
 
-    // Pins for WS2812B LEDs
-    let pin_led_data = peripherals.GPIO39;
-
-    // pins for TMC6300
+    // unused pins for TMC6300
     let _pin_tmc_diag = peripherals.GPIO47;
+
+    let system_config = SmartknobSystemConfig {
+        peripherals: Peripherals {
+            cpu_ctrl: peripherals.CPU_CTRL,
+            flash: peripherals.FLASH,
+            usb: peripherals.USB0,
+            usb_device: peripherals.USB_DEVICE,
+        },
+        sw_interrupt: sw_int.software_interrupt1,
+        pins: SystemPins {
+            usb_plus: peripherals.GPIO20,
+            usb_minus: peripherals.GPIO19,
+        },
+    };
+
     let pin_tmc_uh = peripherals.GPIO48;
     let pin_tmc_ul = peripherals.GPIO17;
     let pin_tmc_vh = peripherals.GPIO21;
@@ -111,202 +94,89 @@ async fn main(spawner: Spawner) {
     let pin_tmc_wh = peripherals.GPIO18;
     let pin_tmc_wl = peripherals.GPIO45;
 
-    // pins for MT6701-CT
-    let pin_mag_clk = peripherals.GPIO11;
-    let pin_mag_do = peripherals.GPIO10;
-    let pin_mag_csn = peripherals.GPIO12;
-    let _pin_mag_push = peripherals.GPIO3;
-
-    // pins for display
-    let pin_lcd_sck = peripherals.GPIO13;
-    // let pin_lcd_miso = peripherals.GPIO;
-    let pin_lcd_mosi = peripherals.GPIO14;
-    let pin_lcd_dc = peripherals.GPIO16; //pin 22
-    // BEWARE!!! Schematic has mismatched pins!
-    let pin_lcd_cs = peripherals.GPIO15; //pin 21 // BL pin on the base PCB; CS on the display PCB
-    let pin_lcd_bl = peripherals.GPIO9; // RST pin on the base PCB; BL on the display PCB
-    let pin_lcd_reset = peripherals.GPIO8; // CS pin on the base PCB; RST on the display PCB
-
-    // USB pins
-    let pin_usb_plus = peripherals.GPIO20;
-    let pin_usb_minus = peripherals.GPIO19;
-
-    // various other pins
-    let _brightness_sensor_pin = peripherals.GPIO4;
-    let power_off_pin = peripherals.GPIO38;
-
-    static SETTING_SIGNALS: StaticCell<StoreSignals<CriticalSectionRawMutex>> = StaticCell::new();
-    let setting_signals = SETTING_SIGNALS.init(StoreSignals::new());
-    static LOG_TOGGLES: StaticCell<LogWatcher> = StaticCell::new();
-    let log_toggles = LOG_TOGGLES.init(LogToggleWatcher::new());
-    static KNOB_TILT_PUB_SUB: StaticCell<KnobTiltChannel> = StaticCell::new();
-    let knob_tilt = KNOB_TILT_PUB_SUB.init(PubSubChannel::new());
-    static HAPTIC_SETTING_SIGNAL: StaticCell<&HapticSystemStoreSignal<CriticalSectionRawMutex>> =
-        StaticCell::new();
-    let haptic_setting_signal = HAPTIC_SETTING_SIGNAL.init(&setting_signals.haptic_core);
-    static COMM_CHANNEL: StaticCell<channel::Channel<CriticalSectionRawMutex, comm::Comm, 10>> =
-        StaticCell::new();
-    let comm_channel = COMM_CHANNEL.init(channel::Channel::new());
-
-    let (flash, restored_state) = init_flash(peripherals.FLASH).await;
-    spawner.spawn(flash_task(flash, setting_signals).unwrap());
-
-    let log_toggles_initial = restored_state.log_toggles.unwrap_or_default();
-    log_toggles.dyn_sender().send(log_toggles_initial.clone());
-
-    static APP_CORE_STACK: StaticCell<Stack<32768>> = StaticCell::new();
-    let app_core_stack = APP_CORE_STACK.init(Stack::new());
-
-    static LOG_TOGGLE_REF: StaticCell<&LogWatcher> = StaticCell::new();
-    let log_toggles_foc = LOG_TOGGLE_REF.init(log_toggles);
-    let motor_calibration = restored_state.haptic_core;
-
-    esp_rtos::start_second_core(
-        peripherals.CPU_CTRL,
-        sw_int.software_interrupt1,
-        app_core_stack,
-        move || {
-            static EXECUTOR: StaticCell<Executor> = StaticCell::new();
-            let executor = EXECUTOR.init(Executor::new());
-            executor.run(|spawner| {
-                let spi_bus = Spi::new(
-                    peripherals.SPI2,
-                    SpiConfig::default()
-                        .with_frequency(Rate::from_mhz(5))
-                        .with_mode(Mode::_0),
-                )
-                .unwrap()
-                .with_sck(pin_mag_clk)
-                .with_miso(pin_mag_do)
-                .with_dma(peripherals.DMA_CH0);
-
-                let mag_cs = Output::new(pin_mag_csn, Level::Low, OutputConfig::default());
-                let pwm_pins = Pins6PWM::new(
-                    pin_tmc_uh.into(),
-                    pin_tmc_ul.into(),
-                    pin_tmc_vh.into(),
-                    pin_tmc_vl.into(),
-                    pin_tmc_wh.into(),
-                    pin_tmc_wl.into(),
-                );
-
-                spawner.spawn(
-                    update_foc(
-                        spi_bus,
-                        mag_cs,
-                        peripherals.MCPWM0,
-                        pwm_pins,
-                        motor_calibration,
-                        haptic_setting_signal,
-                        log_toggles_foc.dyn_receiver().unwrap(),
-                    )
-                    .unwrap(),
-                );
-            });
+    let foc = FOCMT6701With6PWM {
+        spi: peripherals.SPI2,
+        mcpwm_channel: peripherals.MCPWM0,
+        dma_channel: peripherals.DMA_CH0,
+        foc_refresh_rate: None,
+        haptic_settings: DetailedSettings::default(),
+        spi_frequency: Rate::from_mhz(5),
+        pwm_pins: Pins6PWM::new(
+            pin_tmc_uh.into(),
+            pin_tmc_ul.into(),
+            pin_tmc_vh.into(),
+            pin_tmc_vl.into(),
+            pin_tmc_wh.into(),
+            pin_tmc_wl.into(),
+        ),
+        encoder_pins: EncoderPins {
+            mag_clk: peripherals.GPIO11,
+            mag_do: peripherals.GPIO10,
+            mag_csn: peripherals.GPIO12,
         },
-    );
-
-    // LDC sensor
-    let i2c_bus: I2c<'_, esp_hal::Async> = I2c::new(
-        peripherals.I2C0,
-        I2cConfig::default().with_frequency(Rate::from_khz(300)),
-    )
-    .unwrap()
-    .with_scl(pins_i2c_scl)
-    .with_sda(pins_i2c_sda)
-    .into_async();
-    static I2C_BUS: StaticCell<I2cBusLDC> = StaticCell::new();
-    let i2c_bus = I2C_BUS.init(Mutex::new(i2c_bus));
-
-    let ldc_int_pin = Input::new(pins_ldc_int_pin, InputConfig::default());
-
-    spawner.spawn(
-        ldc_knob_tilt_task(
-            i2c_bus,
-            ldc_int_pin,
-            knob_tilt
-                .dyn_publisher()
-                .expect("Could not create knob tilt subscriber, please increase capacity"),
-        )
-        .unwrap(),
-    );
-
-    initialize_uplink(
-        spawner,
-        peripherals.USB0,
-        peripherals.USB_DEVICE,
-        pin_usb_plus,
-        pin_usb_minus,
-        knob_tilt
-            .dyn_subscriber()
-            .expect("Could not create knob tilt subscriber for uplink, please increase capacity"),
-        comm_channel.dyn_sender(),
-        comm_channel.dyn_receiver(),
-        log_toggles_initial,
-        log_toggles.dyn_sender(),
-        flash,
-    );
-
-    // log encoder values
-    spawner.spawn(log_rotations(log_toggles.dyn_receiver().unwrap()).unwrap());
-
-    // LED ring
-    let rmt = Rmt::new(peripherals.RMT, Rate::from_mhz(80)).unwrap();
-    spawner.spawn(
-        led_ring_task(
-            rmt.channel0,
-            pin_led_data.into(),
-            log_toggles.dyn_receiver().unwrap(),
-            knob_tilt
-                .dyn_subscriber()
-                .expect("Could not create knob tilt subscriber, please increase capacity"),
-        )
-        .unwrap(),
-    );
-
-    // Display
-    let spi_bus: spi::master::SpiDma<'_, esp_hal::Blocking> = Spi::new(
-        peripherals.SPI3,
-        spi::master::Config::default()
-            .with_frequency(Rate::from_mhz(80))
-            .with_mode(Mode::_0),
-    )
-    .unwrap()
-    .with_sck(pin_lcd_sck)
-    .with_mosi(pin_lcd_mosi)
-    .with_dma(peripherals.DMA_CH1);
-
-    let display_handles = DisplayHandles {
-        spi_bus,
-        lcd_cs: Output::new(pin_lcd_cs, Level::Low, OutputConfig::default()),
-        dc_output: Output::new(pin_lcd_dc, Level::Low, OutputConfig::default()),
-        reset_output: Output::new(pin_lcd_reset, Level::Low, OutputConfig::default()),
-        orientation: Orientation::new().flip_horizontal().flip_vertical(),
     };
 
-    let backlight_stuff = BacklightHandles {
-        backlight_output: Output::new(pin_lcd_bl, Level::Low, OutputConfig::default()),
+    let display = SPIDisplay {
+        spi_peripheral: peripherals.SPI3,
+        ledc_peripheral: peripherals.LEDC,
+        dma_channel: peripherals.DMA_CH1,
         brightness_sensor: None,
-        ledc: Ledc::new(peripherals.LEDC),
+        display_orientation: Orientation::new(),
+        display_pins: DisplayPins {
+            lcd_sck: peripherals.GPIO13,
+            lcd_mosi: peripherals.GPIO14,
+            lcd_dc: peripherals.GPIO16, //pin 22
+            // BEWARE!!! Schematic has mismatched pins!
+            lcd_cs: peripherals.GPIO15, //pin 21 // BL pin on the base PCB; CS on the display PCB
+            lcd_bl: peripherals.GPIO9,  // RST pin on the base PCB; BL on the display PCB
+            lcd_rst: peripherals.GPIO8, // CS pin on the base PCB; RST on the display PCB
+        },
     };
 
-    spawn_display_tasks(spawner, display_handles, log_toggles, knob_tilt).unwrap();
-    // Spawn the taks which sets the actual UI state
-    spawner.spawn(ui_task().unwrap());
-    spawner.spawn(
-        brightness_task(
-            backlight_stuff,
-            log_toggles
-                .dyn_receiver()
-                .expect("Could not get log toggle receiver"),
-        )
-        .unwrap(),
+    let buttons = LDCButtons {
+        i2c_peripheral: peripherals.I2C0,
+        i2c_freq: Rate::from_khz(300),
+        pins: LDCPins {
+            i2c_scl: peripherals.GPIO42,
+            i2c_sda: peripherals.GPIO41,
+            ldc_int: peripherals.GPIO40,
+        },
+    };
+
+    let led_ring = WS2812LedRingForPushEvents {
+        pin_leds: peripherals.GPIO39.into(),
+        rmt_frequency: Rate::from_mhz(80),
+        rmt_peripheral: peripherals.RMT,
+    };
+
+    let shutdown = PinBasedShutdown {
+        high_is_off: true,
+        shutdown_pin: peripherals.GPIO38,
+    };
+
+    let mut curve_builder = CurveBuilder::new();
+    let detent = curve_builder.new_segment(
+        CurveSegment::new()
+            .add_bezier3(0.2, [0.0, 0.0, -0.7])
+            .add_bezier3(0.2, [0.7, 0.0, 0.0]),
     );
+    let zero = curve_builder.new_segment(CurveSegment::new().add_const(1.0, 0.0));
+    let detent_curve = curve_builder
+        .push(zero)
+        .push_repeated(detent, 25)
+        .finish(-2.0)
+        .without_pattern_layer();
 
-    let power_off_pin = Output::new(power_off_pin, Level::High, OutputConfig::default());
-    spawner.spawn(shutdown_task(power_off_pin, true).unwrap());
+    set_curve_config(detent_curve);
 
-    info!("All tasks spawned");
-    let stats = esp_alloc::HEAP.stats();
-    info!("Current Heap stats: {}", stats);
+    smartknob_main(
+        spawner,
+        foc,
+        system_config,
+        buttons,
+        led_ring,
+        display,
+        shutdown,
+    )
+    .await;
 }

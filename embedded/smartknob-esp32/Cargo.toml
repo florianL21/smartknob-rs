@@ -48,6 +48,13 @@ cobs = { workspace = true }
 embedded-io-async = { workspace = true }
 embassy-usb = { workspace = true }
 embassy-usb-logger = { workspace = true }
+esp-rtos = { workspace = true, default-features = false, features = [
+    "esp32s3",
+    "embassy",
+    "log-04",
+] }
+foc = { workspace = true }
+esp-alloc = { workspace = true }
 
 [build-dependencies]
 slint-build = { git = "https://github.com/florianL21/slint", rev = "d3a47ed", optional = true }

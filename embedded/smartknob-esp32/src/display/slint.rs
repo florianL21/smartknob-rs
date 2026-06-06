@@ -5,7 +5,7 @@ use alloc::rc::Rc;
 use embassy_embedded_hal::shared_bus::asynch::spi::SpiDevice;
 use embassy_executor::Spawner;
 use embassy_sync::blocking_mutex::raw::{CriticalSectionRawMutex, RawMutex};
-use embassy_sync::pubsub::{DynSubscriber, PubSubChannel, WaitResult};
+use embassy_sync::pubsub::{DynSubscriber, WaitResult};
 use embassy_sync::signal::Signal;
 use embassy_sync::{blocking_mutex::raw::NoopRawMutex, mutex::Mutex};
 use embassy_time::{Delay, Duration, Instant, Ticker, Timer};
@@ -57,18 +57,11 @@ type FrameBufferExchange = Signal<CriticalSectionRawMutex, &'static mut FBType>;
 ///
 /// The actual management of the UI and its state happens in the [`ui_task`] which
 /// has to be spawned separately by the user as it is easily replicable
-pub fn spawn_display_tasks<
-    M: RawMutex,
-    MK: RawMutex,
-    const N: usize,
-    const CAP: usize,
-    const SUBS: usize,
-    const PUBS: usize,
->(
+pub fn spawn_display_tasks<M: RawMutex, const N: usize>(
     spawner: Spawner,
     display_handles: DisplayHandles,
     log_toggles: &'static LogToggleWatcher<M, N>,
-    knob_tilt: &'static PubSubChannel<MK, KnobTiltEvent, CAP, SUBS, PUBS>,
+    knob_tilt: DynSubscriber<'static, KnobTiltEvent>,
 ) -> Result<(), DisplayTaskError> {
     static TX: FrameBufferExchange = FrameBufferExchange::new();
     static RX: FrameBufferExchange = FrameBufferExchange::new();
@@ -90,9 +83,7 @@ pub fn spawn_display_tasks<
         log_toggles
             .dyn_receiver()
             .ok_or(DisplayTaskError::LogReceiverOutOfCapacity)?,
-        knob_tilt
-            .dyn_subscriber()
-            .map_err(|_| DisplayTaskError::KnobTiltSubscriberOutOfCapacity)?,
+        knob_tilt,
     )?);
     Ok(())
 }
