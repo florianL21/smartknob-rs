@@ -1,10 +1,16 @@
 extern crate alloc;
 
-use esp_bootloader_esp_idf::partitions::{self, FlashRegion, PartitionEntry, PartitionType};
+use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
+use esp_bootloader_esp_idf::partitions::{
+    self, DataPartitionSubType, FlashRegion, PartitionEntry, PartitionType,
+};
 use esp_hal::peripherals::FLASH;
 use esp_storage::FlashStorage;
 use log::{info, warn};
-use smartknob_core::flash::{FlashError, FlashHandling, FlashType, PersistentStorage};
+use smartknob_core::{
+    flash::{FlashError, FlashHandling, FlashType, PersistentStorage, RestoredState},
+    system_settings::StoreSignals,
+};
 use static_cell::StaticCell;
 
 pub type ESPFlashError = FlashError<partitions::Error>;
@@ -52,5 +58,24 @@ impl FlashHandler {
 
     pub fn eject(self) -> FlashType<'static, ESPFlashType> {
         self.flash
+    }
+}
+
+pub async fn init_flash(flash: FLASH<'static>) -> (&'static mut FlashHandler, RestoredState) {
+    static FLASH: StaticCell<FlashHandler> = StaticCell::new();
+    let flash =
+        FLASH.init(FlashHandler::new(flash, PartitionType::Data(DataPartitionSubType::Fat)).await);
+
+    let restored_state = flash.restore().await;
+    (flash, restored_state)
+}
+
+#[embassy_executor::task]
+pub async fn flash_task(
+    flash_handler: &'static FlashHandler,
+    store_signals: &'static StoreSignals<CriticalSectionRawMutex>,
+) {
+    loop {
+        flash_handler.run(store_signals).await;
     }
 }

@@ -103,92 +103,54 @@ where
 ///
 /// This task consumes and handles the [`DISPLAY_BRIGHTNESS_SIGNAL`].
 /// If this task is not used the user needs to implement a handler for this signal on their own.
-///
-/// This task needs to be generic, so it needs to be wrapped by a user in the hardware specific
-/// smartknob implementation code. For example:
-///
-/// ```
-/// #[embassy_executor::task]
-/// async fn brightness_task(handles: BacklightHandles, log_receiver: LogToggleReceiver) {
-///    let mut bl = BacklightTask::new(handles, log_receiver);
-///    bl.run().await;
-/// }
-/// ```
-pub struct BacklightTask<'a> {
-    /// Log receiver for loggin out any debug information
-    log_receiver: LogToggleReceiver,
-    /// Channel used to the LEDC peripheral for the backlight PWM control
-    ledc_channel: ledc::channel::Channel<'a, LowSpeed>,
-    /// Internal current brightness state. Needed to always be able to smoothly transition between brightness levels
-    current_brightness: u8,
-    /// Optional brightness sensor which can be sampled to decide how much the screen backlight should be dimmed
-    brightness_sensor: Option<&'static mut dyn BrightnessSensor>,
-    /// How much time should pass between sampling the brightness sensor/updating the backlight intensity
-    sample_time: Duration,
-    /// How long should a brightness fade take in ms
-    brightness_fade: u16,
-}
+#[embassy_executor::task]
+pub async fn brightness_task(mut handles: BacklightHandles, mut log_receiver: LogToggleReceiver) {
+    // backlight control
+    let mut ledc = handles.ledc;
+    ledc.set_global_slow_clock(LSGlobalClkSource::APBClk);
+    static TIMER: StaticCell<ledc::timer::Timer<LowSpeed>> = StaticCell::new();
+    let lstimer0 = TIMER.init(ledc.timer::<LowSpeed>(ledc::timer::Number::Timer0));
+    lstimer0
+        .configure(ledc::timer::config::Config {
+            duty: ledc::timer::config::Duty::Duty10Bit,
+            clock_source: ledc::timer::LSClockSource::APBClk,
+            frequency: Rate::from_khz(24),
+        })
+        .unwrap();
 
-impl<'a> BacklightTask<'a> {
-    /// Create a new backlight task and initialize it so that it can be run
-    pub fn new(handles: BacklightHandles, log_receiver: LogToggleReceiver) -> Self {
-        // backlight control
-        let mut ledc = handles.ledc;
-        ledc.set_global_slow_clock(LSGlobalClkSource::APBClk);
-        static TIMER: StaticCell<ledc::timer::Timer<LowSpeed>> = StaticCell::new();
-        let lstimer0 = TIMER.init(ledc.timer::<LowSpeed>(ledc::timer::Number::Timer0));
-        lstimer0
-            .configure(ledc::timer::config::Config {
-                duty: ledc::timer::config::Duty::Duty10Bit,
-                clock_source: ledc::timer::LSClockSource::APBClk,
-                frequency: Rate::from_khz(24),
-            })
-            .unwrap();
+    let mut channel0: ledc::channel::Channel<'_, LowSpeed> =
+        ledc.channel(ledc::channel::Number::Channel0, handles.backlight_output);
+    channel0
+        .configure(ledc::channel::config::Config {
+            timer: lstimer0,
+            duty_pct: 0,
+            drive_mode: DriveMode::PushPull,
+        })
+        .unwrap();
 
-        let mut channel0: ledc::channel::Channel<'_, LowSpeed> =
-            ledc.channel(ledc::channel::Number::Channel0, handles.backlight_output);
-        channel0
-            .configure(ledc::channel::config::Config {
-                timer: lstimer0,
-                duty_pct: 0,
-                drive_mode: DriveMode::PushPull,
-            })
-            .unwrap();
-
-        Self {
-            current_brightness: 0,
-            ledc_channel: channel0,
-            log_receiver,
-            brightness_sensor: handles.brightness_sensor,
-            brightness_fade: 1000,
-            sample_time: Duration::from_millis(200),
-        }
-    }
-
-    /// To be called in a tasks endless loop
-    /// This will handle processing all backlight related events and actions
-    pub async fn run(&mut self) {
-        if !self.ledc_channel.is_duty_fade_running()
+    let mut current_brightness = 0u8;
+    let sample_time = Duration::from_millis(200);
+    let brightness_fade = 1000u16;
+    loop {
+        if !channel0.is_duty_fade_running()
             && let Some(new_brighness) = DISPLAY_BRIGHTNESS_SIGNAL.try_take()
         {
-            if let Err(e) = self.ledc_channel.start_duty_fade(
-                self.current_brightness,
-                new_brighness,
-                self.brightness_fade,
-            ) {
+            if let Err(e) =
+                channel0.start_duty_fade(current_brightness, new_brighness, brightness_fade)
+            {
                 warn!("Display backlight fade failed: {e:?}");
             } else {
-                self.current_brightness = new_brighness;
+                current_brightness = new_brighness;
             }
         }
-        if let Some(ref mut sensor) = self.brightness_sensor
+        if let Some(ref mut sensor) = handles.brightness_sensor
             && let Some(sample) = sensor.sample()
         {
-            may_log(&mut self.log_receiver, LogChannel::Brightness, || {
+            may_log(&mut log_receiver, LogChannel::Brightness, || {
                 info!("Brightness: {sample}")
             })
             .await;
         }
-        Timer::after(self.sample_time).await;
+        Timer::after(sample_time).await;
     }
 }

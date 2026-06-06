@@ -10,7 +10,6 @@ use embassy_sync::pubsub::PubSubChannel;
 use embassy_sync::{blocking_mutex::raw::NoopRawMutex, mutex::Mutex};
 use embassy_time::Timer;
 use esp_backtrace as _;
-use esp_bootloader_esp_idf::partitions::{DataPartitionSubType, PartitionType};
 use esp_hal::interrupt::software::SoftwareInterruptControl;
 use esp_hal::ledc::Ledc;
 use esp_hal::psram::{FlashFreq, PsramConfig, SpiRamFreq};
@@ -34,18 +33,17 @@ use smartknob_core::comm;
 use smartknob_core::knob_tilt::KnobTiltEvent;
 use smartknob_core::system_settings::{HapticSystemStoreSignal, StoreSignals};
 use smartknob_core::{
-    flash::FlashHandling,
     haptics::get_encoder_position,
     system_settings::log_toggles::{LogChannel, LogToggleReceiver, LogToggleWatcher, may_log},
 };
+use smartknob_esp32::flash::{flash_task, init_flash};
 use smartknob_esp32::knob_tilt::{I2cBusLDC, ldc_knob_tilt_task};
 use smartknob_esp32::led_ring::led_ring_task;
 use smartknob_esp32::{
     display::{
-        BacklightHandles, BacklightTask, DisplayHandles, Orientation,
+        BacklightHandles, DisplayHandles, Orientation, brightness_task,
         slint::{spawn_display_tasks, ui_task},
     },
-    flash::FlashHandler,
     motor_driver::mcpwm::Pins6PWM,
     shutdown::shutdown_task,
     uplink::initialize_uplink,
@@ -68,24 +66,6 @@ async fn log_rotations(mut log_receiver: LogToggleReceiver) {
         })
         .await;
         Timer::after_millis(200).await;
-    }
-}
-
-#[embassy_executor::task]
-pub async fn flash_task(
-    flash_handler: &'static FlashHandler,
-    store_signals: &'static StoreSignals<CriticalSectionRawMutex>,
-) {
-    loop {
-        flash_handler.run(store_signals).await;
-    }
-}
-
-#[embassy_executor::task]
-async fn brightness_task(handles: BacklightHandles, log_receiver: LogToggleReceiver) {
-    let mut bl = BacklightTask::new(handles, log_receiver);
-    loop {
-        bl.run().await;
     }
 }
 
@@ -113,20 +93,6 @@ async fn main(spawner: Spawner) {
     let sw_int = SoftwareInterruptControl::new(peripherals.SW_INTERRUPT);
     esp_rtos::start(timg0.timer0, sw_int.software_interrupt0);
     info!("Embassy initialized!");
-
-    let f = FlashHandler::new(
-        peripherals.FLASH,
-        PartitionType::Data(DataPartitionSubType::Fat),
-    )
-    .await;
-
-    static FLASH: StaticCell<FlashHandler> = StaticCell::new();
-    let flash = FLASH.init(f);
-    static SETTING_SIGNALS: StaticCell<StoreSignals<CriticalSectionRawMutex>> = StaticCell::new();
-    let setting_signals = SETTING_SIGNALS.init(StoreSignals::new());
-
-    let restored_state = flash.restore().await;
-    spawner.spawn(flash_task(flash, setting_signals).unwrap());
 
     // Pins for LDC1614
     let pins_ldc_int_pin = peripherals.GPIO40;
@@ -169,22 +135,31 @@ async fn main(spawner: Spawner) {
     let _brightness_sensor_pin = peripherals.GPIO4;
     let power_off_pin = peripherals.GPIO38;
 
+    static SETTING_SIGNALS: StaticCell<StoreSignals<CriticalSectionRawMutex>> = StaticCell::new();
+    let setting_signals = SETTING_SIGNALS.init(StoreSignals::new());
     static LOG_TOGGLES: StaticCell<LogWatcher> = StaticCell::new();
     let log_toggles = LOG_TOGGLES.init(LogToggleWatcher::new());
     static KNOB_TILT_PUB_SUB: StaticCell<KnobTiltChannel> = StaticCell::new();
     let knob_tilt = KNOB_TILT_PUB_SUB.init(PubSubChannel::new());
-
-    // Encoder initialization
-    static APP_CORE_STACK: StaticCell<Stack<32768>> = StaticCell::new();
-    let app_core_stack = APP_CORE_STACK.init(Stack::new());
-
-    let motor_calibration = restored_state.haptic_core;
-
     static HAPTIC_SETTING_SIGNAL: StaticCell<&HapticSystemStoreSignal<CriticalSectionRawMutex>> =
         StaticCell::new();
     let haptic_setting_signal = HAPTIC_SETTING_SIGNAL.init(&setting_signals.haptic_core);
+    static COMM_CHANNEL: StaticCell<channel::Channel<CriticalSectionRawMutex, comm::Comm, 10>> =
+        StaticCell::new();
+    let comm_channel = COMM_CHANNEL.init(channel::Channel::new());
+
+    let (flash, restored_state) = init_flash(peripherals.FLASH).await;
+    spawner.spawn(flash_task(flash, setting_signals).unwrap());
+
+    let log_toggles_initial = restored_state.log_toggles.unwrap_or_default();
+    log_toggles.dyn_sender().send(log_toggles_initial.clone());
+
+    static APP_CORE_STACK: StaticCell<Stack<32768>> = StaticCell::new();
+    let app_core_stack = APP_CORE_STACK.init(Stack::new());
+
     static LOG_TOGGLE_REF: StaticCell<&LogWatcher> = StaticCell::new();
     let log_toggles_foc = LOG_TOGGLE_REF.init(log_toggles);
+    let motor_calibration = restored_state.haptic_core;
 
     esp_rtos::start_second_core(
         peripherals.CPU_CTRL,
@@ -255,14 +230,6 @@ async fn main(spawner: Spawner) {
         )
         .unwrap(),
     );
-
-    // Needed to get the system to start up properly for now
-    let log_toggles_initial = restored_state.log_toggles.unwrap_or_default();
-    log_toggles.dyn_sender().send(log_toggles_initial.clone());
-
-    static COMM_CHANNEL: StaticCell<channel::Channel<CriticalSectionRawMutex, comm::Comm, 10>> =
-        StaticCell::new();
-    let comm_channel = COMM_CHANNEL.init(channel::Channel::new());
 
     initialize_uplink(
         spawner,
