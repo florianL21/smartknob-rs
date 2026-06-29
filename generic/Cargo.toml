@@ -45,3 +45,4 @@ schemars = { version = "1.2.1" }
 bitflags = "2.11.1"
 embassy-usb-logger = "0.6.0"
 embassy-usb = "0.6.0"
+rhai = { version = "1.25.1", default-features = false }

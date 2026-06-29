@@ -1,13 +1,20 @@
-use super::{
-    Angle, Command, HapticPattern, Value,
-    config::{HapticInstances, HapticStates},
-};
+use log::error;
+use rhai::Scope;
+
+use crate::haptics::base::config::ConfigInstance;
+
+use super::{Angle, Command, HapticPattern, Value, config::HapticStates};
+
+/// Maximum number of variables allowed for the script execution scope
+const MAX_NUM_VARIABLES: usize = 200;
 
 /// This struct holds the state for playing back a haptic curve and it is the main interface for playing back haptic curves
 pub struct HapticPlayer<'a> {
     states: HapticStates<'a>,
     start_offset: Angle,
     scale: Value,
+    scope: Scope<'a>,
+    run_scripts: bool,
 }
 
 #[derive(Debug)]
@@ -37,11 +44,13 @@ pub enum Playback<'a> {
 impl<'a> HapticPlayer<'a> {
     /// Create a new player state for plying back a specific curve
     /// `start_offset` defines the angle where the curve playback will start
-    pub fn new(start_offset: Angle, haptic_config_instance: &'a HapticInstances) -> Self {
+    pub fn new(start_offset: Angle, haptic_config_instance: &'a ConfigInstance) -> Self {
         HapticPlayer {
             states: haptic_config_instance.make_state(),
             start_offset,
             scale: 1.0,
+            scope: Scope::new(),
+            run_scripts: true,
         }
     }
 
@@ -55,12 +64,42 @@ impl<'a> HapticPlayer<'a> {
     /// Note that this function is not stateless
     pub fn play(&mut self, position: Angle) -> Playback<'_> {
         let angle = position - self.start_offset;
-        if let Some((ps, pl)) = &mut self.states.pattern
-            && let Some(pattern) = ps.sample(pl, angle)
-        {
-            return Playback::Sequence(ScaledPattern::new(pattern, self.scale));
+        match self.states {
+            HapticStates::Layers {
+                ref mut curve,
+                ref mut pattern,
+            } => {
+                if let Some((ps, pl)) = pattern
+                    && let Some(pattern) = ps.sample(pl, angle)
+                {
+                    return Playback::Sequence(ScaledPattern::new(pattern, self.scale));
+                }
+                Playback::Torque(curve.sample(angle) * self.scale)
+            }
+            HapticStates::Program { engine, ast } => {
+                if self.run_scripts {
+                    match engine.eval_ast_with_scope::<f32>(&mut self.scope, ast) {
+                        Ok(v) => {
+                            if self.scope.len() > MAX_NUM_VARIABLES {
+                                error!(
+                                    "The number of defined variables has exceeded the maximum allowed of {MAX_NUM_VARIABLES}.\n
+                                    Make sure to reuse previously defined variables and make use of is_def_var check if variables already exist.\n
+                                    This is a safety mechanism to avoid system crashes.\n
+                                    Further execution of scripts has been disabled.\n
+                                    To re-enable it push a new haptic program."
+                                );
+                                self.run_scripts = false;
+                            }
+                            return Playback::Torque(v);
+                        }
+                        Err(e) => {
+                            error!("Failed to evaluate script: {e}");
+                        }
+                    }
+                }
+                Playback::Torque(0.0)
+            }
         }
-        Playback::Torque(self.states.curve.sample(angle) * self.scale)
     }
 }
 

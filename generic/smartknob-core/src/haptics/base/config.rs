@@ -1,8 +1,12 @@
+extern crate alloc;
 use super::{
     Angle, CurveError, CurveInstance, HapticCurve, PatternLayer,
     curve::CurveState,
     pattern::{PatternLayerError, PatternLayerState},
 };
+use alloc::format;
+use alloc::string::String;
+use rhai::{AST, Engine};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -12,6 +16,8 @@ pub enum ConfigError {
     CurveLayerError(#[from] CurveError),
     #[error("Error with the pattern layer")]
     PatternLayerError(#[from] PatternLayerError),
+    #[error("Error parsing script: {0}")]
+    ScriptParseError(String),
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -85,7 +91,7 @@ impl HapticCurveConfig {
     /// Make a HapticConfiguration instance out of this config as-is.
     /// This should probably not be called when building a haptic curve via a builder pattern in the firmware,
     /// instead this is useful for example when a configuration received over some wire needs to be instantiated
-    pub fn instantiate(self) -> Result<HapticInstances, ConfigError> {
+    pub fn instantiate(self) -> Result<ConfigInstance, ConfigError> {
         HapticConfiguration::Curve(self).instantiate()
     }
 }
@@ -99,7 +105,7 @@ pub enum HapticConfiguration {
     /// This configuration is a curve based config
     Curve(HapticCurveConfig),
     /// This configuration is a haptic program (yet to be implemented)
-    Program,
+    Program(String),
 }
 
 impl HapticConfiguration {
@@ -122,7 +128,7 @@ impl HapticConfiguration {
     /// // Config can now be passed to a haptic player
     /// HapticPlayer::new(0.0, &config);
     /// ```
-    pub fn instantiate(self) -> Result<HapticInstances, ConfigError> {
+    pub fn instantiate(self) -> Result<ConfigInstance, ConfigError> {
         match self {
             HapticConfiguration::Curve(c) => {
                 let curve = c.curve_layer.instantiate()?;
@@ -131,9 +137,29 @@ impl HapticConfiguration {
                 } else {
                     None
                 };
-                Ok(HapticInstances { curve, pattern })
+                Ok(ConfigInstance::Layers(HapticInstances { curve, pattern }))
             }
-            HapticConfiguration::Program => todo!("Haptic programs are not yet implemented"),
+            HapticConfiguration::Program(script) => {
+                let engine = Engine::new_raw();
+                let ast = engine
+                    .compile(script)
+                    .map_err(|e| ConfigError::ScriptParseError(format!("{e}")))?;
+                Ok(ConfigInstance::Program { engine, ast })
+            }
+        }
+    }
+}
+
+pub enum ConfigInstance {
+    Layers(HapticInstances),
+    Program { engine: Engine, ast: AST },
+}
+
+impl ConfigInstance {
+    pub(crate) fn make_state<'a>(&'a self) -> HapticStates<'a> {
+        match self {
+            ConfigInstance::Layers(haptic_instance) => haptic_instance.make_state(),
+            ConfigInstance::Program { engine, ast } => HapticStates::Program { engine, ast },
         }
     }
 }
@@ -145,14 +171,20 @@ pub struct HapticInstances {
 }
 
 #[derive(Debug)]
-pub struct HapticStates<'a> {
-    pub(crate) curve: CurveState<'a>,
-    pub(crate) pattern: Option<(PatternLayerState<'a>, &'a PatternLayer)>,
+pub enum HapticStates<'a> {
+    Layers {
+        curve: CurveState<'a>,
+        pattern: Option<(PatternLayerState<'a>, &'a PatternLayer)>,
+    },
+    Program {
+        engine: &'a Engine,
+        ast: &'a AST,
+    },
 }
 
 impl HapticInstances {
     pub(crate) fn make_state<'a>(&'a self) -> HapticStates<'a> {
-        HapticStates {
+        HapticStates::Layers {
             curve: self.curve.make_state(),
             pattern: self.pattern.as_ref().map(|p| (p.make_state(), p)),
         }

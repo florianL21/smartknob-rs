@@ -43,6 +43,7 @@ clap = { workspace = true, features = ["derive"], optional = true }
 embassy-usb-logger = { workspace = true, optional = true }
 embassy-usb = { workspace = true, optional = true }
 cobs = { workspace = true, optional = true }
+rhai = { workspace = true, features = ["no_std"] }
 
 [dev-dependencies]
 matches = "0.1.10"

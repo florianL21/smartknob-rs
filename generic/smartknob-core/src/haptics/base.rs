@@ -3,7 +3,9 @@ mod curve;
 mod pattern;
 mod player;
 
-pub use config::{ConfigError, HapticConfiguration, HapticCurveConfig, HapticInstances};
+pub use config::{
+    ConfigError, ConfigInstance, HapticConfiguration, HapticCurveConfig, HapticInstances,
+};
 pub use pattern::{Command, HapticPattern, PatternLayer};
 pub use player::{HapticPlayer, Playback};
 

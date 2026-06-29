@@ -9,12 +9,20 @@ use charming::{
     element::{AxisType, Tooltip},
     series::Line,
 };
-use smartknob_core::haptics::base::{HapticCurveConfig, HapticPlayer, Playback};
+use smartknob_core::haptics::{
+    ConfigInstance,
+    base::{HapticCurveConfig, HapticPlayer, Playback},
+};
 
 pub fn create_graph(start: f32, curve: HapticCurveConfig, sample_step: f32) -> Chart {
     let curve_start_angle = curve.start_angle();
     let curve_inst = curve.without_pattern_layer().instantiate().unwrap();
-    let width = curve_inst.width();
+
+    let width = if let ConfigInstance::Layers(ref curve) = curve_inst {
+        curve.width()
+    } else {
+        5.0 // TODO: Make a more reasonable fallback mechanism
+    };
     let mut player = HapticPlayer::new(start, &curve_inst);
     let start_angle = start + curve_start_angle - 1.0;
     let end_anlge = start_angle + width + 2.0;
