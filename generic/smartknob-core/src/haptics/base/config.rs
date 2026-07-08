@@ -6,7 +6,11 @@ use super::{
 };
 use alloc::format;
 use alloc::string::String;
-use rhai::{AST, Engine};
+use log::info;
+use rhai::{
+    AST, Engine,
+    packages::{BasicStringPackage, Package},
+};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -140,7 +144,14 @@ impl HapticConfiguration {
                 Ok(ConfigInstance::Layers(HapticInstances { curve, pattern }))
             }
             HapticConfiguration::Program(script) => {
-                let engine = Engine::new_raw();
+                let mut engine = Engine::new_raw();
+                engine.on_print(|x| info!(target:"rhai", "{x}"));
+                engine.on_debug(|s, src, pos| {
+                    let src = src.unwrap_or("unknown");
+                    info!(target:"rhai", "DEBUG of {src} at {pos:?}: {s}")
+                });
+                let package = BasicStringPackage::new();
+                package.register_into_engine(&mut engine);
                 let ast = engine
                     .compile(script)
                     .map_err(|e| ConfigError::ScriptParseError(format!("{e}")))?;

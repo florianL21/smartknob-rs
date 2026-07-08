@@ -29,6 +29,8 @@ pub enum Command {
     },
     /// Work with haptic curves
     Curve(CurveArgs),
+    /// Work with interactive haptic programs written in the rhai (https://rhai.rs/book/) scripting language
+    Program(ProgramArgs),
     /// Enable or disable a log channel
     Log {
         /// The channel which to enable/disable
@@ -75,7 +77,7 @@ pub enum MotorActions {
         duration: u64,
         /// volume in % between 0 and 100
         volume: f32,
-        /// Note offsetfreq
+        /// Note offset frequency
         note_offset: u32,
     },
 }
@@ -96,7 +98,7 @@ pub enum CurveActions {
     /// Create an empty haptic curve scaffold file in the given file location. The given file is not allowed to exist yet.
     /// A schema file is created next to it and will always be called haptic_curve_schema.json. This file will be overwritten if it already exists
     Init,
-    /// Visualizes a haptic curve in an html file with an interactiveley explorable graph
+    /// Visualizes a haptic curve in an html file with an interactively explore-able graph
     Visualize {
         /// Angle to start rendering the graph from
         #[arg(short, long)]
@@ -107,4 +109,19 @@ pub enum CurveActions {
         /// File to render the visualized graph into
         graph_output_file: PathBuf,
     },
+}
+
+#[derive(Debug, Args)]
+pub struct ProgramArgs {
+    /// File which contains a haptic script
+    pub script_file: PathBuf,
+
+    #[command(subcommand)]
+    pub action: ProgramActions,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum ProgramActions {
+    /// Pushes a program to a connected smartknob device
+    Push,
 }

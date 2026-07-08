@@ -25,3 +25,4 @@ smartknob-core = { workspace = true, features = ["host"] }
 schemars = { workspace = true }
 thiserror = { workspace = true, features = ["std"] }
 bitflags = { workspace = true }
+rhai = { workspace = true, features = ["no_std", "f32_float"] }

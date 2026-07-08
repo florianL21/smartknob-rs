@@ -6,11 +6,14 @@ use anyhow::{Context, Result, anyhow, bail};
 use charming::HtmlRenderer;
 use clap::Parser;
 use log::{error, info, warn};
+use rhai::Engine;
+use rhai::packages::{BasicStringPackage, Package};
 use schemars::schema_for;
 use serde::{Deserialize, Serialize};
 use smartknob_core::comm::{self, LogChannel};
 use smartknob_core::haptics::HapticConfiguration;
 use smartknob_core::haptics::base::{CurveBuilder, CurveSegment};
+use std::io::Read;
 use std::path::PathBuf;
 use std::time::Duration;
 use std::{fs::File, io::BufReader, io::BufWriter};
@@ -18,7 +21,7 @@ use tokio::spawn;
 use tokio::task::JoinSet;
 use tokio::time::sleep;
 
-use crate::cli::MotorArgs;
+use crate::cli::{MotorArgs, ProgramActions, ProgramArgs};
 use crate::smartknob::comm::{ConnectionError, event_printer, log_printer};
 use crate::{
     cli::{Cli, Command, CurveActions, CurveArgs, LogState},
@@ -162,6 +165,7 @@ async fn handle_log_command(channel: LogChannel, enabled: LogState) -> Result<()
     };
     send_single_message_expect_ack(msg, Duration::from_secs(1)).await
 }
+
 async fn handle_motor_commends(args: MotorArgs) -> Result<()> {
     match args.action {
         cli::MotorActions::Calibrate => {
@@ -198,6 +202,29 @@ async fn handle_motor_commends(args: MotorArgs) -> Result<()> {
                 .await
         }
     }
+}
+
+async fn handle_program_command(script_file: PathBuf, action: ProgramActions) -> Result<()> {
+    match action {
+        ProgramActions::Push => {
+            let mut file = File::open(script_file)?;
+            let mut script_source = String::new();
+            file.read_to_string(&mut script_source)?;
+
+            let mut engine = Engine::new_raw();
+            let package = BasicStringPackage::new();
+            package.register_into_engine(&mut engine);
+            // Sanity check to catch syntax errors early
+            let _ = engine.compile(script_source.clone()).unwrap();
+
+            send_single_message_expect_ack(
+                comm::Command::PushHapticConfig(HapticConfiguration::Program(script_source)),
+                Duration::from_secs(1),
+            )
+            .await?;
+        }
+    }
+    Ok(())
 }
 
 #[tokio::main]
@@ -253,6 +280,12 @@ async fn main() -> Result<()> {
         Command::FlashErase => {
             send_single_message_expect_ack(comm::Command::FlashErase, Duration::from_secs(1))
                 .await?;
+        }
+        Command::Program(ProgramArgs {
+            script_file,
+            action,
+        }) => {
+            handle_program_command(script_file, action).await?;
         }
     }
     Ok(())

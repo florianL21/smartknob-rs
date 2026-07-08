@@ -83,10 +83,10 @@ impl<'a> HapticPlayer<'a> {
                             if self.scope.len() > MAX_NUM_VARIABLES {
                                 error!(
                                     "The number of defined variables has exceeded the maximum allowed of {MAX_NUM_VARIABLES}.\n
-                                    Make sure to reuse previously defined variables and make use of is_def_var check if variables already exist.\n
-                                    This is a safety mechanism to avoid system crashes.\n
-                                    Further execution of scripts has been disabled.\n
-                                    To re-enable it push a new haptic program."
+Make sure to reuse previously defined variables and make use of is_def_var check if variables already exist.\n
+This is a safety mechanism to avoid system crashes.\n
+Further execution of scripts has been disabled.\n
+To re-enable it push a new haptic program."
                                 );
                                 self.run_scripts = false;
                             }
@@ -94,6 +94,11 @@ impl<'a> HapticPlayer<'a> {
                         }
                         Err(e) => {
                             error!("Failed to evaluate script: {e}");
+                            error!(
+                                "Further execution of scripts has been disabled.\n
+To re-enable it push a new haptic program."
+                            );
+                            self.run_scripts = false;
                         }
                     }
                 }
