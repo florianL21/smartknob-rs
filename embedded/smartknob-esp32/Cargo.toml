@@ -27,11 +27,12 @@ embassy-time = { workspace = true }
 lcd-async = { workspace = true }
 lv_bevy_ecs = { version = "0.6.5", default-features = false, optional = true }
 bevy_ecs = { version = "0.18.0", default-features = false, optional = true }
-slint = { git = "https://github.com/florianL21/slint", rev = "d3a47ed", default-features = false, features = [
+slint = { version = "1.17.1", default-features = false, features = [
     "compat-1-2",
     "unsafe-single-threaded",
     "libm",
     "renderer-software",
+    "software-renderer-path",
 ], optional = true }
 bytemuck = { workspace = true }
 ldc1x1x = { workspace = true }
@@ -57,7 +58,7 @@ foc = { workspace = true }
 esp-alloc = { workspace = true }
 
 [build-dependencies]
-slint-build = { git = "https://github.com/florianL21/slint", rev = "d3a47ed", optional = true }
+slint-build = { version = "1.17.1", optional = true }
 
 [features]
 default = ["slint"]

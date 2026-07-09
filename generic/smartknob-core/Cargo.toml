@@ -31,7 +31,6 @@ embassy-futures = { workspace = true }
 embedded-storage = { workspace = true }
 ufmt = { workspace = true }
 heapless = { workspace = true, features = ["serde", "portable-atomic"] }
-embedded-cli = { workspace = true }
 embedded-io-async = { workspace = true }
 embedded-io = { workspace = true }
 embedded-hal = { workspace = true }

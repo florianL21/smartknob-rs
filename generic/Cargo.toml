@@ -15,7 +15,6 @@ ekv = { git = "https://github.com/embassy-rs/ekv.git", rev = "a662df3" }
 embassy-futures = "0.1.2"
 embedded-storage = "0.3.1"
 ufmt = "0.2.0"
-embedded-cli = { git = "https://github.com/florianL21/embedded-cli-rs.git", rev = "12434bd4" }
 embedded-io-async = "0.7.0"
 embedded-io = "0.7.1"
 embedded-hal = "1.0.0"

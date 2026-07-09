@@ -38,7 +38,7 @@ libm = "0.2.16"
 lcd-async = "0.1.3"
 bytemuck = "1.25.0"
 ldc1x1x = { path = "../generic/ldc1x1x" }
-nalgebra = { version = "0.34.2", default-features = false }
+nalgebra = { version = "0.35.0", default-features = false }
 average = "0.17.0"
 atomic_float = "1.1.0"
 esp-hal-smartled = { git = "https://github.com/florianL21/esp-hal-community.git", rev = "142bbb5" }
